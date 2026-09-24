@@ -11,3 +11,11 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+# Pinned exactly (ADR 0005): expected values only move when we choose to update.
+ebur128 = "=0.1.10"
+
+[[bench]]
+name = "loudness"
+harness = false
