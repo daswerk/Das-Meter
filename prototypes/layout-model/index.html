@@ -1,0 +1,616 @@
+<title>Das-Meter Layout Models</title>
+<!--
+  PROTOTYPE — throwaway. Answers "Pick the layout model" (daswerk/Das-Meter#5).
+  Four layout models on one fake desktop, switchable via the #A..#D anchor and the bottom bar.
+  The meters are fake (no audio); only the arrangement is being judged.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --ground: #14161a;
+    --panel: #1c1f24;
+    --line: #2d3139;
+    --text: #dfe3e8;
+    --muted: #8d949e;
+    --accent: #6fd0c0;
+    --amber: #e6b04b;
+    --red: #e0655a;
+    --chip: #262a31;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  html, body { background: var(--ground); color: var(--text); }
+  body { font-family: var(--sans); font-size: 14px; line-height: 1.5; padding: 24px 16px 104px; }
+  .wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: grid; gap: 4px; }
+  .eyebrow { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--amber); }
+  h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+  header p { margin: 0; color: var(--muted); max-width: 70ch; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; min-height: 32px; }
+  .ctl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button, .btn, select {
+    font: 500 12px var(--sans); color: var(--text); background: var(--chip);
+    border: 0; padding: 5px 10px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent); color: #0b1a17; }
+  .btn, select { border: 1px solid var(--line); border-radius: 6px; }
+  .btn:hover, .seg button:hover:not(.on) { background: #30353d; }
+  button:focus-visible, select:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+
+  /* ---------- the fake screen ---------- */
+  .screen {
+    position: relative; width: 100%; aspect-ratio: 16 / 10; max-width: 100%;
+    border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
+    background: radial-gradient(120% 90% at 20% 10%, #2b3b46 0%, #1a232b 55%, #11161b 100%);
+    user-select: none; touch-action: none;
+    font-size: clamp(7px, .95vw, 12px);
+  }
+  .menubar {
+    position: absolute; left: 0; top: 0; right: 0; height: 3%; z-index: 40000;
+    background: rgba(18, 20, 24, .88); display: flex; align-items: center; gap: 1.4em;
+    padding: 0 1em; font-size: .9em; color: #cfd4da;
+  }
+  .menubar b { font-weight: 600; }
+  .menubar .clock { margin-left: auto; font-family: var(--mono); color: #9aa2ab; }
+
+  .win {
+    position: absolute; background: #1f2228; border: 1px solid #3a3f48; border-radius: .5em;
+    box-shadow: 0 .8em 2.4em rgba(0,0,0,.5); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .tb {
+    height: 1.9em; flex: none; display: flex; align-items: center; gap: .6em; padding: 0 .6em;
+    background: #2a2e35; color: #b9c0c9; font-size: .9em; cursor: grab; white-space: nowrap;
+  }
+  .tb .dots { display: flex; gap: .35em; }
+  .tb .dots i { width: .75em; height: .75em; border-radius: 50%; background: #4b5059; display: block; }
+  .tb .title { overflow: hidden; text-overflow: ellipsis; }
+  .tb .tbtns { margin-left: auto; display: flex; gap: .35em; }
+  .tb button {
+    font: 500 .85em var(--sans); color: #aeb5be; background: transparent; cursor: pointer;
+    border: 1px solid #454b55; border-radius: .35em; padding: .05em .5em;
+  }
+  .tb button.on { color: #111; background: var(--amber); border-color: var(--amber); }
+  .body { flex: 1; position: relative; min-height: 0; display: flex; }
+  .rs {
+    position: absolute; right: 0; bottom: 0; width: 1.3em; height: 1.3em; cursor: nwse-resize; z-index: 5;
+    background: linear-gradient(135deg, transparent 55%, #6b7280 55%, #6b7280 62%, transparent 62%, transparent 72%, #6b7280 72%, #6b7280 79%, transparent 79%);
+  }
+
+  .meter { position: relative; flex: 1 1 0; background: #0c0e11; overflow: hidden; min-width: 0; min-height: 0; }
+  .meter canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .tag {
+    position: absolute; left: .5em; top: .35em; z-index: 2; pointer-events: none;
+    font: 500 .8em var(--mono); color: #9aa3ad; display: flex; gap: .6em; white-space: nowrap;
+  }
+  .tag .src { color: #5f6873; }
+  .tools { position: absolute; right: .35em; top: .3em; display: none; gap: .25em; z-index: 3; }
+  .meter:hover .tools, .meter:focus-within .tools { display: flex; }
+  .tools button {
+    font: 500 .8em var(--sans); color: #d7dce2; background: rgba(40,44,51,.92); cursor: pointer;
+    border: 1px solid #4a505a; border-radius: .35em; padding: .1em .5em;
+  }
+  .tools button:hover { background: #3a404a; }
+
+  .dock { position: absolute; display: flex; background: #08090b; border: 1px solid #2f343c; }
+  .dock.v { flex-direction: column; }
+  .split { flex: none; background: #22262d; }
+  .split:hover { background: var(--accent); }
+  .dock .split, .tree.row > .split { width: 4px; cursor: col-resize; }
+  .dock.v .split, .tree.col > .split { height: 4px; width: auto; cursor: row-resize; }
+  .grip { position: absolute; z-index: 6; }
+  .grip:hover { background: rgba(111,208,192,.5); }
+
+  .tree { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .tree.row { flex-direction: row; }
+  .tree.col { flex-direction: column; }
+
+  .daw .body { flex-direction: column; background: #181a1f; }
+  .ruler { height: 1.6em; flex: none; border-bottom: 1px solid #2a2e35; display: flex; font: .75em var(--mono); color: #6b727c; }
+  .ruler span { flex: 1; padding-left: .4em; border-left: 1px solid #2a2e35; }
+  .ruler .hd { flex: 0 0 14%; border: 0; }
+  .lanes { flex: 1; display: flex; flex-direction: column; position: relative; min-height: 0; }
+  .lane { flex: 1; display: flex; border-bottom: 1px solid #23262c; min-height: 0; }
+  .lane .hd { flex: 0 0 14%; display: flex; align-items: center; gap: .5em; padding-left: .6em; font-size: .85em; color: #b3bac3; background: #1d2025; border-right: 1px solid #2a2e35; }
+  .lane .hd i { width: .6em; height: .6em; border-radius: 2px; display: block; }
+  .lane .tl { flex: 1; position: relative; }
+  .clip { position: absolute; top: 12%; bottom: 12%; border-radius: .3em; opacity: .75; }
+  .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: #f0f0f0; opacity: .7; pointer-events: none; }
+
+  .under { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 760px) { .under { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; }
+  .card h2 small { font: 400 11px var(--mono); color: var(--muted); }
+  .card p { margin: 0 0 8px; }
+  .card ul { margin: 0 0 8px; padding-left: 18px; }
+  .card li { margin: 2px 0; }
+  .card .lbl { font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 0 4px; }
+  pre { margin: 0; font: 12px/1.45 var(--mono); color: #c9d1d9; overflow: auto; max-height: 420px; }
+
+  .switcher {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 99999;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 4px; padding: 4px;
+    background: #f4f4f1; color: #111; border-radius: 999px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    font: 500 13px var(--mono); max-width: calc(100vw - 32px);
+  }
+  .switcher button { border: 0; background: #e2e2dd; color: #111; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font: 600 15px var(--mono); flex: none; }
+  .switcher button:hover { background: #d0d0ca; }
+  .switcher span { padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Prototype · throwaway · Pick the layout model</div>
+    <h1>How should Meters sit on the screen?</h1>
+    <p>Four layout models on a fake 1440×900 desktop with a DAW open. Flip with the bar at the bottom or the ← → keys. Drag title bars, edges and dividers; click the DAW to bring it forward and see what “always on top” does. The Meters are fake; judge the arrangement.</p>
+  </header>
+  <div class="controls" id="controls"></div>
+  <div class="screen" id="screen"></div>
+  <div class="under">
+    <div class="card" id="info"></div>
+    <div class="card">
+      <h2>Layout as a Preset would save it <small>live</small></h2>
+      <pre id="json"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="switcher" role="group" aria-label="Prototype variant">
+  <button id="prev" aria-label="Previous variant">←</button>
+  <span id="vlabel"></span>
+  <button id="next" aria-label="Next variant">→</button>
+</div>
+
+<script>
+(() => {
+  const TYPES = { waveform: 'Waveform', spectrum: 'Spectrum', loudness: 'Loudness Meter', stereo: 'Stereometer' };
+  const SRC = { waveform: 'System Capture', spectrum: 'Send · Bass', loudness: 'Send · Master', stereo: 'System Capture' };
+  const ORDER = ['waveform', 'spectrum', 'loudness', 'stereo'];
+  const VARIANTS = ['A', 'B', 'C', 'D'];
+  const NAMES = { A: 'Docked bar', B: 'One window, split panes', C: 'Separate windows', D: 'Docked bar + pop-outs' };
+  const SW = 1440, SH = 900, MENU = 3; // logical screen; menubar height in %
+
+  let zc = 10;
+  const m = (type, w) => ({ type, w });
+  const win = (type, frame) => ({ type, frame, onTop: true, z: ++zc });
+  const fresh = () => ({
+    A: { edge: 'top', px: 120, reserve: true, onTop: true, meters: [m('waveform', 3), m('spectrum', 3), m('loudness', 1.2), m('stereo', 1)] },
+    B: { frame: { x: 50, y: 30, w: 46, h: 60 }, onTop: true, z: ++zc,
+         root: { dir: 'col', r: .4, a: { m: 'waveform' }, b: { dir: 'row', r: .5, a: { m: 'spectrum' }, b: { dir: 'row', r: .5, a: { m: 'loudness' }, b: { m: 'stereo' } } } } },
+    C: { wins: [win('spectrum', { x: 56, y: 6, w: 40, h: 26 }), win('stereo', { x: 66, y: 34, w: 17, h: 27 }),
+                win('loudness', { x: 84, y: 34, w: 12, h: 42 }), win('waveform', { x: 4, y: 76, w: 52, h: 18 })] },
+    D: { dock: { edge: 'bottom', px: 110, reserve: true, onTop: true, meters: [m('waveform', 3), m('spectrum', 3), m('loudness', 1.2)] },
+         wins: [win('stereo', { x: 78, y: 40, w: 18, h: 30 })] },
+  });
+  let S = fresh();
+  let dawZ = 1;
+  let variant = 'A';
+  try { const h = location.hash.slice(1).toUpperCase(); if (VARIANTS.includes(h)) variant = h; } catch (e) {}
+
+  const $ = (id) => document.getElementById(id);
+  const screen = $('screen');
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  const place = (e, f) => { e.style.left = f.x + '%'; e.style.top = f.y + '%'; e.style.width = f.w + '%'; e.style.height = f.h + '%'; };
+  const zOf = (o) => (o.onTop ? 10000 + o.z : o.z);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const nextType = (t) => ORDER[(ORDER.indexOf(t) + 1) % ORDER.length];
+  const WORK = { x: 0, y: MENU, w: 100, h: 100 - MENU };
+
+  // drag helper: reports delta in % of the screen
+  function drag(handle, onStart, onMove, onEnd) {
+    handle.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0 || ev.target.closest('button,select')) return;
+      ev.preventDefault(); ev.stopPropagation();
+      const r = screen.getBoundingClientRect();
+      const sx = ev.clientX, sy = ev.clientY;
+      const ctx = onStart ? onStart(ev) : null;
+      handle.setPointerCapture(ev.pointerId);
+      const mv = (e) => onMove((e.clientX - sx) / r.width * 100, (e.clientY - sy) / r.height * 100, ctx, e);
+      const up = () => { handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up); onEnd && onEnd(ctx); dump(); };
+      handle.addEventListener('pointermove', mv); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
+    });
+  }
+
+  // ---------- meters ----------
+  function meterEl(type, tools) {
+    const e = el('div', 'meter');
+    e.append(el('div', 'tag', `<span>${TYPES[type]}</span><span class="src">${SRC[type]}</span>`));
+    const c = el('canvas'); c.dataset.m = type; e.append(c);
+    if (tools && tools.length) {
+      const t = el('div', 'tools');
+      tools.forEach(([label, fn, title]) => { const b = el('button', null, label); if (title) b.title = title; b.onclick = (ev) => { ev.stopPropagation(); fn(); }; t.append(b); });
+      e.append(t);
+    }
+    return e;
+  }
+
+  // ---------- DAW ----------
+  let dawEl = null, dawPh = null;
+  function makeDaw(f) {
+    const w = el('div', 'win daw'); place(w, f); w.style.zIndex = dawZ;
+    w.append(el('div', 'tb', '<span class="dots"><i></i><i></i><i></i></span><span class="title">DAW · “late night v3” · 124 BPM</span>'));
+    const body = el('div', 'body');
+    const ruler = el('div', 'ruler', '<span class="hd"></span>' + [1, 5, 9, 13, 17, 21, 25, 29].map((n) => `<span>${n}</span>`).join(''));
+    const lanes = el('div', 'lanes');
+    const tracks = [['Kick', '#c9674f', [[0, 96]]], ['Snare', '#c98a4f', [[12, 84]]], ['Bass', '#d6a24a', [[12, 36], [50, 38]]],
+                    ['Pads', '#5f9c8a', [[0, 48], [60, 36]]], ['Vox', '#7c7fc9', [[25, 22], [62, 30]]], ['FX', '#8f6aa8', [[47, 4], [86, 5]]], ['Master', '#6b7280', []]];
+    tracks.forEach(([n, c, clips]) => {
+      const l = el('div', 'lane'); l.append(el('div', 'hd', `<i style="background:${c}"></i>${n}`));
+      const tl = el('div', 'tl'); clips.forEach(([x, w]) => { const k = el('div', 'clip'); k.style.left = x + '%'; k.style.width = w + '%'; k.style.background = c; tl.append(k); });
+      l.append(tl); lanes.append(l);
+    });
+    dawPh = el('div', 'ph'); lanes.append(dawPh);
+    body.append(ruler, lanes); w.append(body);
+    w.addEventListener('pointerdown', () => { dawZ = ++zc; w.style.zIndex = dawZ; });
+    dawEl = w; return w;
+  }
+
+  // ---------- docked bar ----------
+  function dockRect(d) {
+    const hh = d.px / SH * 100, ww = d.px / SW * 100;
+    if (d.edge === 'top') return { x: 0, y: MENU, w: 100, h: hh };
+    if (d.edge === 'bottom') return { x: 0, y: 100 - hh, w: 100, h: hh };
+    if (d.edge === 'left') return { x: 0, y: MENU, w: ww, h: 100 - MENU };
+    return { x: 100 - ww, y: MENU, w: ww, h: 100 - MENU };
+  }
+  function dawFrame(d) {
+    if (!d || !d.reserve) return { ...WORK };
+    const r = dockRect(d), f = { ...WORK };
+    if (d.edge === 'top') { f.y += r.h; f.h -= r.h; }
+    else if (d.edge === 'bottom') { f.h -= r.h; }
+    else if (d.edge === 'left') { f.x += r.w; f.w -= r.w; }
+    else { f.w -= r.w; }
+    return f;
+  }
+  let dockEl = null;
+  function makeDock(d, popout) {
+    const vert = d.edge === 'left' || d.edge === 'right';
+    const e = el('div', 'dock' + (vert ? ' v' : '')); place(e, dockRect(d));
+    e.style.zIndex = d.onTop ? 20000 : 2;
+    d.meters.forEach((mm, i) => {
+      if (i) {
+        const sp = el('div', 'split'); const a = d.meters[i - 1], b = mm;
+        drag(sp, () => ({ aw: a.w, bw: b.w, tot: d.meters.reduce((s, x) => s + x.w, 0), len: vert ? e.clientHeight : e.clientWidth, sr: screen.getBoundingClientRect() }),
+          (dx, dy, c) => {
+            const px = vert ? dy / 100 * c.sr.height : dx / 100 * c.sr.width;
+            const dw = px / c.len * c.tot; const lim = c.aw + c.bw - .3;
+            a.w = clamp(c.aw + dw, .3, lim); b.w = c.aw + c.bw - a.w;
+            a._el.style.flex = `${a.w} 1 0`; b._el.style.flex = `${b.w} 1 0`;
+          });
+        e.append(sp);
+      }
+      const tools = [];
+      if (popout) tools.push(['Pop out', () => popOut(i), 'Detach into its own window']);
+      tools.push(['Type', () => { mm.type = nextType(mm.type); render(); }, 'Cycle Meter type']);
+      if (d.meters.length > 1) tools.push(['×', () => { d.meters.splice(i, 1); render(); }, 'Remove from bar']);
+      const me = meterEl(mm.type, tools); me.style.flex = `${mm.w} 1 0`; mm._el = me; e.append(me);
+    });
+    // thickness grip on the inner edge
+    const g = el('div', 'grip');
+    const gs = { top: 'left:0;right:0;bottom:-3px;height:7px;cursor:row-resize', bottom: 'left:0;right:0;top:-3px;height:7px;cursor:row-resize',
+                 left: 'top:0;bottom:0;right:-3px;width:7px;cursor:col-resize', right: 'top:0;bottom:0;left:-3px;width:7px;cursor:col-resize' }[d.edge];
+    g.style.cssText = gs; g.title = 'Drag to resize the bar';
+    drag(g, () => ({ px: d.px }), (dx, dy, c) => {
+      const delta = { top: dy / 100 * SH, bottom: -dy / 100 * SH, left: dx / 100 * SW, right: -dx / 100 * SW }[d.edge];
+      d.px = Math.round(clamp(c.px + delta, 50, vert ? 700 : 450));
+      place(e, dockRect(d)); place(dawEl, dawFrame(d));
+    });
+    e.append(g);
+    dockEl = e; return e;
+  }
+  function popOut(i) {
+    const d = S.D.dock; const mm = d.meters.splice(i, 1)[0];
+    const n = S.D.wins.length;
+    S.D.wins.push(win(mm.type, { x: 30 + n * 3, y: 20 + n * 3, w: 26, h: 26 }));
+    render();
+  }
+
+  // ---------- windows ----------
+  function snap(f, self, list) {
+    const xs = [0, 100], ys = [MENU, 100];
+    const d = variant === 'D' ? S.D.dock : null;
+    if (d) { const r = dockRect(d); xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); }
+    (list || []).forEach((o) => { if (o !== self) { xs.push(o.frame.x, o.frame.x + o.frame.w); ys.push(o.frame.y, o.frame.y + o.frame.h); } });
+    const T = 1;
+    for (const x of xs) { if (Math.abs(f.x - x) < T) { f.x = x; break; } if (Math.abs(f.x + f.w - x) < T) { f.x = x - f.w; break; } }
+    for (const y of ys) { if (Math.abs(f.y - y) < T * 1.6) { f.y = y; break; } if (Math.abs(f.y + f.h - y) < T * 1.6) { f.y = y - f.h; break; } }
+  }
+  function makeWin(o, title, content, extra, list) {
+    const w = el('div', 'win'); place(w, o.frame); w.style.zIndex = zOf(o); o._el = w;
+    const tb = el('div', 'tb', `<span class="dots"><i></i><i></i><i></i></span><span class="title">${title}</span>`);
+    const btns = el('div', 'tbtns');
+    (extra || []).forEach(([label, fn, t]) => { const b = el('button', null, label); b.title = t || ''; b.onclick = (e) => { e.stopPropagation(); fn(); }; btns.append(b); });
+    const pin = el('button', o.onTop ? 'on' : '', 'On top'); pin.title = 'Always on top';
+    pin.onclick = (e) => { e.stopPropagation(); o.onTop = !o.onTop; pin.classList.toggle('on', o.onTop); w.style.zIndex = zOf(o); dump(); };
+    btns.append(pin); tb.append(btns);
+    const body = el('div', 'body'); body.append(content);
+    const rs = el('div', 'rs'); rs.title = 'Resize';
+    w.append(tb, body, rs);
+    w.addEventListener('pointerdown', () => { o.z = ++zc; w.style.zIndex = zOf(o); });
+    drag(tb, () => ({ ...o.frame }), (dx, dy, c) => {
+      const f = { ...c, x: clamp(c.x + dx, -c.w + 5, 95), y: clamp(c.y + dy, MENU, 97) };
+      if (list) snap(f, o, list);
+      o.frame = f; place(w, f);
+    });
+    drag(rs, () => ({ ...o.frame }), (dx, dy, c) => {
+      o.frame = { ...c, w: clamp(c.w + dx, 6, 100 - c.x), h: clamp(c.h + dy, 8, 100 - c.y) }; place(w, o.frame);
+    });
+    return w;
+  }
+
+  // ---------- split tree (variant B) ----------
+  function parentOf(n, target) {
+    if (n.m) return null;
+    if (n.a === target || n.b === target) return n;
+    return parentOf(n.a, target) || parentOf(n.b, target);
+  }
+  function treeEl(node) {
+    if (node.m) {
+      const tools = [
+        ['Split →', () => { const t = node.m; delete node.m; Object.assign(node, { dir: 'row', r: .5, a: { m: t }, b: { m: nextType(t) } }); render(); }, 'Split side by side'],
+        ['Split ↓', () => { const t = node.m; delete node.m; Object.assign(node, { dir: 'col', r: .5, a: { m: t }, b: { m: nextType(t) } }); render(); }, 'Split top and bottom'],
+        ['Type', () => { node.m = nextType(node.m); render(); }, 'Cycle Meter type'],
+      ];
+      if (!S.B.root.m) tools.push(['×', () => {
+        const p = parentOf(S.B.root, node); const sib = p.a === node ? p.b : p.a;
+        for (const k of Object.keys(p)) delete p[k];
+        Object.assign(p, sib); render();
+      }, 'Close pane']);
+      return meterEl(node.m, tools);
+    }
+    const e = el('div', 'tree ' + node.dir);
+    const a = treeEl(node.a), b = treeEl(node.b);
+    a.style.flex = `${node.r} 1 0`; b.style.flex = `${1 - node.r} 1 0`;
+    const sp = el('div', 'split');
+    drag(sp, () => ({ r: node.r, rect: e.getBoundingClientRect(), sr: screen.getBoundingClientRect() }), (dx, dy, c) => {
+      const d = node.dir === 'row' ? dx / 100 * c.sr.width / c.rect.width : dy / 100 * c.sr.height / c.rect.height;
+      node.r = clamp(c.r + d, .08, .92);
+      a.style.flex = `${node.r} 1 0`; b.style.flex = `${1 - node.r} 1 0`;
+    });
+    e.append(a, sp, b);
+    return e;
+  }
+
+  // ---------- render ----------
+  function render() {
+    screen.innerHTML = '';
+    screen.append(el('div', 'menubar', '<b>Das-Meter</b><span>File</span><span>Edit</span><span>Preset</span><span>View</span><span>Window</span><span class="clock">Thu 23:41</span>'));
+    const st = S[variant];
+    const dock = variant === 'A' ? st : variant === 'D' ? st.dock : null;
+    dockEl = null;
+    if (dock) screen.append(makeDock(dock, variant === 'D'));
+    screen.append(makeDaw(dawFrame(dock)));
+    if (variant === 'B') {
+      const content = el('div', 'tree'); content.append(treeEl(st.root));
+      screen.append(makeWin(st, 'Das-Meter', content));
+    }
+    if (variant === 'C' || variant === 'D') {
+      st.wins.forEach((o, i) => {
+        const extra = [];
+        if (variant === 'D') extra.push(['Dock', () => { st.wins.splice(i, 1); st.dock.meters.push(m(o.type, 2)); render(); }, 'Put back into the bar']);
+        extra.push(['Type', () => { o.type = nextType(o.type); render(); }, 'Cycle Meter type']);
+        if (variant === 'C') extra.push(['×', () => { st.wins.splice(i, 1); render(); }, 'Close']);
+        screen.append(makeWin(o, TYPES[o.type], meterEl(o.type), extra, st.wins));
+      });
+    }
+    renderControls(); renderInfo(); dump();
+    $('vlabel').textContent = `${variant} · ${NAMES[variant]}`;
+  }
+
+  function seg(label, opts, cur, fn) {
+    const c = el('div', 'ctl'); c.append(el('span', null, label));
+    const s = el('div', 'seg');
+    opts.forEach(([v, t]) => { const b = el('button', v === cur ? 'on' : '', t); b.onclick = () => fn(v); s.append(b); });
+    c.append(s); return c;
+  }
+  function addMenu(fn) {
+    const s = el('select'); s.id = 'add-' + variant; s.setAttribute('aria-label', 'Add a Meter');
+    s.innerHTML = '<option value="">+ Add Meter…</option>' + ORDER.map((t) => `<option value="${t}">${TYPES[t]}</option>`).join('');
+    s.onchange = () => { if (s.value) fn(s.value); };
+    return s;
+  }
+  function renderControls() {
+    const c = $('controls'); c.innerHTML = '';
+    const st = S[variant];
+    const dock = variant === 'A' ? st : variant === 'D' ? st.dock : null;
+    if (dock) {
+      c.append(seg('Edge', [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']], dock.edge, (v) => {
+        const wasV = dock.edge === 'left' || dock.edge === 'right', isV = v === 'left' || v === 'right';
+        if (wasV !== isV) dock.px = isV ? 300 : 120;
+        dock.edge = v; render();
+      }));
+      c.append(seg('Reserve screen space', [[true, 'On'], [false, 'Off']], dock.reserve, (v) => { dock.reserve = v; render(); }));
+      c.append(seg('Bar on top', [[true, 'On'], [false, 'Off']], dock.onTop, (v) => { dock.onTop = v; render(); }));
+      c.append(addMenu((t) => { dock.meters.push(m(t, 2)); render(); }));
+    }
+    if (variant === 'C') c.append(addMenu((t) => { const n = st.wins.length; st.wins.push(win(t, { x: 20 + n * 3, y: 15 + n * 3, w: 24, h: 26 })); render(); }));
+    const r = el('button', 'btn', 'Reset this variant');
+    r.onclick = () => { S[variant] = fresh()[variant]; render(); };
+    c.append(r);
+  }
+
+  const INFO = {
+    A: {
+      what: 'One strip of Meters glued to a screen edge, like the macOS Dock or the MiniMeters default. With “reserve screen space” on, maximised windows (the DAW) shrink to make room, so the bar never covers anything.',
+      tryit: ['Switch the edge to Left or Right and see how Waveform and Spectrum read when the bar is tall.', 'Turn reserve space off, then click the DAW with “Bar on top” off: the bar disappears behind it.', 'Drag the dividers between Meters and the bar’s inner edge.'],
+      notice: ['Arrangement is one-dimensional: Meters can only sit in a row.', 'Reserving space means asking the OS for a work-area change (an AppBar on Windows; on macOS there is no public API, so it would overlay instead).'],
+    },
+    B: {
+      what: 'A normal window you place anywhere, split into panes like a tiling editor. Each pane holds one Meter; split, close and resize panes freely.',
+      tryit: ['Hover a Meter and use Split → / Split ↓ / ×.', 'Drag the dividers; drag the window by its title bar and resize from the corner.', 'Turn “On top” off and click the DAW.'],
+      notice: ['One window to move, hide and remember, with any 2-D arrangement inside.', 'Always covers part of the DAW unless you give it its own screen.'],
+    },
+    C: {
+      what: 'Every Meter is its own small window. Place each one anywhere, even on different screens, each with its own “on top”. Windows snap to screen edges and to each other.',
+      tryit: ['Drag windows until they snap together.', 'Pin only the Loudness Meter on top, then click the DAW.', 'Add a second Spectrum with + Add Meter.'],
+      notice: ['Most freedom, most clutter: N windows to manage, N frames in the Preset.', 'Moving the whole setup means moving each window.'],
+    },
+    D: {
+      what: 'A docked bar by default, and any Meter can be popped out into its own window and docked back later.',
+      tryit: ['Hover a Meter in the bar and press Pop out.', 'Press Dock on the floating Stereometer to put it back.', 'Move the bar to the top and pop out the Loudness Meter next to the DAW’s mixer.'],
+      notice: ['Simple default, escape hatch when needed.', 'Two layout systems to build and to save in every Preset.'],
+    },
+  };
+  function renderInfo() {
+    const i = INFO[variant];
+    $('info').innerHTML = `<h2>${variant} · ${NAMES[variant]}</h2><p>${i.what}</p>
+      <div class="lbl">Try</div><ul>${i.tryit.map((t) => `<li>${t}</li>`).join('')}</ul>
+      <div class="lbl">Notice</div><ul>${i.notice.map((t) => `<li>${t}</li>`).join('')}</ul>`;
+  }
+
+  // ---------- Preset JSON ----------
+  const px = (f) => ({ x: Math.round(f.x / 100 * SW), y: Math.round(f.y / 100 * SH), w: Math.round(f.w / 100 * SW), h: Math.round(f.h / 100 * SH) });
+  const meterJ = (t) => ({ meter: TYPES[t], source: SRC[t] });
+  const dockJ = (d) => {
+    const tot = d.meters.reduce((s, x) => s + x.w, 0);
+    return { edge: d.edge, thickness: d.px, reserveScreenSpace: d.reserve, alwaysOnTop: d.onTop,
+             meters: d.meters.map((x) => ({ ...meterJ(x.type), share: +(x.w / tot).toFixed(2) })) };
+  };
+  const treeJ = (n) => (n.m ? meterJ(n.m) : { split: n.dir === 'row' ? 'side-by-side' : 'stacked', ratio: +n.r.toFixed(2), first: treeJ(n.a), second: treeJ(n.b) });
+  const winJ = (o) => ({ ...meterJ(o.type), frame: px(o.frame), alwaysOnTop: o.onTop });
+  function dump() {
+    const st = S[variant];
+    let layout;
+    if (variant === 'A') layout = { kind: 'dock', ...dockJ(st) };
+    if (variant === 'B') layout = { kind: 'window', frame: px(st.frame), alwaysOnTop: st.onTop, panes: treeJ(st.root) };
+    if (variant === 'C') layout = { kind: 'windows', windows: st.wins.map(winJ) };
+    if (variant === 'D') layout = { kind: 'dock+windows', dock: dockJ(st.dock), windows: st.wins.map(winJ) };
+    $('json').textContent = JSON.stringify({ preset: 'Mixdown', display: { name: 'Built-in Display', size: [SW, SH] }, layout }, null, 2);
+  }
+
+  // ---------- switcher ----------
+  function go(dir) {
+    variant = VARIANTS[(VARIANTS.indexOf(variant) + dir + VARIANTS.length) % VARIANTS.length];
+    try { history.replaceState(null, '', '#' + variant); } catch (e) { try { location.hash = variant; } catch (e2) {} }
+    render();
+  }
+  $('prev').onclick = () => go(-1);
+  $('next').onclick = () => go(1);
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input,textarea,select,[contenteditable]')) return;
+    if (e.key === 'ArrowLeft') go(-1);
+    if (e.key === 'ArrowRight') go(1);
+  });
+
+  // ---------- fake audio + drawing ----------
+  const N = 96;
+  const A = { t: 0, hist: [], spec: new Float32Array(N), pk: [0, 0], rms: [0, 0], M: -14, S: -14, I: -14, tp: -3, corr: .7, pts: [] };
+  const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
+  function step(dt) {
+    A.t += dt; const t = A.t, beat = 60 / 124, ph = t % beat;
+    const kick = Math.exp(-ph * 14), snare = (Math.floor(t / beat) % 2) ? Math.exp(-ph * 9) * .6 : 0, hat = Math.exp(-(t % (beat / 4)) * 40) * .25;
+    const bodyv = .28 + .08 * Math.sin(t * .7);
+    const amp = Math.min(1, bodyv + .55 * kick + .3 * snare + .1 * hat + Math.random() * .06);
+    A.hist.push([amp * (.85 + Math.random() * .15), -amp * (.85 + Math.random() * .15)]);
+    if (A.hist.length > 1600) A.hist.shift();
+    for (let i = 0; i < N; i++) {
+      const f = i / (N - 1);
+      const target = .72 - .42 * f + kick * .35 * Math.exp(-f * 12) + snare * .25 * Math.exp(-((f - .45) ** 2) / .01)
+        + hat * .6 * Math.exp(-((f - .85) ** 2) / .005) + (Math.random() - .5) * .05 + .05 * Math.sin(f * 20 + t * 1.3);
+      A.spec[i] += (target - A.spec[i]) * .35;
+    }
+    const lv = [amp * (.95 + Math.random() * .05), amp * (.9 + Math.random() * .08)];
+    for (let c = 0; c < 2; c++) { A.pk[c] = Math.max(lv[c], A.pk[c] - dt * 1.2); A.rms[c] += (lv[c] * .62 - A.rms[c]) * .08; }
+    A.M += ((-9.5 - (1 - amp) * 9) - A.M) * .15; A.S += (A.M - A.S) * .03; A.I += (A.S - A.I) * .004;
+    A.tp = Math.max(20 * Math.log10(Math.max(lv[0], lv[1])) + .3, A.tp - dt * 2);
+    A.corr = .72 + .1 * Math.sin(t * .4) + (Math.random() - .5) * .04;
+    A.pts = []; for (let i = 0; i < 240; i++) A.pts.push([gauss() * amp * .28, gauss() * amp * .85]);
+  }
+  const ACC = '#6fd0c0', AMB = '#e6b04b', RED = '#e0655a', GRID = '#1f252c', DIM = '#56606b';
+  const db = (v) => 20 * Math.log10(Math.max(v, 1e-4));
+  const dbPos = (v) => clamp((db(v) + 60) / 60, 0, 1);
+
+  function drawWave(g, w, h) {
+    const n = Math.floor(w / 2), H = A.hist, start = Math.max(0, H.length - n), off = n - (H.length - start);
+    g.fillStyle = GRID; g.fillRect(0, h / 2, w, 1);
+    for (let i = start; i < H.length; i++) {
+      const [mx, mn] = H[i], x = (off + i - start) * 2;
+      g.fillStyle = mx > .88 ? AMB : ACC;
+      g.fillRect(x, h / 2 - mx * h * .44, 1.5, (mx - mn) * h * .44);
+    }
+  }
+  function drawSpec(g, w, h, fs) {
+    g.fillStyle = DIM; g.font = `${fs}px JetBrains Mono, monospace`;
+    [[100, '100'], [1000, '1k'], [10000, '10k']].forEach(([f, l]) => {
+      const x = Math.log10(f / 20) / 3 * w; g.fillStyle = GRID; g.fillRect(x, 0, 1, h); g.fillStyle = DIM; g.fillText(l, x + 3, h - 4);
+    });
+    g.beginPath(); g.moveTo(0, h);
+    for (let i = 0; i < N; i++) g.lineTo(i / (N - 1) * w, h - clamp(A.spec[i], 0, 1) * h * .8);
+    g.lineTo(w, h); g.closePath();
+    const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, 'rgba(111,208,192,.35)'); gr.addColorStop(1, 'rgba(111,208,192,.02)');
+    g.fillStyle = gr; g.fill();
+    g.beginPath(); for (let i = 0; i < N; i++) { const x = i / (N - 1) * w, y = h - clamp(A.spec[i], 0, 1) * h * .8; i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.strokeStyle = ACC; g.lineWidth = 1.5; g.stroke();
+  }
+  function drawLoud(g, w, h, fs) {
+    const wide = w >= h * 1.1;
+    const bx = wide ? { x: 6, y: fs * 2.2, w: Math.min(w * .35, 60), h: h - fs * 2.2 - 6 } : { x: 6, y: fs * 2, w: w - 12, h: (h - fs * 2) * .62 };
+    const bw = (bx.w - 4) / 2;
+    for (let c = 0; c < 2; c++) {
+      const x = bx.x + c * (bw + 4);
+      g.fillStyle = '#161a1f'; g.fillRect(x, bx.y, bw, bx.h);
+      const p = dbPos(A.pk[c]) * bx.h, r = dbPos(A.rms[c]) * bx.h;
+      g.fillStyle = 'rgba(111,208,192,.35)'; g.fillRect(x, bx.y + bx.h - p, bw, p);
+      g.fillStyle = ACC; g.fillRect(x, bx.y + bx.h - r, bw, r);
+      g.fillStyle = A.pk[c] > .89 ? RED : AMB; g.fillRect(x, bx.y + bx.h - p, bw, 2);
+    }
+    const lines = [['M', A.M], ['S', A.S], ['I', A.I]];
+    const tx = wide ? bx.x + bx.w + 12 : 6, ty = wide ? fs * 3.8 : bx.y + bx.h + fs * 1.6;
+    const big = Math.round(fs * 1.5);
+    g.font = `500 ${big}px JetBrains Mono, monospace`; g.fillStyle = '#e6eaee';
+    g.fillText(`${A.S.toFixed(1)}`, tx, ty);
+    g.font = `${fs}px JetBrains Mono, monospace`; g.fillStyle = DIM; g.fillText('LUFS short-term', tx, ty + fs * 1.3);
+    lines.forEach(([k, v], i) => { g.fillStyle = k === 'S' ? DIM : '#aab2bb'; if (k !== 'S') g.fillText(`${k} ${v.toFixed(1)}`, tx, ty + fs * (2.8 + i * 1.3)); });
+    g.fillStyle = A.tp > -1 ? RED : '#aab2bb'; g.fillText(`TP ${A.tp.toFixed(1)} dBTP`, tx, ty + fs * 6.8);
+  }
+  function drawStereo(g, w, h, fs) {
+    const bar = fs + 8, s = Math.max(10, Math.min(w, h - bar - fs * 1.5) * .92), cx = w / 2, cy = fs * 1.5 + (h - bar - fs * 1.5) / 2;
+    g.strokeStyle = GRID; g.lineWidth = 1; g.beginPath();
+    g.moveTo(cx - s / 2, cy - s / 2); g.lineTo(cx + s / 2, cy + s / 2); g.moveTo(cx + s / 2, cy - s / 2); g.lineTo(cx - s / 2, cy + s / 2);
+    g.moveTo(cx, cy - s / 2); g.lineTo(cx, cy + s / 2); g.stroke();
+    g.fillStyle = DIM; g.font = `${fs}px JetBrains Mono, monospace`; g.fillText('L', cx - s / 2, cy - s / 2 + fs); g.fillText('R', cx + s / 2 - fs * .7, cy - s / 2 + fs);
+    g.fillStyle = 'rgba(111,208,192,.55)';
+    A.pts.forEach(([sd, md]) => g.fillRect(cx + sd * s / 2, cy - md * s / 2, 1.6, 1.6));
+    const y = h - bar + 2, x0 = 8, x1 = w - 8;
+    g.fillStyle = '#161a1f'; g.fillRect(x0, y, x1 - x0, 4);
+    g.fillStyle = GRID; g.fillRect((x0 + x1) / 2, y - 2, 1, 8);
+    const mx = x0 + (A.corr + 1) / 2 * (x1 - x0);
+    g.fillStyle = A.corr < 0 ? RED : ACC; g.fillRect(mx - 2, y - 3, 4, 10);
+    g.fillStyle = DIM; g.fillText('−1', x0, y + fs + 4); g.fillText('+1', x1 - fs * 1.3, y + fs + 4);
+  }
+  function drawAll() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    screen.querySelectorAll('canvas[data-m]').forEach((c) => {
+      const W = c.clientWidth, H = c.clientHeight; if (!W || !H) return;
+      if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+      const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+      const fs = clamp(Math.min(W, H) / 12, 8, 12);
+      const t = c.dataset.m;
+      let w = W, h = H;
+      if ((t === 'waveform' || t === 'spectrum') && H > W * 1.3) { g.translate(W, 0); g.rotate(Math.PI / 2); w = H; h = W; }
+      if (t === 'waveform') drawWave(g, w, h);
+      else if (t === 'spectrum') drawSpec(g, w, h, fs);
+      else if (t === 'loudness') drawLoud(g, w, h, fs);
+      else drawStereo(g, w, h, fs);
+    });
+    if (dawPh) dawPh.style.left = `calc(14% + ${((A.t * 2.2) % 86).toFixed(2)}%)`;
+  }
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let last = performance.now(), acc = 0;
+  function loop(now) {
+    const dt = Math.min(.05, (now - last) / 1000); last = now; acc += dt;
+    if (!reduced || acc > .1) { step(reduced ? acc : dt); acc = 0; drawAll(); }
+    requestAnimationFrame(loop);
+  }
+  for (let i = 0; i < 400; i++) step(1 / 60);
+  render();
+  requestAnimationFrame(loop);
+})();
+</script>
