@@ -7,7 +7,7 @@ A standalone, highly customizable audio visualizer for music producers. It shows
 ### Audio in
 
 **Source**:
-Where the audio a Das-Meter window is showing comes from: either System Capture or a Send Plugin.
+Where the audio a Meter shows comes from: System Capture or one particular Send Plugin. Each Meter has its own Source.
 _Avoid_: Input, device, feed
 
 **System Capture**:
