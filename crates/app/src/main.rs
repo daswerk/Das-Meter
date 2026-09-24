@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use dasmeter_core::{AppCore, Decision, Event, LoudnessScene, MeterScene, Scene};
+use dasmeter_core::{AppCore, Decision, Event, MeterState, MeterView, Palette, Role, Scene};
 use rtrb::Consumer;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -21,10 +21,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use capture::{CaptureMessage, SystemCapture, Waker};
-use gpu::{Colour, Gpu, Text, WindowSurface};
-use meters::loudness::LoudnessRenderer;
-
-const BACKGROUND: Colour = Colour::rgb(0x11, 0x13, 0x16);
+use gpu::{Gpu, Text, WindowSurface, clear_colour};
+use meters::{Area, MeterRenderer};
 
 fn version_line() -> String {
     format!("Das-Meter {}", env!("CARGO_PKG_VERSION"))
@@ -129,9 +127,10 @@ struct AppWindow {
     window: Arc<Window>,
 }
 
-/// Draws a scene with the GPU: the window's Meter renderers and their shared text.
+/// Draws a scene with the GPU: one renderer per Meter, one for the notes, and their shared text.
 struct Painter {
-    loudness: LoudnessRenderer,
+    meters: Vec<MeterRenderer>,
+    notes: MeterRenderer,
     text: Text,
     gpu: Gpu,
 }
@@ -140,7 +139,8 @@ impl Painter {
     fn new(gpu: Gpu) -> Painter {
         let mut text = Text::new(&gpu);
         Painter {
-            loudness: LoudnessRenderer::new(&gpu, &mut text),
+            meters: Vec::new(),
+            notes: MeterRenderer::new(&gpu, &mut text),
             text,
             gpu,
         }
@@ -148,16 +148,46 @@ impl Painter {
 
     /// Draws `scene` (or just the background, before the first) into `view`.
     fn paint(&mut self, scene: Option<&Scene>, scale: f32, view: &wgpu::TextureView) {
-        if let Some(scene) = scene {
-            let MeterScene::Loudness(loudness) = scene
-                .windows
-                .first()
-                .and_then(|window| window.meters.first())
-                .cloned()
-                .unwrap_or(MeterScene::Loudness(LoudnessScene::Starting));
-            self.loudness
-                .prepare(&self.gpu, &mut self.text, scale, &loudness, &scene.notes);
+        let (width, height) = self.gpu.size();
+        let (width, height) = (width as f32, height as f32);
+        let default_palette = Palette::dark();
+        let palette = scene.map_or(&default_palette, |scene| &scene.palette);
+        self.text.update_viewport(&self.gpu);
+        let meters = scene
+            .and_then(|scene| scene.windows.first())
+            .map_or(&[][..], |window| &window.meters[..]);
+        while self.meters.len() < meters.len() {
+            self.meters
+                .push(MeterRenderer::new(&self.gpu, &mut self.text));
         }
+        let gap = 6.0 * scale;
+        for (renderer, meter) in self.meters.iter_mut().zip(meters) {
+            let frame = meter.frame;
+            let area = Area {
+                x: frame.x * width,
+                y: frame.y * height,
+                width: frame.width * width,
+                height: frame.height * height,
+            };
+            // Half a gap on each side of every Meter makes a full gap between them.
+            let area = Area {
+                x: area.x + gap / 2.0,
+                y: area.y + gap,
+                width: (area.width - gap).max(1.0),
+                height: (area.height - 2.0 * gap).max(1.0),
+            };
+            renderer.prepare(&self.gpu, &mut self.text, area, scale, palette, &meter.state);
+        }
+        let window = Area {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        };
+        let notes = scene.map_or(&[][..], |scene| &scene.notes[..]);
+        self.notes
+            .prepare_notes(&self.gpu, &mut self.text, window, scale, palette, notes);
+
         let mut encoder = self
             .gpu
             .device
@@ -170,7 +200,10 @@ impl Painter {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(BACKGROUND.wgpu(self.gpu.format)),
+                        load: wgpu::LoadOp::Clear(clear_colour(
+                            palette[Role::Background],
+                            self.gpu.format,
+                        )),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -179,9 +212,10 @@ impl Painter {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if scene.is_some() {
-                self.loudness.render(&self.text, &mut pass);
+            for renderer in self.meters.iter().take(meters.len()) {
+                renderer.render(&self.text, &mut pass);
             }
+            self.notes.render(&self.text, &mut pass);
         }
         self.gpu.queue.submit(Some(encoder.finish()));
         self.text.atlas.trim();
@@ -216,8 +250,8 @@ impl ApplicationHandler for Shell {
         }
         let attributes = Window::default_attributes()
             .with_title("Das-Meter")
-            .with_inner_size(LogicalSize::new(300.0, 460.0))
-            .with_min_inner_size(LogicalSize::new(220.0, 320.0));
+            .with_inner_size(LogicalSize::new(1200.0, 340.0))
+            .with_min_inner_size(LogicalSize::new(600.0, 240.0));
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
@@ -261,6 +295,21 @@ impl ApplicationHandler for Shell {
                 let now = self.now();
                 self.core.handle(Event::Visible(!occluded), now);
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(app) = &self.window {
+                    let size = app.window.inner_size();
+                    let point = [
+                        position.x as f32 / size.width.max(1) as f32,
+                        position.y as f32 / size.height.max(1) as f32,
+                    ];
+                    let now = self.now();
+                    self.core.handle(Event::Pointer(Some(point)), now);
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                let now = self.now();
+                self.core.handle(Event::Pointer(None), now);
+            }
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
         }
@@ -303,10 +352,14 @@ fn print_readings() {
             continue;
         }
         let Some(scene) = core.scene() else { continue };
-        let MeterScene::Loudness(loudness) = &scene.windows[0].meters[0];
         let notes: Vec<_> = scene.notes.iter().map(|note| note.text()).collect();
+        let loudness = scene.windows[0].meters.iter().find_map(|meter| match &meter.state {
+            MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(*display)),
+            MeterState::Live(_) => None,
+            other => Some(Err(other.clone())),
+        });
         match loudness {
-            LoudnessScene::Live(d) => {
+            Some(Ok(d)) => {
                 let show = |level: dasmeter_core::Level| {
                     level
                         .db()

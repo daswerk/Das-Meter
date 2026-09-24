@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use dasmeter_core::Colour;
 use glyphon::{Cache, FontSystem, Resolution, SwashCache, TextAtlas, Viewport};
 use winit::window::Window;
 
@@ -164,50 +165,38 @@ impl Text {
     }
 }
 
-/// An sRGB colour, 0–255 per channel, with alpha 0–1.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Colour {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: f32,
+/// A colour as shader output for `format`: linear when the surface encodes sRGB.
+pub fn linear(colour: Colour, format: wgpu::TextureFormat) -> [f32; 4] {
+    let channel = |c: u8| {
+        let c = f32::from(c) / 255.0;
+        if !format.is_srgb() {
+            c
+        } else if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [
+        channel(colour.r),
+        channel(colour.g),
+        channel(colour.b),
+        f32::from(colour.a) / 255.0,
+    ]
 }
 
-impl Colour {
-    pub const fn rgb(r: u8, g: u8, b: u8) -> Colour {
-        Colour { r, g, b, a: 1.0 }
+/// A colour as a render pass's clear colour.
+pub fn clear_colour(colour: Colour, format: wgpu::TextureFormat) -> wgpu::Color {
+    let [r, g, b, a] = linear(colour, format);
+    wgpu::Color {
+        r: f64::from(r),
+        g: f64::from(g),
+        b: f64::from(b),
+        a: f64::from(a),
     }
+}
 
-    pub const fn with_alpha(self, a: f32) -> Colour {
-        Colour { a, ..self }
-    }
-
-    /// The colour as shader output for `format`: linear when the surface encodes sRGB.
-    pub fn for_surface(self, format: wgpu::TextureFormat) -> [f32; 4] {
-        let channel = |c: u8| {
-            let c = f32::from(c) / 255.0;
-            if !format.is_srgb() {
-                c
-            } else if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        [channel(self.r), channel(self.g), channel(self.b), self.a]
-    }
-
-    pub fn wgpu(self, format: wgpu::TextureFormat) -> wgpu::Color {
-        let [r, g, b, a] = self.for_surface(format);
-        wgpu::Color {
-            r: f64::from(r),
-            g: f64::from(g),
-            b: f64::from(b),
-            a: f64::from(a),
-        }
-    }
-
-    pub fn glyphon(self) -> glyphon::Color {
-        glyphon::Color::rgba(self.r, self.g, self.b, (self.a * 255.0).round() as u8)
-    }
+/// A colour for glyphon, which takes sRGB.
+pub fn text_colour(colour: Colour) -> glyphon::Color {
+    glyphon::Color::rgba(colour.r, colour.g, colour.b, colour.a)
 }

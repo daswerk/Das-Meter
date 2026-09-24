@@ -436,6 +436,7 @@ dependencies = [
 name = "dasmeter-app"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "cpal",
  "dasmeter-analysis",
  "dasmeter-core",

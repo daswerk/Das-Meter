@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use dasmeter_analysis::signals::{both, frames, silence, sine};
 use dasmeter_core::{
-    AppCore, Decision, Event, Level, LoudnessDisplay, LoudnessScene, MeterScene, NOTE_DURATION,
-    Note,
+    AppCore, Decision, Event, Level, LoudnessDisplay, MeterScene, MeterState, MeterView,
+    NOTE_DURATION, Note,
 };
 
 const RATE: u32 = 48_000;
@@ -70,17 +70,27 @@ impl Harness {
         decisions
     }
 
-    fn loudness(&self) -> LoudnessScene {
+    fn meters(&self) -> Vec<MeterScene> {
         let scene = self.core.scene().expect("a scene was drawn");
         assert_eq!(scene.windows.len(), 1, "one window");
-        assert_eq!(scene.windows[0].meters.len(), 1, "one Meter");
-        let MeterScene::Loudness(loudness) = &scene.windows[0].meters[0];
-        loudness.clone()
+        scene.windows[0].meters.clone()
+    }
+
+    /// The Loudness Meter's state.
+    fn loudness(&self) -> MeterState {
+        self.meters()
+            .into_iter()
+            .map(|meter| meter.state)
+            .find(|state| match state {
+                MeterState::Live(view) => matches!(view, MeterView::Loudness { .. }),
+                _ => true,
+            })
+            .expect("a Loudness Meter")
     }
 
     fn live(&self) -> LoudnessDisplay {
         match self.loudness() {
-            LoudnessScene::Live(display) => display,
+            MeterState::Live(MeterView::Loudness { display, .. }) => display,
             other => panic!("expected live readings, got {other:?}"),
         }
     }
@@ -112,7 +122,7 @@ fn assert_level(what: &str, level: Level, want: f64, tolerance: f64) {
 fn before_capture_starts_the_meter_says_so() {
     let mut app = Harness::new();
     assert_eq!(app.decide(), Decision::Draw);
-    assert_eq!(app.loudness(), LoudnessScene::Starting);
+    assert_eq!(app.loudness(), MeterState::Starting);
 }
 
 #[test]
@@ -122,7 +132,7 @@ fn a_capture_failure_is_shown_in_place_of_the_meter() {
     assert_eq!(app.decide(), Decision::Draw);
     assert_eq!(
         app.loudness(),
-        LoudnessScene::Unavailable("No output device".to_owned())
+        MeterState::Unavailable("No output device".to_owned())
     );
 }
 
@@ -154,6 +164,7 @@ fn an_output_change_resets_the_readings_with_a_brief_note() {
     app.play(RATE, &tone(RATE, -20.0, 4.0));
     assert!(app.live().integrated != Level::Silent);
 
+    app.now += Duration::from_millis(20);
     let changed_at = app.now;
     app.send(Event::CaptureStarted {
         sample_rate: 96_000,
@@ -196,8 +207,9 @@ fn draws_stop_once_the_meter_settles_in_silence() {
     let decisions = app.play(RATE, &tone(RATE, -12.0, 2.0));
     assert!(decisions.contains(&Decision::Draw), "audio is drawn");
 
-    // Momentary LUFS, RMS and peak hold take a few seconds to fall away.
-    app.play(RATE, &quiet(RATE, 5.0));
+    // Loudness, peak holds and the Spectrum take a few seconds to fall away,
+    // and the Waveform its whole 4 s span to scroll the tone out.
+    app.play(RATE, &quiet(RATE, 8.0));
     let settled = app.play(RATE, &quiet(RATE, 2.0));
     assert!(
         settled

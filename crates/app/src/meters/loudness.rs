@@ -1,317 +1,151 @@
-//! A plain Loudness Meter renderer: level bars and numbers in fixed colours.
-//!
-//! It turns one [`LoudnessScene`] into rectangles and text. All layout is in
-//! physical pixels, scaled by the window's scale factor.
+//! The Loudness Meter: numbers for M, S, I, LRA and true peak; L/R RMS bars
+//! with sample-peak lines and hold ticks; a LUFS bar with the target line.
 
-use dasmeter_core::{Level, LoudnessDisplay, LoudnessScene, Note};
-use glyphon::{
-    Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, TextRenderer, Weight,
-};
+use dasmeter_core::{Level, LoudnessDisplay, LoudnessMeterSettings, LufsBar, Role};
 
-use super::rects::{Rect, Rects};
-use crate::gpu::{Colour, Gpu, Text};
+use super::labels::Align;
+use super::shapes::Area;
+use super::{Canvas, map};
 
-const TEXT: Colour = Colour::rgb(0xd8, 0xdd, 0xe3);
-const DIM: Colour = Colour::rgb(0x7c, 0x85, 0x91);
-const NOTE: Colour = Colour::rgb(0xff, 0xb3, 0x47);
-const TRACK: Colour = Colour::rgb(0x22, 0x26, 0x2b);
-const TICK: Colour = Colour::rgb(0x33, 0x39, 0x40);
-const RMS: Colour = Colour::rgb(0x2f, 0xbf, 0x71);
-const PEAK: Colour = RMS.with_alpha(0.4);
-const HOLD: Colour = Colour::rgb(0xe8, 0xe8, 0xe8);
-const MOMENTARY: Colour = Colour::rgb(0x4d, 0xa3, 0xff);
+/// Scale marks on the bars, in dB, kept if inside the bar range.
+const MARKS: [f32; 10] = [0.0, -6.0, -12.0, -18.0, -24.0, -30.0, -36.0, -48.0, -60.0, -72.0];
 
-/// The bars show −60 dB to 0 dB (dBFS for levels, LUFS for momentary loudness).
-const RANGE_DB: f32 = 60.0;
-const SCALE: [i32; 8] = [0, -6, -12, -18, -24, -36, -48, -60];
+pub fn draw(
+    c: &mut Canvas,
+    area: Area,
+    settings: &LoudnessMeterSettings,
+    display: &LoudnessDisplay,
+) {
+    let (text, dim) = (c.colour(Role::Text), c.dim());
+    let size = 13.0;
+    let line = c.px(18.0);
 
-/// One line of text to draw, at a position in physical pixels.
-struct Label {
-    text: String,
-    x: f32,
-    y: f32,
-    size: f32,
-    colour: Colour,
-    bold: bool,
-}
+    // Numbers.
+    let true_peak = if display.true_peak_oversampled {
+        "TP"
+    } else {
+        "Peak"
+    };
+    let rows = [
+        ("M", display.momentary, "LUFS"),
+        ("S", display.short_term, "LUFS"),
+        ("I", display.integrated, "LUFS"),
+        ("LRA", display.range, "LU"),
+        (true_peak, display.true_peak_max, "dBTP"),
+    ];
+    let value_right = area.x + c.px(96.0);
+    for (i, (name, level, unit)) in rows.into_iter().enumerate() {
+        let y = area.y + line * i as f32;
+        c.text(name, area.x, y, size, dim, Align::Left);
+        c.bold(&number(level), value_right, y, size, text, Align::Right);
+        c.text(unit, value_right + c.px(6.0), y, size, dim, Align::Left);
+    }
+    let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
+    c.text(&rate, area.right(), area.y, 10.0, dim, Align::Right);
 
-pub struct LoudnessRenderer {
-    rects: Rects,
-    text: TextRenderer,
-    /// Shaped text, reused while a label's text and size stay the same.
-    buffers: Vec<(String, f32, bool, Buffer)>,
-    labels: Vec<Label>,
-}
+    // Bars: L, R, then the LUFS bar.
+    let (_, bars) = area.split_top(line * rows.len() as f32 + c.px(10.0));
+    let (bars, names) = bars.split_bottom(c.px(16.0));
+    let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
+    let y_of = |db: f64| map(db as f32, range, bars.bottom(), bars.y);
+    let left = bars.x + c.px(28.0);
+    let gap = c.px(6.0);
+    let width = ((bars.right() - left - 3.0 * gap) / 3.0).max(1.0);
+    let grid = c.colour(Role::Grid);
+    let thin = c.px(1.0).max(1.0);
 
-impl LoudnessRenderer {
-    pub fn new(gpu: &Gpu, text: &mut Text) -> LoudnessRenderer {
-        LoudnessRenderer {
-            rects: Rects::new(gpu),
-            text: TextRenderer::new(
-                &mut text.atlas,
-                &gpu.device,
-                wgpu::MultisampleState::default(),
-                None,
-            ),
-            buffers: Vec::new(),
-            labels: Vec::new(),
-        }
+    for db in MARKS.into_iter().filter(|&db| db >= range.0 && db <= range.1) {
+        let y = y_of(f64::from(db));
+        c.text(&format!("{db}"), bars.x, y - c.px(6.0), 9.0, dim, Align::Left);
+        let tick = Area {
+            x: left - c.px(3.0),
+            y,
+            width: bars.right() - left + c.px(3.0),
+            height: thin,
+        };
+        c.shapes.rect(tick, grid.faded(0.6));
     }
 
-    /// Lays out the Meter and uploads everything for [`LoudnessRenderer::render`].
-    pub fn prepare(
-        &mut self,
-        gpu: &Gpu,
-        text: &mut Text,
-        scale: f32,
-        scene: &LoudnessScene,
-        notes: &[Note],
-    ) {
-        self.rects.clear();
-        self.labels.clear();
-        let (width, height) = gpu.size();
-        let (width, height) = (width as f32, height as f32);
-        let pad = 16.0 * scale;
-
-        match scene {
-            LoudnessScene::Starting => {
-                self.label("Starting System Capture…", pad, pad, 15.0 * scale, DIM)
-            }
-            LoudnessScene::Unavailable(reason) => {
-                self.label(
-                    "System Capture is unavailable",
-                    pad,
-                    pad,
-                    15.0 * scale,
-                    TEXT,
-                );
-                self.label(reason, pad, pad + 24.0 * scale, 13.0 * scale, DIM);
-            }
-            LoudnessScene::Live(display) => {
-                self.layout_live(gpu, display, scale, width, height - 28.0 * scale)
-            }
-        }
-        for (i, note) in notes.iter().enumerate() {
-            let y = height - pad - 18.0 * scale * (notes.len() - i) as f32;
-            self.label(note.text(), pad, y, 14.0 * scale, NOTE);
-        }
-
-        self.rects.prepare(gpu);
-        self.prepare_text(gpu, text);
-    }
-
-    fn layout_live(
-        &mut self,
-        gpu: &Gpu,
-        display: &LoudnessDisplay,
-        scale: f32,
-        width: f32,
-        bottom: f32,
-    ) {
-        let pad = 16.0 * scale;
-        let line = 21.0 * scale;
-        let size = 15.0 * scale;
-
-        let true_peak = if display.true_peak_oversampled {
-            "TP"
-        } else {
-            "Peak"
-        };
-        let rows = [
-            ("M", display.momentary, "LUFS"),
-            ("S", display.short_term, "LUFS"),
-            ("I", display.integrated, "LUFS"),
-            ("LRA", display.range, "LU"),
-            (true_peak, display.true_peak_max, "dBTP"),
-        ];
-        for (i, (name, level, unit)) in rows.into_iter().enumerate() {
-            let y = pad + line * i as f32;
-            self.label(name, pad, y, size, DIM);
-            self.bold(
-                &format!("{:>6}", number(level)),
-                pad + 44.0 * scale,
-                y,
-                size,
-                TEXT,
-            );
-            self.label(unit, pad + 112.0 * scale, y, size, DIM);
-        }
-        let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
-        self.label(&rate, width - pad - 64.0 * scale, pad, 12.0 * scale, DIM);
-
-        // Bars: L and R levels, then momentary loudness.
-        let top = pad + line * rows.len() as f32 + 16.0 * scale;
-        let names = 18.0 * scale;
-        let bar_bottom = bottom - names;
-        let bar_height = (bar_bottom - top).max(0.0);
-        let left = pad + 34.0 * scale;
-        let gap = 10.0 * scale;
-        let bar_width = ((width - pad - left - 3.0 * gap) / 3.0).max(1.0);
-        let y_of = |db: f64| {
-            let fraction = ((-db as f32) / RANGE_DB).clamp(0.0, 1.0);
-            top + fraction * bar_height
-        };
-
-        for db in SCALE {
-            let y = y_of(f64::from(db));
-            self.label(&db.to_string(), pad, y - 7.0 * scale, 11.0 * scale, DIM);
-            let tick = Rect {
-                x: left - 4.0 * scale,
-                y,
-                width: width - pad - left + 4.0 * scale,
-                height: scale.max(1.0),
-            };
-            self.rects.push(gpu, tick, TICK);
-        }
-
-        let columns = [
-            ("L", Some(display.left)),
-            ("R", Some(display.right)),
-            ("M", None),
-        ];
-        for (i, (name, channel)) in columns.into_iter().enumerate() {
-            let x = left + i as f32 * (bar_width + gap) + if i == 2 { gap } else { 0.0 };
-            let track = Rect {
+    let (bar, peak) = (c.colour(Role::LoudnessBar), c.colour(Role::LoudnessPeak));
+    let track = c.colour(Role::Background);
+    let column = |i: usize| left + i as f32 * (width + gap) + if i == 2 { gap } else { 0.0 };
+    for (i, (name, levels)) in [("L", display.left), ("R", display.right)]
+        .into_iter()
+        .enumerate()
+    {
+        let x = column(i);
+        c.shapes.rect(Area { x, width, ..bars }, track);
+        if let Some(db) = levels.rms.db() {
+            let y = y_of(db);
+            let fill = Area {
                 x,
-                y: top,
-                width: bar_width,
-                height: bar_height,
+                y,
+                width,
+                height: bars.bottom() - y,
             };
-            self.rects.push(gpu, track, TRACK);
-            let mut fill = |level: Level, colour: Colour| {
-                if let Some(db) = level.db() {
-                    let y = y_of(db);
-                    self.rects.push(
-                        gpu,
-                        Rect {
-                            x,
-                            y,
-                            width: bar_width,
-                            height: top + bar_height - y,
-                        },
-                        colour,
-                    );
-                }
-            };
-            match channel {
-                Some(levels) => {
-                    fill(levels.peak, PEAK);
-                    fill(levels.rms, RMS);
-                    if let Some(db) = levels.peak_hold.db() {
-                        let y = y_of(db);
-                        let hold = Rect {
-                            x,
-                            y: y - scale,
-                            width: bar_width,
-                            height: 2.0 * scale,
-                        };
-                        self.rects.push(gpu, hold, HOLD);
-                    }
-                }
-                None => fill(display.momentary, MOMENTARY),
-            }
-            self.label(
-                name,
-                x + bar_width / 2.0 - 4.0 * scale,
-                bar_bottom + 2.0 * scale,
-                12.0 * scale,
-                DIM,
-            );
+            c.shapes.rect(fill, bar);
         }
+        if let Some(db) = levels.peak.db() {
+            let y = y_of(db);
+            c.shapes.line([x, y], [x + width, y], c.px(1.5), peak.faded(0.7));
+        }
+        if let Some(db) = levels.peak_hold.db() {
+            let y = y_of(db);
+            let tick = Area {
+                x,
+                y: y - c.px(1.0),
+                width,
+                height: c.px(2.0),
+            };
+            c.shapes.rect(tick, peak);
+        }
+        let centre = x + width / 2.0;
+        c.text(name, centre, names.y + c.px(2.0), 10.0, dim, Align::Centre);
     }
 
-    fn label(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour) {
-        self.labels.push(Label {
-            text: text.to_owned(),
+    // The LUFS bar turns the over-target colour above the target.
+    let x = column(2);
+    let lufs = match settings.lufs_bar {
+        LufsBar::ShortTerm => display.short_term,
+        LufsBar::Momentary => display.momentary,
+    };
+    let over = settings
+        .target
+        .zip(lufs.db())
+        .is_some_and(|(target, db)| db > target);
+    let lufs_colour = if over {
+        c.colour(Role::LoudnessOverTarget)
+    } else {
+        bar
+    };
+    c.shapes.rect(Area { x, width, ..bars }, track);
+    if let Some(db) = lufs.db() {
+        let y = y_of(db);
+        let fill = Area {
             x,
             y,
-            size,
-            colour,
-            bold: false,
-        });
+            width,
+            height: bars.bottom() - y,
+        };
+        c.shapes.rect(fill, lufs_colour);
     }
-
-    fn bold(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour) {
-        self.labels.push(Label {
-            text: text.to_owned(),
-            x,
-            y,
-            size,
-            colour,
-            bold: true,
-        });
+    if let Some(target) = settings.target {
+        let y = y_of(target);
+        let colour = if over {
+            c.colour(Role::LoudnessOverTarget)
+        } else {
+            text
+        };
+        c.shapes
+            .line([x - c.px(3.0), y], [x + width + c.px(3.0), y], c.px(2.0), colour);
+        let label = format!("{target}");
+        c.text(&label, x + width, y - c.px(14.0), 9.0, colour, Align::Right);
     }
-
-    fn prepare_text(&mut self, gpu: &Gpu, text: &mut Text) {
-        self.buffers.truncate(self.labels.len());
-        for (i, label) in self.labels.iter().enumerate() {
-            let fresh = self.buffers.get(i).is_some_and(|(t, s, b, _)| {
-                *t == label.text && *s == label.size && *b == label.bold
-            });
-            if fresh {
-                continue;
-            }
-            let mut buffer = Buffer::new(
-                &mut text.font_system,
-                Metrics::new(label.size, label.size * 1.25),
-            );
-            let attrs = Attrs::new()
-                .family(Family::Monospace)
-                .weight(if label.bold {
-                    Weight::BOLD
-                } else {
-                    Weight::NORMAL
-                });
-            buffer.set_size(None, None);
-            buffer.set_text(&label.text, &attrs, Shaping::Basic, None);
-            buffer.shape_until_scroll(&mut text.font_system, false);
-            let entry = (label.text.clone(), label.size, label.bold, buffer);
-            if i < self.buffers.len() {
-                self.buffers[i] = entry;
-            } else {
-                self.buffers.push(entry);
-            }
-        }
-
-        let (width, height) = gpu.size();
-        let areas = self
-            .labels
-            .iter()
-            .zip(&self.buffers)
-            .map(|(label, (_, _, _, buffer))| TextArea {
-                buffer,
-                left: label.x,
-                top: label.y,
-                scale: 1.0,
-                bounds: TextBounds {
-                    left: 0,
-                    top: 0,
-                    right: width as i32,
-                    bottom: height as i32,
-                },
-                default_color: label.colour.glyphon(),
-                custom_glyphs: &[],
-            });
-        text.update_viewport(gpu);
-        if let Err(error) = self.text.prepare(
-            &gpu.device,
-            &gpu.queue,
-            &mut text.font_system,
-            &mut text.atlas,
-            &text.viewport,
-            areas,
-            &mut text.swash_cache,
-        ) {
-            eprintln!("text: {error}");
-        }
-    }
-
-    pub fn render(&self, text: &Text, pass: &mut wgpu::RenderPass) {
-        self.rects.render(pass);
-        if let Err(error) = self.text.render(&text.atlas, &text.viewport, pass) {
-            eprintln!("text: {error}");
-        }
-    }
+    let name = match settings.lufs_bar {
+        LufsBar::ShortTerm => "S",
+        LufsBar::Momentary => "M",
+    };
+    c.text(name, x + width / 2.0, names.y + c.px(2.0), 10.0, dim, Align::Centre);
 }
 
 /// A reading as shown: one decimal, or "-inf" for silence.

@@ -5,12 +5,16 @@
 
 use dasmeter_analysis::{ChannelLevels, LoudnessReadings};
 
-/// Everything on screen: the windows and the notes shown over them.
+use crate::meters::MeterView;
+use crate::theme::Palette;
+
+/// Everything on screen: the windows, the notes shown over them and the colours.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
     pub windows: Vec<WindowScene>,
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
+    pub palette: Palette,
 }
 
 /// One window and the Meters in it.
@@ -20,20 +24,41 @@ pub struct WindowScene {
     pub meters: Vec<MeterScene>,
 }
 
-/// One Meter's content.
+/// One Meter: where it sits in its window and what it shows.
 #[derive(Clone, Debug, PartialEq)]
-pub enum MeterScene {
-    Loudness(LoudnessScene),
+pub struct MeterScene {
+    pub frame: Frame,
+    pub state: MeterState,
 }
 
-/// What the Loudness Meter shows.
+/// A rectangle as fractions of the window: 0 to 1 from the top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Frame {
+    /// Where `point` (window fractions) falls inside this frame, if it does.
+    pub fn locate(&self, [x, y]: [f32; 2]) -> Option<[f32; 2]> {
+        let inside = [(x - self.x) / self.width, (y - self.y) / self.height];
+        inside
+            .iter()
+            .all(|v| (0.0..=1.0).contains(v))
+            .then_some(inside)
+    }
+}
+
+/// What a Meter shows.
 #[derive(Clone, Debug, PartialEq)]
-pub enum LoudnessScene {
+pub enum MeterState {
     /// System Capture hasn't delivered a sample rate yet.
     Starting,
     /// System Capture couldn't start; the reason is shown in place of the Meter.
     Unavailable(String),
-    Live(LoudnessDisplay),
+    Live(MeterView),
 }
 
 /// A brief note shown over the Meters.

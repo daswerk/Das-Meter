@@ -12,8 +12,8 @@ use crate::gpu::Gpu;
 
 const RATE: u32 = 48_000;
 const SCALE: f32 = 2.0;
-const WIDTH: u32 = 600;
-const HEIGHT: u32 = 920;
+const WIDTH: u32 = 2400;
+const HEIGHT: u32 = 680;
 
 pub fn render(path: &str) -> Result<(), String> {
     // Six seconds of pink noise with an output change after four, so the
@@ -34,6 +34,8 @@ pub fn render(path: &str) -> Result<(), String> {
             core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
         }
     }
+    // The cursor over the Spectrum, for its readout.
+    core.handle(Event::Pointer(Some([0.4, 0.5])), now);
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
