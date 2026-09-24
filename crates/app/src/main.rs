@@ -1,11 +1,336 @@
 //! The Das-Meter app: turns the app core's scene into windows and Meters.
+//!
+//! The shell is thin: it feeds System Capture audio and window events into the
+//! app core, draws the scene when the core says so, and otherwise sleeps.
+
+mod capture;
+mod gpu;
+mod meters;
+mod snapshot;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
+
+use dasmeter_core::{AppCore, Decision, Event, LoudnessScene, MeterScene, Scene};
+use rtrb::Consumer;
+use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::{Window, WindowId};
+
+use capture::{CaptureMessage, SystemCapture, Waker};
+use gpu::{Colour, Gpu, Text, WindowSurface};
+use meters::loudness::LoudnessRenderer;
+
+const BACKGROUND: Colour = Colour::rgb(0x11, 0x13, 0x16);
 
 fn version_line() -> String {
     format!("Das-Meter {}", env!("CARGO_PKG_VERSION"))
 }
 
 fn main() {
-    println!("{}", version_line());
+    match std::env::args().nth(1).as_deref() {
+        Some("--version") => println!("{}", version_line()),
+        // Hidden: System Capture into the app core, readings printed once a second.
+        Some("--print-readings") => print_readings(),
+        // Hidden: a generated signal through the core, drawn offscreen to a PPM image.
+        Some("--render-snapshot") => {
+            let path = std::env::args().nth(2).unwrap_or("snapshot.ppm".into());
+            if let Err(error) = snapshot::render(&path) {
+                eprintln!("snapshot: {error}");
+                std::process::exit(1);
+            }
+        }
+        _ => run(),
+    }
+}
+
+/// System Capture feeding the app core: the active Source's ring and the capture thread's messages.
+struct Audio {
+    messages: mpsc::Receiver<CaptureMessage>,
+    ring: Option<Consumer<f32>>,
+    waker: Arc<Waker>,
+    settled: Arc<AtomicBool>,
+    _capture: SystemCapture,
+}
+
+impl Audio {
+    fn start(wake: impl Fn() + Send + Sync + 'static) -> Audio {
+        let waker = Waker::new(wake);
+        let settled = Arc::new(AtomicBool::new(false));
+        let (capture, messages) = SystemCapture::start(waker.clone(), settled.clone());
+        Audio {
+            messages,
+            ring: None,
+            waker,
+            settled,
+            _capture: capture,
+        }
+    }
+
+    /// Feeds everything captured so far into the core, in order.
+    fn pump(&mut self, core: &mut AppCore, now: Duration) {
+        self.waker.clear();
+        loop {
+            if let Some(ring) = &mut self.ring {
+                let available = ring.slots();
+                if let Ok(chunk) = ring.read_chunk(available) {
+                    let (first, second) = chunk.as_slices();
+                    core.handle(Event::Audio(first), now);
+                    core.handle(Event::Audio(second), now);
+                    chunk.commit_all();
+                }
+            }
+            // The previous ring is complete once its successor is announced.
+            match self.messages.try_recv() {
+                Ok(CaptureMessage::Started { sample_rate, audio }) => {
+                    core.handle(Event::CaptureStarted { sample_rate }, now);
+                    self.ring = Some(audio);
+                }
+                Ok(CaptureMessage::Failed(reason)) => {
+                    core.handle(Event::CaptureFailed(&reason), now);
+                    self.ring = None;
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}
+
+fn run() {
+    let event_loop = EventLoop::<()>::with_user_event()
+        .build()
+        .expect("create the event loop");
+    let proxy = event_loop.create_proxy();
+    let mut shell = Shell {
+        start: Instant::now(),
+        core: AppCore::new(),
+        audio: Audio::start(move || {
+            let _ = proxy.send_event(());
+        }),
+        window: None,
+    };
+    event_loop.run_app(&mut shell).expect("run the event loop");
+}
+
+struct Shell {
+    start: Instant,
+    core: AppCore,
+    audio: Audio,
+    window: Option<AppWindow>,
+}
+
+struct AppWindow {
+    painter: Painter,
+    surface: WindowSurface,
+    // Dropped last: the surface must go before the window.
+    window: Arc<Window>,
+}
+
+/// Draws a scene with the GPU: the window's Meter renderers and their shared text.
+struct Painter {
+    loudness: LoudnessRenderer,
+    text: Text,
+    gpu: Gpu,
+}
+
+impl Painter {
+    fn new(gpu: Gpu) -> Painter {
+        let mut text = Text::new(&gpu);
+        Painter {
+            loudness: LoudnessRenderer::new(&gpu, &mut text),
+            text,
+            gpu,
+        }
+    }
+
+    /// Draws `scene` (or just the background, before the first) into `view`.
+    fn paint(&mut self, scene: Option<&Scene>, scale: f32, view: &wgpu::TextureView) {
+        if let Some(scene) = scene {
+            let MeterScene::Loudness(loudness) = scene
+                .windows
+                .first()
+                .and_then(|window| window.meters.first())
+                .cloned()
+                .unwrap_or(MeterScene::Loudness(LoudnessScene::Starting));
+            self.loudness
+                .prepare(&self.gpu, &mut self.text, scale, &loudness, &scene.notes);
+        }
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("scene"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(BACKGROUND.wgpu(self.gpu.format)),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if scene.is_some() {
+                self.loudness.render(&self.text, &mut pass);
+            }
+        }
+        self.gpu.queue.submit(Some(encoder.finish()));
+        self.text.atlas.trim();
+    }
+}
+
+impl Shell {
+    fn now(&self) -> Duration {
+        self.start.elapsed()
+    }
+
+    fn draw(&mut self) {
+        let Some(app) = &mut self.window else { return };
+        let Some(frame) = app.surface.frame(&app.painter.gpu) else {
+            app.window.request_redraw();
+            return;
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        app.painter
+            .paint(self.core.scene(), app.window.scale_factor() as f32, &view);
+        app.window.pre_present_notify();
+        app.painter.gpu.queue.present(frame);
+    }
+}
+
+impl ApplicationHandler for Shell {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let attributes = Window::default_attributes()
+            .with_title("Das-Meter")
+            .with_inner_size(LogicalSize::new(300.0, 460.0))
+            .with_min_inner_size(LogicalSize::new(220.0, 320.0));
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .expect("create the window"),
+        );
+        let (gpu, surface) = match pollster::block_on(Gpu::for_window(window.clone())) {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("Das-Meter needs a GPU it can draw with: {error}");
+                event_loop.exit();
+                return;
+            }
+        };
+        self.window = Some(AppWindow {
+            painter: Painter::new(gpu),
+            surface,
+            window,
+        });
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _wake: ()) {
+        // Audio arrived; about_to_wait feeds it in and decides.
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                if let Some(app) = &mut self.window {
+                    app.surface
+                        .resize(&mut app.painter.gpu, size.width, size.height);
+                    app.window.request_redraw();
+                }
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(app) = &self.window {
+                    app.window.request_redraw();
+                }
+            }
+            WindowEvent::Occluded(occluded) => {
+                let now = self.now();
+                self.core.handle(Event::Visible(!occluded), now);
+            }
+            WindowEvent::RedrawRequested => self.draw(),
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = self.now();
+        self.audio.pump(&mut self.core, now);
+        let decision = self.core.decide(now);
+        self.audio.settled.store(
+            decision == Decision::Sleep { until: None },
+            Ordering::Release,
+        );
+        match decision {
+            Decision::Draw => {
+                if let Some(app) = &self.window {
+                    app.window.request_redraw();
+                }
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
+            Decision::Sleep { until: Some(until) } => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.start + until));
+            }
+            Decision::Sleep { until: None } => event_loop.set_control_flow(ControlFlow::Wait),
+        }
+    }
+}
+
+/// Runs System Capture into the app core without a window and prints the
+/// Loudness Meter's readings once a second, for checks against a reference.
+fn print_readings() {
+    let start = Instant::now();
+    let mut core = AppCore::new();
+    let mut audio = Audio::start(|| {});
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let now = start.elapsed();
+        audio.pump(&mut core, now);
+        if core.decide(now) != Decision::Draw {
+            continue;
+        }
+        let Some(scene) = core.scene() else { continue };
+        let MeterScene::Loudness(loudness) = &scene.windows[0].meters[0];
+        let notes: Vec<_> = scene.notes.iter().map(|note| note.text()).collect();
+        match loudness {
+            LoudnessScene::Live(d) => {
+                let show = |level: dasmeter_core::Level| {
+                    level
+                        .db()
+                        .map_or_else(|| "-inf".to_owned(), |db| format!("{db:.1}"))
+                };
+                println!(
+                    "{:>6.1}s {} Hz  M {:>6}  S {:>6}  I {:>6} LUFS  LRA {:>5}  TP {:>6}  peak L {:>6} R {:>6}  RMS L {:>6} R {:>6}  {}",
+                    now.as_secs_f64(),
+                    d.sample_rate,
+                    show(d.momentary),
+                    show(d.short_term),
+                    show(d.integrated),
+                    show(d.range),
+                    show(d.true_peak_max),
+                    show(d.left.peak),
+                    show(d.right.peak),
+                    show(d.left.rms),
+                    show(d.right.rms),
+                    notes.join(", "),
+                );
+            }
+            other => println!("{:>6.1}s {other:?} {}", now.as_secs_f64(), notes.join(", ")),
+        }
+    }
 }
 
 #[cfg(test)]

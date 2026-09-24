@@ -14,9 +14,15 @@ name = "das-meter"
 path = "src/main.rs"
 
 [dependencies]
+cpal = "0.18"
 dasmeter-analysis = { path = "../analysis" }
 dasmeter-core = { path = "../core" }
 dasmeter-transport = { path = "../transport" }
+glyphon = "0.12"
+pollster = "1.0.1"
+rtrb = "0.4.0"
+wgpu = "30"
+winit = "0.30.13"
 
 [lints]
 workspace = true
