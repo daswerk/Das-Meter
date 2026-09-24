@@ -6,8 +6,12 @@ A standalone, highly customizable audio visualizer for music producers. It shows
 
 ### Audio in
 
+**Listen to**:
+The app-wide choice of where all Meters get their audio: System Capture, or Send Plugins. Meters never mix the two.
+_Avoid_: Input mode, Source Mode
+
 **Source**:
-Where the audio a Meter shows comes from: System Capture or one particular Send Plugin. Each Meter has its own Source.
+Where the audio a Meter shows comes from. When the app listens to System Capture, every Meter's Source is System Capture; when it listens to Send Plugins, each Meter picks its own Send Plugin as its Source.
 _Avoid_: Input, device, feed
 
 **System Capture**:
@@ -15,7 +19,7 @@ The default Source: whatever audio the computer is currently playing.
 _Avoid_: Loopback, desktop audio
 
 **Send Plugin**:
-A DAW plugin with no visuals of its own that forwards the audio of the track it sits on to the Das-Meter app.
+A DAW plugin that forwards the audio of the track it sits on to the Das-Meter app. It shows no Meters of its own. Each one has a name (typed by the user, else the DAW's track name, else an animal name such as "Otter") and a colour (the DAW's track colour, else a random one), and keeps both across project reloads.
 _Avoid_: Server plugin, bridge
 
 ### Visuals
