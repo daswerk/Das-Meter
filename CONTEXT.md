@@ -24,6 +24,14 @@ _Avoid_: Server plugin, bridge
 One visualization of the audio, such as a Waveform or a Spectrum, with its own settings.
 _Avoid_: Module, visualizer, widget
 
+**Loudness Meter**:
+The Meter for how loud the audio is: peak and RMS levels together with LUFS loudness.
+_Avoid_: Level meter, LUFS meter, VU
+
+**Stereometer**:
+The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
+_Avoid_: Goniometer, vectorscope, correlometer
+
 **Preset**:
 A saved setup: which Meters are shown, how they are arranged, their settings and the look.
 _Avoid_: Profile, scene
