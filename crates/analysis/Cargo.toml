@@ -24,3 +24,7 @@ harness = false
 [[bench]]
 name = "spectrum"
 harness = false
+
+[[bench]]
+name = "stereometer_waveform"
+harness = false

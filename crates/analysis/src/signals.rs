@@ -24,17 +24,29 @@ pub fn silence(frames: usize) -> Vec<f32> {
     vec![0.0; frames]
 }
 
-/// Mono pink noise (−3 dB per octave), deterministic for a given `seed`, peaking near `dbfs`.
-///
-/// White noise from a xorshift generator through Paul Kellet's pink filter.
-pub fn pink_noise(frames: usize, dbfs: f64, seed: u64) -> Vec<f32> {
+/// Uniform white noise in [−1, 1), deterministic for a given `seed`.
+fn white(seed: u64) -> impl FnMut() -> f64 {
     let mut state = seed | 1;
-    let mut white = move || {
+    move || {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
         (state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
-    };
+    }
+}
+
+/// Mono white noise, deterministic for a given `seed`, peaking near `dbfs`.
+pub fn white_noise(frames: usize, dbfs: f64, seed: u64) -> Vec<f32> {
+    let mut next = white(seed);
+    let gain = amplitude(dbfs);
+    (0..frames).map(|_| (next() * gain) as f32).collect()
+}
+
+/// Mono pink noise (−3 dB per octave), deterministic for a given `seed`, peaking near `dbfs`.
+///
+/// White noise from a xorshift generator through Paul Kellet's pink filter.
+pub fn pink_noise(frames: usize, dbfs: f64, seed: u64) -> Vec<f32> {
+    let mut white = white(seed);
     let mut b = [0.0f64; 7];
     let mut out: Vec<f64> = (0..frames)
         .map(|_| {

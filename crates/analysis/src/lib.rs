@@ -8,6 +8,8 @@ mod channel_view;
 pub mod loudness;
 pub mod signals;
 pub mod spectrum;
+pub mod stereometer;
+pub mod waveform;
 
 pub use channel_view::ChannelView;
 
@@ -18,3 +20,7 @@ pub use spectrum::{
     Note, Spectrum, SpectrumAnalyser, SpectrumSettings, SpectrumStyle, SpectrumTrace,
     WindowFunction, note_name,
 };
+pub use stereometer::{
+    StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,
+};
+pub use waveform::{WaveformAnalyser, WaveformColumn, WaveformScale, WaveformSettings};
