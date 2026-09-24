@@ -1,0 +1,19 @@
+[package]
+name = "dasmeter-send"
+description = "The Das-Meter Send Plugin (CLAP, wrapped to VST3 and AU)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dasmeter-transport = { path = "../transport" }
+
+[lints]
+workspace = true

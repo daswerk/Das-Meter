@@ -1,0 +1,22 @@
+[package]
+name = "dasmeter-app"
+description = "The Das-Meter app: platform shell and Meter renderers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "das-meter"
+path = "src/main.rs"
+
+[dependencies]
+dasmeter-analysis = { path = "../analysis" }
+dasmeter-core = { path = "../core" }
+dasmeter-transport = { path = "../transport" }
+
+[lints]
+workspace = true
