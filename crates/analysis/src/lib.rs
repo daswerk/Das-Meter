@@ -4,9 +4,17 @@
 //! code (checked by `scripts/check-headless-deps.sh`). Measurement definitions
 //! are in ADR 0005 (`docs/adr/0005-measurement-definitions-and-verification.md`).
 
+mod channel_view;
 pub mod loudness;
 pub mod signals;
+pub mod spectrum;
+
+pub use channel_view::ChannelView;
 
 pub use loudness::{
     ChannelLevels, LoudnessAnalyser, LoudnessReadings, LoudnessSettings, PeakHold, RmsMode,
+};
+pub use spectrum::{
+    Note, Spectrum, SpectrumAnalyser, SpectrumSettings, SpectrumStyle, SpectrumTrace,
+    WindowFunction, note_name,
 };
