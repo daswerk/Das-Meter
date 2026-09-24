@@ -43,3 +43,17 @@ _Avoid_: Channel mode, routing
 **Preset**:
 A saved setup: which Meters are shown, how they are arranged, their settings and the look.
 _Avoid_: Profile, scene
+
+### Layout
+
+**Bar**:
+A strip of Meters docked to one screen edge. On Windows it can reserve its strip so other windows make room; on macOS it floats.
+_Avoid_: Dock, strip, toolbar
+
+**Pop-out**:
+A single Meter taken out of the Bar into its own window; it can be docked back.
+_Avoid_: Detached Meter, floating window
+
+**Window mode**:
+The layout where all Meters share one ordinary window, split into resizable panes.
+_Avoid_: Tiled mode, grid
