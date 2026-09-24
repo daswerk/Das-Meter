@@ -15,7 +15,7 @@ Where the audio a Meter shows comes from. When the app listens to System Capture
 _Avoid_: Input, device, feed
 
 **System Capture**:
-The default Source: whatever audio the computer is currently playing.
+The default Source: the mix of everything the computer plays through its default output. Audio that bypasses the operating system's mixer, such as a DAW using ASIO on Windows, is not heard; Send Plugins cover that case.
 _Avoid_: Loopback, desktop audio
 
 **Send Plugin**:
