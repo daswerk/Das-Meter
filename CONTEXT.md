@@ -41,8 +41,12 @@ Which pair of channels a Waveform or Spectrum shows: the mono sum, Left and Righ
 _Avoid_: Channel mode, routing
 
 **Preset**:
-A saved setup: which Meters are shown, how they are arranged, their settings and the look.
+A saved setup: which Meters are shown, how they are arranged, their settings and which Theme they use.
 _Avoid_: Profile, scene
+
+**Theme**:
+A named set of colours and styling (background opacity, line thickness, spacing, text size) that decides how Meters and the app look. Each Preset picks a Theme, or a light/dark pair that follows the system; several Presets can share one.
+_Avoid_: Skin, style, colour scheme
 
 ### Layout
 
