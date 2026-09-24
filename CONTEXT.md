@@ -32,6 +32,10 @@ _Avoid_: Level meter, LUFS meter, VU
 The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
 _Avoid_: Goniometer, vectorscope, correlometer
 
+**Channel View**:
+Which pair of channels a Waveform or Spectrum shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.
+_Avoid_: Channel mode, routing
+
 **Preset**:
 A saved setup: which Meters are shown, how they are arranged, their settings and the look.
 _Avoid_: Profile, scene
