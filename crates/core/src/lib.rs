@@ -260,7 +260,8 @@ impl AppCore {
             .take_while(|(m, _)| *m != meter)
             .map(|(_, share)| share)
             .sum();
-        let gap = 12.0;
+        // Room for the Pop-out's title bar, which sits above its frame.
+        let gap = 40.0;
         let frame = match self.layout.edge {
             Edge::Bottom => Rect {
                 x: bar.x + start * bar.width,

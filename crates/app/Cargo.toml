@@ -24,6 +24,7 @@ egui-wgpu = { version = "0.36", default-features = false }
 egui-winit = { version = "0.36", default-features = false, features = ["links"] }
 glyphon = "0.12"
 pollster = "1.0.1"
+raw-window-handle = "0.6"
 rtrb = "0.4.0"
 wgpu = "30"
 winit = "0.30.13"
@@ -33,3 +34,6 @@ workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.20", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSScreen", "NSWindow", "NSView", "NSResponder", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }

@@ -7,11 +7,11 @@
 use std::time::Duration;
 
 use dasmeter_analysis::signals::{frames, pink_noise, stereo};
-use dasmeter_core::{AppCore, Decision, Event};
+use dasmeter_core::{AppCore, Decision, Event, WindowKey};
 
 use crate::gpu::Gpu;
-use crate::ui::Ui;
-use crate::{Painter, UiPaint};
+use crate::painter::{Painter, UiPaint};
+use crate::ui::{Surface, Ui};
 
 const RATE: u32 = 48_000;
 const SCALE: f32 = 2.0;
@@ -38,14 +38,20 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         }
     }
     // The cursor over the Spectrum, for its readout.
-    core.handle(Event::Pointer(Some([0.4, 0.5])), now);
+    core.handle(Event::Pointer(Some((WindowKey::Bar, [0.4, 0.5]))), now);
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
     match open {
         None => {}
         // Right-click the Loudness Meter, as a user would.
-        Some("menu") => core.handle(Event::OpenMenu([0.8, 0.1]), now),
+        Some("menu") => core.handle(
+            Event::OpenMenu {
+                window: WindowKey::Bar,
+                at: [0.8, 0.1],
+            },
+            now,
+        ),
         Some("settings") => core.handle(Event::ShowSettings(true), now),
         Some(other) => return Err(format!("unknown panel {other:?}: menu or settings")),
     }
@@ -88,7 +94,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             .entry(egui::ViewportId::ROOT)
             .or_default()
             .native_pixels_per_point = Some(SCALE);
-        let (mut out, _) = ui.run(input, scene);
+        let (mut out, _) = ui.run(input, scene, Surface::Overlay);
         // Textures made in earlier frames must reach the painter too.
         if let Some(previous) = output.take() {
             let previous: egui::FullOutput = previous;
@@ -102,6 +108,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
 
     painter.paint(
         core.scene(),
+        Some(WindowKey::Bar),
         SCALE,
         &texture.create_view(&wgpu::TextureViewDescriptor::default()),
         ui,

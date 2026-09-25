@@ -11,21 +11,38 @@ use dasmeter_analysis::{
     ChannelView, PeakHold, RmsMode, SpectrumStyle, StereoScaling, StereoView, WaveformScale,
     WindowFunction,
 };
+use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    Colour, Event, ListenTo, LoudnessMeterSettings, LufsBar, MeterSettings, Palette, Role, Scene,
-    SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
-    WaveformMeterSettings,
+    Colour, Edge, Event, ListenTo, LoudnessMeterSettings, LufsBar, MeterScene, MeterSettings,
+    Palette, Platform, Role, Scene, ScreenMode, SpectrumMeterSettings, StereoDrawing,
+    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
 /// What the user did this frame, as app core events.
 pub type Actions = Vec<Event<'static>>;
 
-/// The egui context the menus and the settings panel are built in.
+/// What a window's egui layer shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    /// Over a window's Meters: the Bar's screen button.
+    Meters(WindowKey),
+    /// The open Meter menu, filling its own small window.
+    Menu,
+    /// The settings panel, filling its own window.
+    Settings,
+    /// The menu and the panel over the Meters, for offscreen snapshots.
+    Overlay,
+}
+
+/// One window's egui context.
 pub struct Ui {
     pub ctx: egui::Context,
     palette: Option<Palette>,
+    /// How big the last frame's content was, in logical pixels, for sizing a
+    /// menu window to fit.
+    pub content_size: Option<egui::Vec2>,
 }
 
 impl Ui {
@@ -33,6 +50,7 @@ impl Ui {
         Ui {
             ctx: egui::Context::default(),
             palette: None,
+            content_size: None,
         }
     }
 
@@ -72,17 +90,40 @@ impl Ui {
 
     /// Builds this frame's menus and panel from `scene`. Returns egui's output
     /// (shapes and platform requests) and what the user changed.
-    pub fn run(&mut self, input: egui::RawInput, scene: &Scene) -> (egui::FullOutput, Actions) {
+    pub fn run(
+        &mut self,
+        input: egui::RawInput,
+        scene: &Scene,
+        surface: Surface,
+    ) -> (egui::FullOutput, Actions) {
         if self.palette.as_ref() != Some(&scene.palette) {
             self.ctx.set_visuals(visuals(&scene.palette));
             self.palette = Some(scene.palette.clone());
         }
         let mut actions = Actions::new();
+        let mut content_size = None;
         let output = self.ctx.run_ui(input, |ui| {
             let ctx = ui.ctx().clone();
-            meter_menu(&ctx, scene, &mut actions);
-            settings_panel(&ctx, scene, &mut actions);
+            match surface {
+                Surface::Meters(WindowKey::Bar) => screen_button(&ctx, scene, &mut actions),
+                Surface::Meters(_) => {}
+                Surface::Menu => {
+                    content_size = menu_window(&ctx, scene, &mut actions);
+                }
+                Surface::Settings => settings_window(ui, scene, &mut actions),
+                Surface::Overlay => {
+                    meter_menu(&ctx, scene, &mut actions);
+                    settings_panel(&ctx, scene, &mut actions);
+                }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                actions.push(match surface {
+                    Surface::Settings => Event::ShowSettings(false),
+                    _ => Event::CloseMenu,
+                });
+            }
         });
+        self.content_size = content_size;
         (output, actions)
     }
 }
@@ -129,12 +170,22 @@ fn visuals(palette: &Palette) -> egui::Visuals {
 }
 
 fn kind_name(settings: &MeterSettings) -> &'static str {
-    match settings {
-        MeterSettings::Waveform(_) => "Waveform",
-        MeterSettings::Spectrum(_) => "Spectrum",
-        MeterSettings::Loudness(_) => "Loudness Meter",
-        MeterSettings::Stereometer(_) => "Stereometer",
-    }
+    settings.kind_name()
+}
+
+/// Every Meter in the scene, whichever window it's in, in Meter order.
+fn all_meters(scene: &Scene) -> Vec<&MeterScene> {
+    let mut meters: Vec<&MeterScene> = scene.windows.iter().flat_map(|w| &w.meters).collect();
+    meters.sort_by_key(|m| m.meter);
+    meters
+}
+
+fn meter_scene(scene: &Scene, meter: usize) -> Option<&MeterScene> {
+    scene
+        .windows
+        .iter()
+        .flat_map(|w| &w.meters)
+        .find(|m| m.meter == meter)
 }
 
 /// A row of mutually exclusive choices. Returns whether the value changed.
@@ -615,7 +666,9 @@ fn listen_to(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
 /// The Source item at the top of a Meter's menu: Listen to, which Send Plugin
 /// the Meter shows, "Use for all Meters" and the Source label.
 fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
-    let meter_scene = &scene.windows[0].meters[meter];
+    let Some(meter_scene) = meter_scene(scene, meter) else {
+        return;
+    };
     listen_to(ui, scene, actions);
     match scene.listen_to {
         ListenTo::SystemCapture => {
@@ -643,7 +696,7 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
                     });
                 });
             }
-            let can_share = meter_scene.picked.is_some() && scene.windows[0].meters.len() > 1;
+            let can_share = meter_scene.picked.is_some() && all_meters(scene).len() > 1;
             if ui
                 .add_enabled(can_share, egui::Button::new("Use for all Meters"))
                 .clicked()
@@ -658,41 +711,235 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
     }
 }
 
-/// The open Meter menu, where it was right-clicked.
-fn meter_menu(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
-    let Some(menu) = scene.menu else { return };
-    let Some(meter_scene) = scene.windows.first().and_then(|w| w.meters.get(menu.meter)) else {
+/// Where a Meter sits: Pop out or Dock back, and a Pop-out's Always on top.
+fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+    let pop_out = scene
+        .windows
+        .iter()
+        .find(|w| w.key == WindowKey::PopOut(meter));
+    match pop_out {
+        Some(window) => {
+            let mut on_top = window.on_top;
+            if ui.checkbox(&mut on_top, "Always on top").changed() {
+                actions.push(Event::SetPopOutOnTop { meter, on_top });
+            }
+            if ui.button("Dock back").clicked() {
+                actions.push(Event::DockBack { meter });
+            }
+        }
+        None => {
+            let in_bar = scene
+                .windows
+                .iter()
+                .find(|w| w.key == WindowKey::Bar)
+                .map_or(0, |w| w.meters.len());
+            if ui
+                .add_enabled(in_bar > 1, egui::Button::new("Pop out"))
+                .clicked()
+            {
+                actions.push(Event::PopOut { meter });
+            }
+        }
+    }
+}
+
+/// A Meter's menu: its Source item, basic settings, where it sits, Settings….
+fn menu_contents(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+    let Some(meter_scene) = meter_scene(scene, meter) else {
         return;
     };
+    ui.set_width(280.0);
+    ui.label(RichText::new(kind_name(&meter_scene.settings)).strong());
+    source_item(ui, scene, meter, actions);
+    ui.separator();
+    basic(ui, meter, meter_scene.settings, actions);
+    ui.separator();
+    placement_item(ui, scene, meter, actions);
+    if ui.button("Settings…").clicked() {
+        actions.push(Event::ShowSettings(true));
+    }
+}
+
+/// The open Meter menu in its own window. Returns the content's size.
+fn menu_window(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) -> Option<egui::Vec2> {
+    let menu = scene.menu?;
+    let frame = egui::Frame::menu(&ctx.global_style());
+    let response = egui::Area::new(egui::Id::new("meter menu"))
+        .fixed_pos(egui::Pos2::ZERO)
+        .show(ctx, |ui| {
+            frame.show(ui, |ui| menu_contents(ui, scene, menu.meter, actions));
+        });
+    Some(response.response.rect.size())
+}
+
+/// The open Meter menu over the Meters, where it was right-clicked (snapshots).
+fn meter_menu(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
+    let Some(menu) = scene.menu else { return };
     let screen = ctx.content_rect();
     let at = egui::pos2(
         screen.min.x + menu.at[0] * screen.width(),
         screen.min.y + menu.at[1] * screen.height(),
     );
-    let response = egui::Area::new(egui::Id::new("meter menu"))
+    egui::Area::new(egui::Id::new("meter menu"))
         .order(egui::Order::Foreground)
         .fixed_pos(at)
         .constrain(true)
         .show(ctx, |ui| {
             egui::Frame::menu(ui.style()).show(ui, |ui| {
-                ui.set_width(280.0);
-                ui.label(RichText::new(kind_name(&meter_scene.settings)).strong());
-                source_item(ui, scene, menu.meter, actions);
-                ui.separator();
-                basic(ui, menu.meter, meter_scene.settings, actions);
-                ui.separator();
-                if ui.button("Settings…").clicked() {
-                    actions.push(Event::ShowSettings(true));
-                }
+                menu_contents(ui, scene, menu.meter, actions);
             });
         });
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        actions.push(Event::CloseMenu);
-    }
-    let _ = response;
 }
 
-/// The settings panel: app settings, then every setting of every Meter.
+/// The Bar's screen button, in its top-right corner.
+fn screen_button(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
+    let Some(mode) = scene
+        .windows
+        .iter()
+        .find(|w| w.key == WindowKey::Bar)
+        .and_then(|w| w.screen)
+    else {
+        return;
+    };
+    let screen = ctx.content_rect();
+    egui::Area::new(egui::Id::new("screen button"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::RIGHT_TOP)
+        .fixed_pos(egui::pos2(screen.max.x - 4.0, screen.min.y + 4.0))
+        .show(ctx, |ui| {
+            let label = RichText::new(mode.label()).small();
+            let mut hover = format!("Click for {}.", mode.next(Platform::current()).label());
+            if Platform::current() == Platform::MacOs {
+                hover = format!("{hover}\n{NO_RESERVE_SPACE_ON_MACOS}");
+            }
+            if ui.small_button(label).on_hover_text(hover).clicked() {
+                actions.push(Event::CycleScreenMode);
+            }
+        });
+}
+
+/// The Bar's settings: edge, thickness, screen button, fullscreen apps.
+fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    let Some(bar) = scene.windows.iter().find(|w| w.key == WindowKey::Bar) else {
+        return;
+    };
+    if let Some(mut edge) = bar.edge {
+        let edges = [
+            (Edge::Top, "Top"),
+            (Edge::Bottom, "Bottom"),
+            (Edge::Left, "Left"),
+            (Edge::Right, "Right"),
+        ];
+        if choice(ui, "Edge", &mut edge, &edges) {
+            actions.push(Event::SetEdge(edge));
+        }
+    }
+    if let (Some(frame), Some(edge)) = (bar.frame, bar.edge) {
+        let mut thickness = if edge.horizontal() {
+            frame.height
+        } else {
+            frame.width
+        };
+        if ui
+            .add(
+                Slider::new(&mut thickness, dasmeter_core::layout::MIN_THICKNESS..=600.0)
+                    .text("Thickness")
+                    .suffix(" px"),
+            )
+            .changed()
+        {
+            actions.push(Event::SetBarThickness(thickness));
+        }
+    }
+    if let Some(mode) = bar.screen {
+        ui.horizontal(|ui| {
+            ui.label("Screen");
+            let mut hover = format!("Click for {}.", mode.next(Platform::current()).label());
+            if Platform::current() == Platform::MacOs && mode != ScreenMode::ReserveSpace {
+                hover = format!("{hover}\n{NO_RESERVE_SPACE_ON_MACOS}");
+            }
+            if ui.button(mode.label()).on_hover_text(hover).clicked() {
+                actions.push(Event::CycleScreenMode);
+            }
+        });
+    }
+    let mut over = bar.over_fullscreen;
+    if ui
+        .checkbox(&mut over, "Show over fullscreen apps")
+        .changed()
+    {
+        actions.push(Event::ShowOverFullscreen(over));
+    }
+}
+
+/// App settings, the Bar, then every setting of every Meter.
+fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    egui::CollapsingHeader::new("App")
+        .default_open(true)
+        .show(ui, |ui| {
+            listen_to(ui, scene, actions);
+            let mut app = scene.app;
+            let mut changed = ui
+                .add(
+                    Slider::new(
+                        &mut app.frame_rate_cap,
+                        limits::MIN_FRAME_RATE_CAP..=scene.max_frame_rate_cap,
+                    )
+                    .text("Frame-rate cap")
+                    .suffix(" fps"),
+                )
+                .changed();
+            changed |= ui
+                .checkbox(&mut app.check_for_updates, "Check for updates daily")
+                .changed();
+            if changed {
+                actions.push(Event::SetApp(app));
+            }
+        });
+    egui::CollapsingHeader::new("Bar")
+        .default_open(false)
+        .show(ui, |ui| bar_settings(ui, scene, actions));
+    for meter_scene in all_meters(scene) {
+        let meter = meter_scene.meter;
+        let title = format!("{} · {}", meter + 1, kind_name(&meter_scene.settings));
+        egui::CollapsingHeader::new(title)
+            .id_salt(("meter settings", meter))
+            .default_open(false)
+            .show(ui, |ui| {
+                // Both halves edit one copy, so a change in each is one event.
+                let mut edited = Actions::new();
+                basic(ui, meter, meter_scene.settings, &mut edited);
+                let settings = edited
+                    .iter()
+                    .find_map(|event| match event {
+                        Event::SetMeter { settings, .. } => Some(*settings),
+                        _ => None,
+                    })
+                    .unwrap_or(meter_scene.settings);
+                ui.separator();
+                advanced(ui, meter, settings, &mut edited);
+                if let Some(last) = edited
+                    .iter()
+                    .rev()
+                    .find(|e| matches!(e, Event::SetMeter { .. }))
+                    .copied()
+                {
+                    edited.retain(|e| !matches!(e, Event::SetMeter { .. }));
+                    edited.push(last);
+                }
+                actions.extend(edited);
+            });
+    }
+}
+
+/// The settings panel filling its own window.
+fn settings_window(root: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    egui::CentralPanel::default().show(root, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| panel_contents(ui, scene, actions));
+    });
+}
+
+/// The settings panel over the Meters (snapshots).
 fn settings_panel(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
     if !scene.settings_open {
         return;
@@ -706,61 +953,8 @@ fn settings_panel(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
         .default_size(egui::vec2(420.0, (screen.height() - 24.0).max(200.0)))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
         .vscroll(true)
-        .show(ctx, |ui| {
-            egui::CollapsingHeader::new("App")
-                .default_open(true)
-                .show(ui, |ui| {
-                    listen_to(ui, scene, actions);
-                    let mut app = scene.app;
-                    let mut changed = ui
-                        .add(
-                            Slider::new(
-                                &mut app.frame_rate_cap,
-                                limits::MIN_FRAME_RATE_CAP..=scene.max_frame_rate_cap,
-                            )
-                            .text("Frame-rate cap")
-                            .suffix(" fps"),
-                        )
-                        .changed();
-                    changed |= ui
-                        .checkbox(&mut app.check_for_updates, "Check for updates daily")
-                        .changed();
-                    if changed {
-                        actions.push(Event::SetApp(app));
-                    }
-                });
-            for (meter, meter_scene) in scene.windows[0].meters.iter().enumerate() {
-                let title = format!("{} · {}", meter + 1, kind_name(&meter_scene.settings));
-                egui::CollapsingHeader::new(title)
-                    .id_salt(("meter settings", meter))
-                    .default_open(meter == 0)
-                    .show(ui, |ui| {
-                        // Both halves edit one copy, so a change in each is one event.
-                        let mut edited = Actions::new();
-                        basic(ui, meter, meter_scene.settings, &mut edited);
-                        let settings = edited
-                            .iter()
-                            .find_map(|event| match event {
-                                Event::SetMeter { settings, .. } => Some(*settings),
-                                _ => None,
-                            })
-                            .unwrap_or(meter_scene.settings);
-                        ui.separator();
-                        advanced(ui, meter, settings, &mut edited);
-                        if let Some(last) = edited
-                            .iter()
-                            .rev()
-                            .find(|e| matches!(e, Event::SetMeter { .. }))
-                            .copied()
-                        {
-                            edited.retain(|e| !matches!(e, Event::SetMeter { .. }));
-                            edited.push(last);
-                        }
-                        actions.extend(edited);
-                    });
-            }
-        });
-    if !open || (ctx.input(|i| i.key_pressed(egui::Key::Escape)) && scene.menu.is_none()) {
+        .show(ctx, |ui| panel_contents(ui, scene, actions));
+    if !open {
         actions.push(Event::ShowSettings(false));
     }
 }
