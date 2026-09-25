@@ -161,6 +161,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build dependencies (ALSA, PipeWire, X11/Wayland)
         run: |
           sudo apt-get update
