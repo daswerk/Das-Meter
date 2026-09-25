@@ -237,6 +237,11 @@ impl AppCore {
         self
     }
 
+    /// The display the Bar is on, once the shell has said.
+    pub fn display(&self) -> Option<Display> {
+        self.display
+    }
+
     pub fn layout(&self) -> &BarLayout {
         &self.layout
     }

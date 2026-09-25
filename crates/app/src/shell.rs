@@ -42,6 +42,7 @@ pub fn run() {
         send_plugins: SendPluginInput::new(),
         windows: HashMap::new(),
         started: false,
+        menu_anchor: None,
         ui_view: None,
         ui_wake: None,
         #[cfg(target_os = "macos")]
@@ -107,6 +108,9 @@ struct AppWindow {
     /// egui had the pointer after the last frame, so it needs one more to let go.
     ui_hot: bool,
     title: String,
+    /// The window has had keyboard focus. A new window reports losing focus
+    /// before it first gains it, which mustn't close a menu.
+    had_focus: bool,
     // Dropped last: the surface must go before the window.
     window: Arc<Window>,
 }
@@ -148,6 +152,8 @@ struct Shell {
     send_plugins: SendPluginInput,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
+    /// Where the open menu was right-clicked, on screen.
+    menu_anchor: Option<[f32; 2]>,
     /// The scene without the Meters' live content, as the menu and panel last drew it.
     ui_view: Option<Scene>,
     /// When an egui layer asked to be drawn again (an animation, a tooltip).
@@ -298,6 +304,7 @@ impl Shell {
                 drag: None,
                 ui_hot: false,
                 title: String::new(),
+                had_focus: false,
                 window,
             },
         );
@@ -380,10 +387,17 @@ impl Shell {
                 .find(Role::Meters(menu.window))
                 .and_then(|id| self.windows[&id].frame());
             if let Some(parent) = parent {
-                let at = LogicalPosition::new(
-                    f64::from(parent.x + menu.at[0] * parent.width),
-                    f64::from(parent.y + menu.at[1] * parent.height),
-                );
+                let anchor = [
+                    parent.x + menu.at[0] * parent.width,
+                    parent.y + menu.at[1] * parent.height,
+                ];
+                self.menu_anchor = Some(anchor);
+                let size = self
+                    .find(Role::Menu)
+                    .map_or([MENU_SIZE.0, MENU_SIZE.1], |id| {
+                        self.windows[&id].logical_size()
+                    });
+                let at = self.menu_position(anchor, size);
                 match self.find(Role::Menu) {
                     Some(id) => self.windows[&id].window.set_outer_position(at),
                     None => {
@@ -470,11 +484,36 @@ impl Shell {
                 let _ = app
                     .window
                     .request_inner_size(LogicalSize::new(size.x, size.y));
+                if let Some(anchor) = self.menu_anchor {
+                    let at = self.menu_position(anchor, [size.x, size.y]);
+                    self.windows[&id].window.set_outer_position(at);
+                }
             }
         }
         for action in actions {
             self.core.handle(action, now);
         }
+    }
+
+    /// Where a menu of `size` opened at `anchor` goes: below and right of it,
+    /// or above or left where the display ends.
+    fn menu_position(&self, [x, y]: [f32; 2], [width, height]: [f32; 2]) -> LogicalPosition<f64> {
+        let Some(usable) = self.core.display().map(|d| d.usable) else {
+            return LogicalPosition::new(f64::from(x), f64::from(y));
+        };
+        let x = if x + width <= usable.right() {
+            x
+        } else {
+            x - width
+        };
+        let y = if y + height <= usable.bottom() {
+            y
+        } else {
+            y - height
+        };
+        let x = x.clamp(usable.x, (usable.right() - width).max(usable.x));
+        let y = y.clamp(usable.y, (usable.bottom() - height).max(usable.y));
+        LogicalPosition::new(f64::from(x), f64::from(y))
     }
 
     /// The display the Bar lives on, and its refresh rate for the frame-rate cap.
@@ -639,7 +678,22 @@ impl ApplicationHandler for Shell {
                 app.window.request_redraw();
                 self.report_display();
             }
-            WindowEvent::Focused(false) if role == Role::Menu => {
+            WindowEvent::Focused(true) => {
+                app.had_focus = true;
+                // Back in Das-Meter through the Bar or a Pop-out: its other
+                // windows come forward too (the Bar floats, so clicking it
+                // doesn't bring them on its own).
+                #[cfg(target_os = "macos")]
+                if matches!(role, Role::Meters(_)) {
+                    for other in self.windows.values() {
+                        if other.window.id() != id && other.role != Role::Menu {
+                            crate::macos::order_front(&other.window);
+                        }
+                    }
+                }
+            }
+            // Clicking anywhere else closes the menu.
+            WindowEvent::Focused(false) if role == Role::Menu && app.had_focus => {
                 self.core.handle(Event::CloseMenu, now);
             }
             WindowEvent::Occluded(occluded) => {
