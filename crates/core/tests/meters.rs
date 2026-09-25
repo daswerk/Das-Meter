@@ -309,3 +309,80 @@ fn colours_come_from_the_palette_roles() {
         palette[Role::LoudnessOverTarget]
     );
 }
+
+fn loudness(views: &[MeterView]) -> &dasmeter_core::LoudnessDisplay {
+    match &views[LOUDNESS] {
+        MeterView::Loudness { display, .. } => display,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_loudness_graph_shows_the_bars_reading_over_its_span() {
+    let mut app = App::playing();
+    let views = app.draw();
+    let display = loudness(&views);
+    // Two seconds of audio: about 20 points. The newest is short-term LUFS
+    // over its 3 s window, two thirds full: −12 + 10·log10(2/3) ≈ −13.8.
+    assert!(
+        (18..=21).contains(&display.history.len()),
+        "{}",
+        display.history.len()
+    );
+    let newest = display.history.last().unwrap().db().unwrap();
+    assert!((newest + 13.76).abs() < 0.3, "{newest}");
+
+    // Only the span is kept: 10 s of a 40 s run.
+    app.set(LOUDNESS, |s| {
+        if let MeterSettings::Loudness(s) = s {
+            s.history_span = Duration::from_secs(10);
+        }
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 40.0))));
+    assert_eq!(loudness(&app.draw()).history.len(), 100);
+
+    // Momentary on the bar: the graph follows it.
+    app.set(LOUDNESS, |s| {
+        if let MeterSettings::Loudness(s) = s {
+            s.lufs_bar = LufsBar::Momentary;
+        }
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -30.0, 0.0, frames(RATE, 0.5))));
+    let newest = loudness(&app.draw()).history.last().unwrap().db().unwrap();
+    assert!(newest < -25.0, "momentary drops fast: {newest}");
+
+    // Off: no points in the scene at all.
+    app.set(LOUDNESS, |s| {
+        if let MeterSettings::Loudness(s) = s {
+            s.show_history = false;
+        }
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 0.2))));
+    assert!(loudness(&app.draw()).history.is_empty());
+}
+
+#[test]
+fn a_sine_shows_no_peak_to_loudness_headroom() {
+    let mut app = App::playing();
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 3.0))));
+    let views = app.draw();
+    let display = loudness(&views);
+    for (name, ratio) in [("PLR", display.plr), ("PSR", display.psr)] {
+        let lu = ratio.db().unwrap_or_else(|| panic!("{name} is shown"));
+        assert!(lu.abs() < 0.5, "{name}: {lu}");
+    }
+}
+
+#[test]
+fn the_graph_span_is_kept_within_its_limits() {
+    let mut app = App::playing();
+    app.set(LOUDNESS, |s| {
+        if let MeterSettings::Loudness(s) = s {
+            s.history_span = Duration::from_secs(3_600);
+        }
+    });
+    let Some(MeterSettings::Loudness(s)) = app.core.meter_settings(LOUDNESS) else {
+        panic!()
+    };
+    assert_eq!(s.history_span, Duration::from_secs(120));
+}

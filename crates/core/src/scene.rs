@@ -154,6 +154,9 @@ impl Frame {
 
 /// What a Meter shows.
 #[derive(Clone, Debug, PartialEq)]
+// Nearly every Meter is Live, and a scene is built at most once a frame: boxing
+// the big variant would cost an allocation per Meter per frame for nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum MeterState {
     /// System Capture hasn't delivered a sample rate yet.
     Starting,
