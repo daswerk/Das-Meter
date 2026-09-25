@@ -30,6 +30,7 @@ pub struct MainMenu {
     send_plugins: CheckMenuItem,
     help: MenuId,
     float_on_top: CheckMenuItem,
+    keep_here: MenuItem,
     bar_mode: CheckMenuItem,
     window_mode: CheckMenuItem,
     presets: Submenu,
@@ -56,6 +57,7 @@ impl MainMenu {
         let send_plugins = CheckMenuItem::new("Send Plugins", true, false, None);
         let help = MenuItem::new("Das-Meter Help", true, None);
         let float_on_top = CheckMenuItem::new("Float on Top", true, true, None);
+        let keep_here = MenuItem::new("Keep Windows Here", false, None);
         let bar_mode = CheckMenuItem::new("Bar Mode", true, true, None);
         let window_mode = CheckMenuItem::new("Window Mode", true, false, None);
         let about = AboutMetadata {
@@ -89,6 +91,7 @@ impl MainMenu {
                 &window_mode,
                 &PredefinedMenuItem::separator(),
                 &float_on_top,
+                &keep_here,
                 &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::minimize(None),
                 &PredefinedMenuItem::close_window(None),
@@ -124,6 +127,7 @@ impl MainMenu {
             send_plugins,
             help: help.id().clone(),
             float_on_top,
+            keep_here,
             presets,
             preset_items: Vec::new(),
             revert,
@@ -153,6 +157,8 @@ impl MainMenu {
                     // The Bar's screen button (on macOS only Float on top and
                     // Normal window), or the Window's Always on top.
                     Some(Command::Core(Event::ToggleOnTop))
+                } else if id == *self.keep_here.id() {
+                    Some(Command::Core(Event::KeepHere))
                 } else if id == *self.bar_mode.id() {
                     Some(Command::Core(Event::SetMode(LayoutMode::Bar)))
                 } else if id == *self.window_mode.id() {
@@ -174,6 +180,11 @@ impl MainMenu {
                 }
             })
             .collect()
+    }
+
+    /// Offers Keep Windows Here while a window's display is missing.
+    pub fn show_missing_displays(&mut self, missing: &[String]) {
+        self.keep_here.set_enabled(!missing.is_empty());
     }
 
     /// Lists the Presets (⌘1–9 for the first nine), ticks the current one, and

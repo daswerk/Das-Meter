@@ -37,4 +37,4 @@ workspace = true
 muda = { version = "0.20", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSScreen", "NSWindow", "NSView", "NSResponder", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSString"] }

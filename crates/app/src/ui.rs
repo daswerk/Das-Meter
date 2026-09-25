@@ -857,11 +857,37 @@ fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut 
     }
 }
 
+/// The quiet note about displays that aren't connected, with Keep here.
+fn missing_displays_note(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    if scene.missing_displays.is_empty() {
+        return;
+    }
+    let names = scene.missing_displays.join(", ");
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            RichText::new(format!(
+                "{names} isn't connected: its windows are here for now."
+            ))
+            .weak()
+            .small(),
+        );
+        if ui
+            .small_button("Keep here")
+            .on_hover_text("Make where the windows are now their place")
+            .clicked()
+        {
+            actions.push(Event::KeepHere);
+        }
+    });
+    ui.separator();
+}
+
 /// A Meter's menu: its Source item, basic settings, where it sits, Settings….
 fn menu_contents(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
     let Some(meter_scene) = meter_scene(scene, meter) else {
         return;
     };
+    missing_displays_note(ui, scene, actions);
     ui.set_width(280.0);
     ui.label(RichText::new(kind_name(&meter_scene.settings)).strong());
     source_item(ui, scene, meter, actions);
@@ -1303,6 +1329,7 @@ fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
 
 /// App settings, the Theme, the Bar, then every setting of every Meter.
 fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    missing_displays_note(ui, scene, actions);
     egui::CollapsingHeader::new("Presets")
         .default_open(true)
         .show(ui, |ui| preset_settings(ui, scene, actions));

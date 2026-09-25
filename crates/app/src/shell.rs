@@ -221,6 +221,7 @@ fn ui_view(scene: &Scene) -> Scene {
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
         presets: scene.presets.clone(),
+        missing_displays: scene.missing_displays.clone(),
         listen_to: scene.listen_to,
         mode: scene.mode,
         send_plugins: scene.send_plugins.clone(),
@@ -611,8 +612,11 @@ impl Shell {
     fn report_display(&mut self) {
         let now = self.now();
         #[cfg(target_os = "macos")]
-        if let Some(display) = crate::macos::main_display() {
-            self.core.handle(Event::Display(display), now);
+        {
+            let screens = crate::macos::screens();
+            if !screens.is_empty() {
+                self.core.handle(Event::Screens(&screens), now);
+            }
         }
         let rate = self
             .find(Role::Meters(WindowKey::Bar))
@@ -980,12 +984,15 @@ impl ApplicationHandler for Shell {
             );
             if let Some(scene) = self.core.scene() {
                 menu.show_presets(&scene.presets, clicked);
+                menu.show_missing_displays(&scene.missing_displays);
             }
         }
         self.save_themes();
         self.save_presets();
         if now >= self.theme_scan_at {
             self.scan_themes(now);
+            // Displays plugged in or out, or rearranged, since the last look.
+            self.report_display();
         }
         let pump_at = self.pump(now);
         let decision = self.core.decide(now);
