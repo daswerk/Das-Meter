@@ -2,6 +2,7 @@
 //! "Learn more" links point here, and the docs keep these anchors stable.
 
 /// Where the docs site is published (GitHub Pages, built from `docs/site`).
+/// A test checks every [`Topic`] against the pages' headings.
 pub const SITE: &str = "https://daswerk.github.io/Das-Meter/";
 
 /// A page, or a section of one, the app links to.
@@ -91,6 +92,46 @@ impl Topic {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// mdBook's heading ids: lower case, spaces to dashes, other punctuation dropped.
+    fn slug(heading: &str) -> String {
+        heading
+            .trim()
+            .to_lowercase()
+            .chars()
+            .filter_map(|c| match c {
+                ' ' => Some('-'),
+                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_topic_is_a_page_and_heading_of_the_docs_site() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/site/src");
+        for topic in Topic::ALL {
+            let (page, anchor) = topic.path().split_once('#').unwrap_or((topic.path(), ""));
+            let file = match page {
+                "" => "README.md".to_owned(),
+                page => page.replace(".html", ".md"),
+            };
+            let text = std::fs::read_to_string(src.join(&file))
+                .unwrap_or_else(|_| panic!("{topic:?}: docs/site/src/{file} is missing"));
+            if !anchor.is_empty() {
+                let found = text
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("## "))
+                    .any(|heading| slug(heading) == anchor);
+                assert!(found, "{topic:?}: no heading for #{anchor} in {file}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_loudness_settings_link_to_the_measurements_page() {
+        assert_eq!(crate::settings::MEASUREMENTS_URL, Topic::Measurements.url());
+    }
 
     #[test]
     fn every_topic_has_its_own_link() {

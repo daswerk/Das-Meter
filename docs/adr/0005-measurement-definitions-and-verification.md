@@ -17,4 +17,4 @@ Das-Meter claims its **numbers**, not a display standard: the Loudness Meter mea
 
 ## Where the claim appears
 
-`docs/measurements.md` (standards, definitions, known limits), one line in the README, and a one-line note with a link in the Loudness Meter's settings panel. No badge: there is no official certification.
+The docs site's Measurements page (`docs/site/src/measurements.md`: standards, definitions, known limits), one line in the README, and a one-line note with a link in the Loudness Meter's settings panel. No badge: there is no official certification.

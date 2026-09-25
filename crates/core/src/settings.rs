@@ -15,8 +15,7 @@ use crate::meters::{
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
-pub const MEASUREMENTS_URL: &str =
-    "https://github.com/daswerk/Das-Meter/blob/main/docs/measurements.md";
+pub const MEASUREMENTS_URL: &str = "https://daswerk.github.io/Das-Meter/measurements.html";
 /// The line the Loudness Meter's settings show above that link.
 pub const MEASUREMENTS_NOTE: &str = "Measures to ITU-R BS.1770-5 and EBU Tech 3341/3342.";
 /// Where Help goes.

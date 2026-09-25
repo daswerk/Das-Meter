@@ -1,0 +1,12 @@
+[book]
+title = "Das-Meter"
+description = "Live Meters for what your computer plays: Waveform, Spectrum, Loudness Meter and Stereometer."
+authors = ["Das Werk"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/daswerk/Das-Meter"
+edit-url-template = "https://github.com/daswerk/Das-Meter/edit/main/docs/site/{path}"
+site-url = "/Das-Meter/"
+no-section-label = true
