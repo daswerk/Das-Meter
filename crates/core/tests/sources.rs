@@ -7,7 +7,7 @@ use dasmeter_analysis::signals::{both, frames, sine};
 use dasmeter_core::{
     AppCore, Colour, Decision, Event, Level, ListenTo, LoudnessMeterSettings, MeterScene,
     MeterSettings, MeterState, MeterView, Note, SendPlugin, SendPluginState, SourceLabel,
-    SpectrumMeterSettings,
+    SpectrumMeterSettings, WindowKey,
 };
 
 const RATE: u32 = 48_000;
@@ -223,10 +223,10 @@ fn several_with_no_picks_show_the_list_and_a_click_picks() {
         unreachable!()
     };
     let bass = items[1].frame;
-    app.send(Event::Click([
-        bass.x + bass.width / 2.0,
-        bass.y + bass.height / 2.0,
-    ]));
+    app.send(Event::Click {
+        window: WindowKey::Bar,
+        at: [bass.x + bass.width / 2.0, bass.y + bass.height / 2.0],
+    });
     assert_eq!(app.core.pick(1).map(|p| p.id), Some(2));
     // …and the Spectrum, with no pick, follows it.
     assert_eq!(app.core.pick(0), None);
@@ -238,7 +238,10 @@ fn several_with_no_picks_show_the_list_and_a_click_picks() {
 fn clicking_outside_the_list_picks_nothing() {
     let mut app = Harness::on_send_plugins(vec![plugin(1, "Kick"), plugin(2, "Bass")]);
     app.meters();
-    app.send(Event::Click([0.5, 0.01]));
+    app.send(Event::Click {
+        window: WindowKey::Bar,
+        at: [0.5, 0.01],
+    });
     assert_eq!(app.core.pick(0), None);
     assert_eq!(app.core.pick(1), None);
 }

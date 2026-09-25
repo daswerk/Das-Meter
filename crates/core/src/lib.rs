@@ -8,6 +8,7 @@
 //! Time comes in with every call as the time since the app started, so tests
 //! drive the core with a fake clock.
 
+pub mod layout;
 pub mod meters;
 pub mod scene;
 pub mod settings;
@@ -16,6 +17,7 @@ pub mod theme;
 
 use std::time::Duration;
 
+pub use layout::{BarLayout, Display, Edge, Platform, PopOut, Rect, ScreenMode, WindowKey};
 pub use meters::{
     CursorReadout, LoudnessMeterSettings, LufsBar, MeterSettings, MeterView, SpectrumMeterSettings,
     StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
@@ -50,9 +52,9 @@ pub enum Event<'a> {
     Audio(&'a [f32]),
     /// Whether any of the app's windows can be seen (not minimised or covered).
     Visible(bool),
-    /// The pointer moved to this point of the window (fractions, 0–1 from the
+    /// The pointer moved to this point of a window (fractions, 0–1 from the
     /// top-left), or left it.
-    Pointer(Option<[f32; 2]>),
+    Pointer(Option<(WindowKey, [f32; 2])>),
     /// A Meter's settings changed. `meter` is its index in the window.
     SetMeter {
         meter: usize,
@@ -75,9 +77,9 @@ pub enum Event<'a> {
     /// A click at this point of the window (fractions, 0–1 from the top-left).
     /// It closes an open menu; otherwise it picks from a "Pick a Send Plugin"
     /// list, or resets a Loudness Meter.
-    Click([f32; 2]),
+    Click { window: WindowKey, at: [f32; 2] },
     /// A right-click at this point: opens the menu of the Meter under it.
-    OpenMenu([f32; 2]),
+    OpenMenu { window: WindowKey, at: [f32; 2] },
     /// The Meter menu was closed without a click on the Meters.
     CloseMenu,
     /// The settings panel was opened or closed.
@@ -89,6 +91,27 @@ pub enum Event<'a> {
     /// The display the window is on refreshes this many times a second: the
     /// highest frame-rate cap.
     DisplayRefreshRate(u32),
+    /// The display the Bar is on: its whole and usable area.
+    Display(Display),
+    /// Dock the Bar to this edge.
+    SetEdge(Edge),
+    /// The Bar's thickness was dragged to this many logical pixels.
+    SetBarThickness(f32),
+    /// The divider after the Bar's `divider`-th Meter was dragged to `at`
+    /// (0–1 along the Bar).
+    MoveDivider { divider: usize, at: f32 },
+    /// Take a Meter out of the Bar into its own window.
+    PopOut { meter: usize },
+    /// Put a Pop-out's Meter back into the Bar (also when its window is closed).
+    DockBack { meter: usize },
+    /// The user moved or resized a Pop-out.
+    PopOutMoved { meter: usize, frame: Rect },
+    /// A Pop-out's Always on top was switched.
+    SetPopOutOnTop { meter: usize, on_top: bool },
+    /// The Bar's screen button was pressed.
+    CycleScreenMode,
+    /// "Show over fullscreen apps" was switched.
+    ShowOverFullscreen(bool),
 }
 
 /// What the shell should do next.
@@ -137,7 +160,10 @@ pub struct AppCore {
     /// The Send Plugins last listed by the transport.
     send_plugins: Vec<SendPlugin>,
     meters: Vec<MeterSlot>,
-    pointer: Option<[f32; 2]>,
+    pointer: Option<(WindowKey, [f32; 2])>,
+    platform: Platform,
+    layout: BarLayout,
+    display: Option<Display>,
     note_until: Option<Duration>,
     visible: bool,
     app: AppSettings,
@@ -173,7 +199,11 @@ impl AppCore {
 
     /// One window with these Meters in a row, left to right.
     pub fn with_meters(meters: Vec<MeterSettings>) -> AppCore {
+        let platform = Platform::current();
         AppCore {
+            platform,
+            layout: BarLayout::new(meters.len(), platform),
+            display: None,
             listen_to: ListenTo::SystemCapture,
             capture: Capture::Starting,
             send_plugins: Vec::new(),
@@ -198,6 +228,66 @@ impl AppCore {
             drawn: None,
             drawn_at: None,
         }
+    }
+
+    /// The same core as if it ran on `platform`, for what the screen button offers.
+    pub fn on_platform(mut self, platform: Platform) -> AppCore {
+        self.platform = platform;
+        self.layout.screen = ScreenMode::default_for(platform);
+        self
+    }
+
+    pub fn layout(&self) -> &BarLayout {
+        &self.layout
+    }
+
+    /// Where a new Pop-out for `meter` goes: next to its place in the Bar, inside the display.
+    fn pop_out_frame(&self, meter: usize) -> Rect {
+        let (width, height) = layout::POP_OUT_SIZE;
+        let Some(display) = self.display else {
+            return Rect {
+                x: 100.0,
+                y: 100.0,
+                width,
+                height,
+            };
+        };
+        let bar = self.layout.frame_on(&display);
+        let start: f32 = self
+            .layout
+            .meters
+            .iter()
+            .take_while(|(m, _)| *m != meter)
+            .map(|(_, share)| share)
+            .sum();
+        let gap = 12.0;
+        let frame = match self.layout.edge {
+            Edge::Bottom => Rect {
+                x: bar.x + start * bar.width,
+                y: bar.y - height - gap,
+                width,
+                height,
+            },
+            Edge::Top => Rect {
+                x: bar.x + start * bar.width,
+                y: bar.bottom() + gap,
+                width,
+                height,
+            },
+            Edge::Left => Rect {
+                x: bar.right() + gap,
+                y: bar.y + start * bar.height,
+                width,
+                height,
+            },
+            Edge::Right => Rect {
+                x: bar.x - width - gap,
+                y: bar.y + start * bar.height,
+                width,
+                height,
+            },
+        };
+        frame.clamped_to(display.usable)
     }
 
     /// The app settings, with the frame-rate cap kept within the display's refresh rate.
@@ -348,23 +438,113 @@ impl AppCore {
                 Some(slot) => slot.show_source_label = shown,
                 None => return,
             },
-            Event::Click(point) => {
+            Event::Click { window, at } => {
                 if self.menu.take().is_some() {
                     self.changed = true;
                     return;
                 }
-                if let Some((meter, id)) = self.item_at(point) {
+                if let Some((meter, id)) = self.item_at(window, at) {
                     self.handle(Event::PickSendPlugin { meter, id }, now);
-                } else if let Some(meter) = self.meter_at(point) {
+                } else if let Some(meter) = self.meter_at(window, at) {
                     self.handle(Event::ResetLoudness { meter }, now);
                 }
                 return;
             }
-            Event::OpenMenu(at) => {
-                let Some(meter) = self.meter_at(at) else {
+            Event::OpenMenu { window, at } => {
+                let Some(meter) = self.meter_at(window, at) else {
                     return;
                 };
-                self.menu = Some(MeterMenu { meter, at });
+                self.menu = Some(MeterMenu { meter, window, at });
+            }
+            Event::Display(display) => {
+                if self.display == Some(display) {
+                    return;
+                }
+                self.display = Some(display);
+                for pop_out in &mut self.layout.pop_outs {
+                    pop_out.frame = pop_out.frame.clamped_to(display.usable);
+                }
+            }
+            Event::SetEdge(edge) => {
+                if edge == self.layout.edge {
+                    return;
+                }
+                self.layout.edge = edge;
+            }
+            Event::SetBarThickness(thickness) => {
+                if thickness.is_nan() {
+                    return;
+                }
+                let thickness = thickness.clamp(layout::MIN_THICKNESS, 4_000.0);
+                // What the user sees is capped; storing more than that would
+                // make the next drag jump.
+                let shown = match self.display {
+                    Some(display) => {
+                        let mut capped = self.layout.clone();
+                        capped.thickness = thickness;
+                        capped.thickness_on(&display)
+                    }
+                    None => thickness,
+                };
+                if shown == self.layout.thickness {
+                    return;
+                }
+                self.layout.thickness = shown;
+            }
+            Event::MoveDivider { divider, at } => {
+                if !self.layout.move_divider(divider, at) {
+                    return;
+                }
+            }
+            Event::PopOut { meter } => {
+                let frame = self.pop_out_frame(meter);
+                if !self.layout.pop_out(meter, frame) {
+                    return;
+                }
+                self.menu = None;
+            }
+            Event::DockBack { meter } => {
+                if !self.layout.dock_back(meter) {
+                    return;
+                }
+                if self
+                    .menu
+                    .is_some_and(|m| m.window == WindowKey::PopOut(meter))
+                {
+                    self.menu = None;
+                }
+            }
+            Event::PopOutMoved { meter, frame } => {
+                let display = self.display;
+                let Some(pop_out) = self.layout.pop_out_mut(meter) else {
+                    return;
+                };
+                let (min_w, min_h) = layout::MIN_POP_OUT;
+                let mut frame = Rect {
+                    width: frame.width.max(min_w),
+                    height: frame.height.max(min_h),
+                    ..frame
+                };
+                if let Some(display) = display {
+                    frame = frame.clamped_to(display.frame);
+                }
+                if pop_out.frame == frame {
+                    return;
+                }
+                pop_out.frame = frame;
+            }
+            Event::SetPopOutOnTop { meter, on_top } => match self.layout.pop_out_mut(meter) {
+                Some(pop_out) if pop_out.on_top != on_top => pop_out.on_top = on_top,
+                _ => return,
+            },
+            Event::CycleScreenMode => {
+                self.layout.screen = self.layout.screen.next(self.platform);
+            }
+            Event::ShowOverFullscreen(shown) => {
+                if shown == self.layout.show_over_fullscreen {
+                    return;
+                }
+                self.layout.show_over_fullscreen = shown;
             }
             Event::CloseMenu => {
                 if self.menu.take().is_none() {
@@ -494,29 +674,31 @@ impl AppCore {
         }
     }
 
+    fn drawn_window(&self, key: WindowKey) -> Option<&WindowScene> {
+        self.drawn.as_ref()?.windows.iter().find(|w| w.key == key)
+    }
+
     /// The pickable item in a "Pick a Send Plugin" list on screen at `point`.
-    fn item_at(&self, point: [f32; 2]) -> Option<(usize, u64)> {
-        let window = self.drawn.as_ref()?.windows.first()?;
-        window
+    fn item_at(&self, window: WindowKey, point: [f32; 2]) -> Option<(usize, u64)> {
+        self.drawn_window(window)?
             .meters
             .iter()
-            .enumerate()
-            .find_map(|(meter, scene)| match &scene.state {
+            .find_map(|scene| match &scene.state {
                 MeterState::PickSendPlugin(items) => items
                     .iter()
                     .find(|item| item.pickable && item.frame.locate(point).is_some())
-                    .map(|item| (meter, item.id)),
+                    .map(|item| (scene.meter, item.id)),
                 _ => None,
             })
     }
 
     /// The Meter at `point` (window fractions) in the last scene drawn.
-    fn meter_at(&self, point: [f32; 2]) -> Option<usize> {
-        let window = self.drawn.as_ref()?.windows.first()?;
-        window
+    fn meter_at(&self, window: WindowKey, point: [f32; 2]) -> Option<usize> {
+        self.drawn_window(window)?
             .meters
             .iter()
-            .position(|meter| meter.frame.locate(point).is_some())
+            .find(|meter| meter.frame.locate(point).is_some())
+            .map(|meter| meter.meter)
     }
 
     /// Decides whether to draw now. On [`Decision::Draw`], the shell draws
@@ -559,16 +741,66 @@ impl AppCore {
     }
 
     fn build_scene(&mut self, note: bool) -> Scene {
-        let count = self.meters.len().max(1) as f32;
-        let pointer = self.pointer;
-        let mut meters = Vec::with_capacity(self.meters.len());
-        for i in 0..self.meters.len() {
-            let frame = Frame {
-                x: i as f32 / count,
+        let bar = &self.layout;
+        let mut placed: Vec<(WindowKey, usize, Frame)> = Vec::new();
+        let mut start = 0.0;
+        for &(meter, share) in &bar.meters {
+            let frame = if bar.edge.horizontal() {
+                Frame {
+                    x: start,
+                    y: 0.0,
+                    width: share,
+                    height: 1.0,
+                }
+            } else {
+                Frame {
+                    x: 0.0,
+                    y: start,
+                    width: 1.0,
+                    height: share,
+                }
+            };
+            start += share;
+            placed.push((WindowKey::Bar, meter, frame));
+        }
+        for pop_out in &bar.pop_outs {
+            let whole = Frame {
+                x: 0.0,
                 y: 0.0,
-                width: 1.0 / count,
+                width: 1.0,
                 height: 1.0,
             };
+            placed.push((WindowKey::PopOut(pop_out.meter), pop_out.meter, whole));
+        }
+        let mut windows = vec![WindowScene {
+            key: WindowKey::Bar,
+            title: "Das-Meter".to_owned(),
+            frame: self.display.map(|display| bar.frame_on(&display)),
+            on_top: bar.screen != ScreenMode::NormalWindow,
+            reserve_space: bar.screen == ScreenMode::ReserveSpace,
+            over_fullscreen: bar.show_over_fullscreen,
+            screen: Some(bar.screen),
+            edge: Some(bar.edge),
+            meters: Vec::new(),
+        }];
+        for pop_out in &bar.pop_outs {
+            windows.push(WindowScene {
+                key: WindowKey::PopOut(pop_out.meter),
+                title: format!(
+                    "Das-Meter · {}",
+                    self.meters[pop_out.meter].meter.kind_name()
+                ),
+                frame: Some(pop_out.frame),
+                on_top: pop_out.on_top,
+                reserve_space: false,
+                over_fullscreen: false,
+                screen: None,
+                edge: None,
+                meters: Vec::new(),
+            });
+        }
+        for (key, i, frame) in placed {
+            let pointer = self.pointer.filter(|(w, _)| *w == key).map(|(_, p)| p);
             let (state, source) = match self.listen_to {
                 ListenTo::SystemCapture => {
                     let state = match &self.capture {
@@ -607,7 +839,12 @@ impl AppCore {
                 ListenTo::SendPlugins => self.shown_pick(i).map(|pick| pick.id),
                 ListenTo::SystemCapture => slot.pick.as_ref().map(|pick| pick.id),
             };
-            meters.push(MeterScene {
+            let window = windows
+                .iter_mut()
+                .find(|w| w.key == key)
+                .expect("placed in a window");
+            window.meters.push(MeterScene {
+                meter: i,
                 frame,
                 state,
                 source,
@@ -628,10 +865,7 @@ impl AppCore {
             })
             .collect();
         Scene {
-            windows: vec![WindowScene {
-                title: "Das-Meter".to_owned(),
-                meters,
-            }],
+            windows,
             notes: if note {
                 vec![Note::OutputChanged]
             } else {

@@ -5,6 +5,7 @@
 
 use dasmeter_analysis::{ChannelLevels, LoudnessReadings};
 
+use crate::layout::{Edge, Rect, ScreenMode, WindowKey};
 use crate::meters::{MeterSettings, MeterView};
 use crate::settings::AppSettings;
 use crate::sources::ListenTo;
@@ -33,6 +34,8 @@ pub struct Scene {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeterMenu {
     pub meter: usize,
+    /// The window it was opened in.
+    pub window: WindowKey,
     /// The right-click's point, as fractions of the window.
     pub at: [f32; 2],
 }
@@ -51,13 +54,28 @@ pub struct SendPluginItem {
 /// One window and the Meters in it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowScene {
+    pub key: WindowKey,
     pub title: String,
+    /// Where the window sits, in logical pixels; `None` until the display is known.
+    pub frame: Option<Rect>,
+    /// Kept above other windows.
+    pub on_top: bool,
+    /// Windows only: an AppBar that reserves its strip of the screen.
+    pub reserve_space: bool,
+    /// Shown over fullscreen apps instead of getting out of their way.
+    pub over_fullscreen: bool,
+    /// The Bar's screen button; `None` for other windows.
+    pub screen: Option<ScreenMode>,
+    /// The edge the Bar docks to; `None` for other windows.
+    pub edge: Option<Edge>,
     pub meters: Vec<MeterScene>,
 }
 
 /// One Meter: where it sits in its window and what it shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeterScene {
+    /// Which Meter this is: its index in the app core, which events name.
+    pub meter: usize,
     pub frame: Frame,
     pub state: MeterState,
     /// The small Source label, when the Meter shows it.

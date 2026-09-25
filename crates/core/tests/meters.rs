@@ -7,7 +7,7 @@ use dasmeter_analysis::signals::{both, frames, sine, stereo};
 use dasmeter_analysis::{ChannelView, SpectrumStyle, StereoView};
 use dasmeter_core::{
     AppCore, Decision, Event, Frame, LufsBar, MeterSettings, MeterState, MeterView, Role,
-    StereoDrawing,
+    StereoDrawing, WindowKey,
 };
 
 const RATE: u32 = 48_000;
@@ -260,7 +260,7 @@ fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
     app.draw();
     // Halfway across the Spectrum (the second quarter of the window) on a
     // 20 Hz–20 kHz log axis is √(20 · 20000) ≈ 632 Hz, nearest D#5.
-    app.send(Event::Pointer(Some([0.375, 0.5])));
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
     let views = app.draw();
     let MeterView::Spectrum { cursor, .. } = &views[SPECTRUM] else {
         unreachable!()
@@ -275,13 +275,13 @@ fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
     assert_eq!(cursor.note.unwrap().to_string(), "D#5");
 
     // Over another Meter, or outside the window: no readout.
-    app.send(Event::Pointer(Some([0.9, 0.5])));
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.9, 0.5]))));
     let views = app.draw();
     assert!(matches!(
         views[SPECTRUM],
         MeterView::Spectrum { cursor: None, .. }
     ));
-    app.send(Event::Pointer(Some([0.375, 0.5])));
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
     app.draw();
     app.send(Event::Pointer(None));
     let views = app.draw();

@@ -126,6 +126,18 @@ pub enum MeterSettings {
     Stereometer(StereometerMeterSettings),
 }
 
+impl MeterSettings {
+    /// The Meter's name, as menus show it.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            MeterSettings::Waveform(_) => "Waveform",
+            MeterSettings::Spectrum(_) => "Spectrum",
+            MeterSettings::Loudness(_) => "Loudness Meter",
+            MeterSettings::Stereometer(_) => "Stereometer",
+        }
+    }
+}
+
 /// Where the pointer is over a Spectrum: the frequency under it and the nearest note.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CursorReadout {
@@ -189,6 +201,10 @@ impl Meter {
 
     pub fn settings(&self) -> MeterSettings {
         self.settings
+    }
+
+    pub fn kind_name(&self) -> &'static str {
+        self.settings.kind_name()
     }
 
     /// Starts over at a sample rate: a new Source, or the output changed.

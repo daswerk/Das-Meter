@@ -10,7 +10,7 @@ use dasmeter_analysis::{
 };
 use dasmeter_core::{
     AppCore, AppSettings, Decision, Event, Level, LufsBar, MeterMenu, MeterSettings, MeterState,
-    MeterView, Scene, StereoDrawing, WaveformColouring,
+    MeterView, Scene, StereoDrawing, WaveformColouring, WindowKey,
 };
 
 const RATE: u32 = 48_000;
@@ -143,24 +143,37 @@ fn every_default_matches_the_spec() {
 fn right_clicking_a_meter_opens_its_menu_and_a_click_closes_it() {
     let mut app = App::new();
     app.draw();
-    app.send(Event::OpenMenu(inside(SPECTRUM)));
+    app.send(Event::OpenMenu {
+        window: WindowKey::Bar,
+        at: inside(SPECTRUM),
+    });
     assert_eq!(
         app.draw().menu,
         Some(MeterMenu {
             meter: SPECTRUM,
+            window: WindowKey::Bar,
             at: inside(SPECTRUM)
         })
     );
 
     // Right-clicking another Meter moves the menu there.
-    app.send(Event::OpenMenu(inside(LOUDNESS)));
+    app.send(Event::OpenMenu {
+        window: WindowKey::Bar,
+        at: inside(LOUDNESS),
+    });
     assert_eq!(app.draw().menu.map(|m| m.meter), Some(LOUDNESS));
 
     // A click on the Meters only closes the menu (it doesn't reset the Loudness Meter).
-    app.send(Event::Click(inside(LOUDNESS)));
+    app.send(Event::Click {
+        window: WindowKey::Bar,
+        at: inside(LOUDNESS),
+    });
     assert_eq!(app.draw().menu, None);
 
-    app.send(Event::OpenMenu(inside(WAVEFORM)));
+    app.send(Event::OpenMenu {
+        window: WindowKey::Bar,
+        at: inside(WAVEFORM),
+    });
     app.draw();
     app.send(Event::CloseMenu);
     assert_eq!(app.draw().menu, None);
@@ -170,7 +183,10 @@ fn right_clicking_a_meter_opens_its_menu_and_a_click_closes_it() {
 fn the_settings_panel_opens_and_closes_the_menu() {
     let mut app = App::new();
     app.draw();
-    app.send(Event::OpenMenu(inside(WAVEFORM)));
+    app.send(Event::OpenMenu {
+        window: WindowKey::Bar,
+        at: inside(WAVEFORM),
+    });
     app.draw();
     app.send(Event::ShowSettings(true));
     let scene = app.draw();
@@ -353,11 +369,17 @@ fn clicking_the_loudness_meter_resets_integrated_and_the_maxima() {
     assert!(integrated(app.draw()) != Level::Silent);
 
     // A click on another Meter changes nothing, so nothing is redrawn.
-    app.send(Event::Click(inside(SPECTRUM)));
+    app.send(Event::Click {
+        window: WindowKey::Bar,
+        at: inside(SPECTRUM),
+    });
     app.now += Duration::from_millis(40);
     assert!(matches!(app.core.decide(app.now), Decision::Sleep { .. }));
 
-    app.send(Event::Click(inside(LOUDNESS)));
+    app.send(Event::Click {
+        window: WindowKey::Bar,
+        at: inside(LOUDNESS),
+    });
     let scene = app.draw().clone();
     assert_eq!(integrated(&scene), Level::Silent);
     let MeterState::Live(MeterView::Loudness { display, .. }) =
