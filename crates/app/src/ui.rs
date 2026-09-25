@@ -15,10 +15,10 @@ use dasmeter_core::docs::Topic;
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    Card, Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo, LoudnessMeterSettings,
-    LufsBar, MeterKind, MeterScene, MeterSettings, Palette, Platform, Role, Scene, ScreenMode,
-    SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
-    WaveformMeterSettings, WindowKey,
+    Card, CepstrumMeterSettings, Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo,
+    LoudnessMeterSettings, LufsBar, MeterKind, MeterScene, MeterSettings, Palette, Platform, Role,
+    Scene, ScreenMode, SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings,
+    WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -277,7 +277,7 @@ fn choice<T: PartialEq + Copy>(
     options: &[(T, &str)],
 ) -> bool {
     let before = *value;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(label);
         for &(option, name) in options {
             ui.selectable_value(value, option, name);
@@ -676,6 +676,53 @@ fn loudness_advanced(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings) -> bool {
     changed
 }
 
+fn cepstrum_basic(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
+    ui.checkbox(&mut s.show_pitch, "Show pitch")
+        .on_hover_text("Mark the period of the pitch found, with its frequency and note")
+        .changed()
+}
+
+fn cepstrum_advanced(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
+    let a = &mut s.analysis;
+    let sizes: Vec<(usize, String)> = limits::CEPSTRUM_FFT_SIZES
+        .iter()
+        .map(|&n| (n, n.to_string()))
+        .collect();
+    let sizes: Vec<(usize, &str)> = sizes.iter().map(|(n, s)| (*n, s.as_str())).collect();
+    let mut changed = choice(ui, "FFT size", &mut a.fft_size, &sizes);
+    let (low, high) = limits::CEPSTRUM_PITCH;
+    let (mut from, mut to) = a.pitch_range;
+    let mut range = false;
+    range |= ui
+        .add(
+            Slider::new(&mut from, low..=high / 2.0)
+                .logarithmic(true)
+                .text("Lowest pitch")
+                .suffix(" Hz"),
+        )
+        .changed();
+    range |= ui
+        .add(
+            Slider::new(&mut to, low * 2.0..=high)
+                .logarithmic(true)
+                .text("Highest pitch")
+                .suffix(" Hz"),
+        )
+        .changed();
+    if range {
+        a.pitch_range = (from.round(), to.round());
+        changed = true;
+    }
+    changed |= duration_slider(
+        ui,
+        "Smoothing",
+        &mut a.smoothing,
+        limits::CEPSTRUM_SMOOTHING,
+        false,
+    );
+    changed
+}
+
 fn stereometer_advanced(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> bool {
     let mut changed = duration_slider(
         ui,
@@ -734,6 +781,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Spectrum(w) => spectrum_basic(ui, w),
         MeterSettings::Loudness(w) => loudness_basic(ui, w, &mut reset),
         MeterSettings::Stereometer(w) => stereometer_basic(ui, w),
+        MeterSettings::Cepstrum(w) => cepstrum_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -750,6 +798,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Spectrum(w) => spectrum_advanced(ui, w),
         MeterSettings::Loudness(w) => loudness_advanced(ui, w),
         MeterSettings::Stereometer(w) => stereometer_advanced(ui, w),
+        MeterSettings::Cepstrum(w) => cepstrum_advanced(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -819,8 +868,8 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
     }
 }
 
-/// A pane's items in Window mode: which Meter it shows, split and close.
-fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+/// Which kind of Meter this one is: switching gives it that kind's defaults.
+fn kind_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
     let Some(meter_scene) = meter_scene(scene, meter) else {
         return;
     };
@@ -833,12 +882,18 @@ fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actio
                 MeterKind::Spectrum => "Spectrum",
                 MeterKind::Loudness => "Loudness",
                 MeterKind::Stereometer => "Stereo",
+                MeterKind::Cepstrum => "Cepstrum",
             },
         )
     });
     if choice(ui, "Show", &mut kind, &kinds) {
         actions.push(Event::AssignMeter { meter, kind });
     }
+}
+
+/// A pane's items in Window mode: which Meter it shows, split and close.
+fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+    kind_item(ui, scene, meter, actions);
     ui.horizontal(|ui| {
         if ui.button("Split side by side").clicked() {
             actions.push(Event::SplitPane {
@@ -868,6 +923,7 @@ fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut 
         pane_item(ui, scene, meter, actions);
         return;
     }
+    kind_item(ui, scene, meter, actions);
     let pop_out = scene
         .windows
         .iter()
@@ -1346,6 +1402,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::CorrelationPositive,
             Role::CorrelationNegative,
         ],
+        MeterSettings::Cepstrum(_) => &[Role::CepstrumTrace, Role::Accent],
     }
 }
 

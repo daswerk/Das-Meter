@@ -89,6 +89,30 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             now,
         ),
         Some("settings") => core.handle(Event::ShowSettings(true), now),
+        // The Cepstrum in the Spectrum's place, on a 220 Hz harmonic tone.
+        Some("cepstrum") => {
+            let settings =
+                dasmeter_core::MeterSettings::default_of(dasmeter_core::MeterKind::Cepstrum);
+            core.handle(Event::SetMeter { meter: 1, settings }, now);
+            let partials = 100;
+            let tone: Vec<f32> = (0..RATE as usize)
+                .flat_map(|i| {
+                    let t = i as f64 / f64::from(RATE);
+                    let x: f64 = (1..=partials)
+                        .map(|k| {
+                            (std::f64::consts::TAU * 220.0 * f64::from(k) * t).sin() / f64::from(k)
+                        })
+                        .sum();
+                    let x = (0.15 * x) as f32;
+                    [x, x]
+                })
+                .collect();
+            for block in tone.chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
         // The first-launch card, and the silence hint after 11 s of nothing.
         Some("welcome") => core.handle(Event::ShowWelcome, now),
         Some("hint") => {

@@ -414,3 +414,72 @@ fn the_peak_line_follows_the_loudest_peak_and_can_be_turned_off() {
     };
     assert_eq!(*peak, None);
 }
+
+#[test]
+fn a_cepstrum_meter_finds_the_pitch_of_a_harmonic_tone() {
+    let mut app = App::playing();
+    app.send(Event::SetMeter {
+        meter: SPECTRUM,
+        settings: MeterSettings::default_of(dasmeter_core::MeterKind::Cepstrum),
+    });
+    // A band-limited sawtooth at 110 Hz.
+    let tone: Vec<f32> = (0..frames(RATE, 1.0))
+        .map(|i| {
+            let t = i as f64 / f64::from(RATE);
+            let x: f64 = (1..=200)
+                .map(|k| (std::f64::consts::TAU * 110.0 * f64::from(k) * t).sin() / f64::from(k))
+                .sum();
+            (0.15 * x) as f32
+        })
+        .collect();
+    app.feed(&both(&tone));
+    let views = app.draw();
+    let MeterView::Cepstrum {
+        values,
+        quefrency_range,
+        pitch,
+        ..
+    } = &views[SPECTRUM]
+    else {
+        panic!("{:?}", views[SPECTRUM])
+    };
+    assert_eq!(values.len(), dasmeter_analysis::cepstrum::POINTS);
+    let pitch = pitch.expect("a pitch");
+    assert!((pitch.frequency - 110.0).abs() < 1.0, "{}", pitch.frequency);
+    assert_eq!(pitch.note.unwrap().to_string(), "A2");
+    // Its line sits at its period between the edges.
+    let (short, long) = *quefrency_range;
+    let x = (1.0 / 110.0 - short) / (long - short);
+    assert!((pitch.x - x).abs() < 0.01, "{} vs {x}", pitch.x);
+
+    // Show pitch off: no readout.
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Cepstrum(s) = s {
+            s.show_pitch = false;
+        }
+    });
+    app.feed(&both(&tone[..4_800]));
+    let views = app.draw();
+    let MeterView::Cepstrum { pitch, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    assert_eq!(*pitch, None);
+}
+
+#[test]
+fn cepstrum_settings_are_kept_within_their_limits() {
+    let mut app = App::playing();
+    let mut settings = dasmeter_core::CepstrumMeterSettings::default();
+    settings.analysis.fft_size = 3_000;
+    settings.analysis.pitch_range = (900.0, 1_000.0);
+    app.send(Event::SetMeter {
+        meter: SPECTRUM,
+        settings: MeterSettings::Cepstrum(settings),
+    });
+    let Some(MeterSettings::Cepstrum(kept)) = app.core.meter_settings(SPECTRUM) else {
+        panic!()
+    };
+    assert_eq!(kept.analysis.fft_size, 4_096, "an FFT size it offers");
+    let (low, high) = kept.analysis.pitch_range;
+    assert!(high >= 2.0 * low, "at least an octave: {low}–{high}");
+}

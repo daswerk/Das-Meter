@@ -108,6 +108,8 @@ pub enum Role {
     CorrelationNegative,
     // Stereometer.
     StereometerTrace,
+    // Cepstrum.
+    CepstrumTrace,
 }
 
 impl Role {
@@ -131,6 +133,7 @@ impl Role {
             Role::CorrelationPositive => "correlation_positive",
             Role::CorrelationNegative => "correlation_negative",
             Role::StereometerTrace => "stereometer_trace",
+            Role::CepstrumTrace => "cepstrum_trace",
         }
     }
 
@@ -154,10 +157,11 @@ impl Role {
             Role::CorrelationPositive => "Correlation positive",
             Role::CorrelationNegative => "Correlation negative",
             Role::StereometerTrace => "Stereometer trace",
+            Role::CepstrumTrace => "Cepstrum trace",
         }
     }
 
-    pub const ALL: [Role; 17] = [
+    pub const ALL: [Role; 18] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -175,6 +179,7 @@ impl Role {
         Role::CorrelationPositive,
         Role::CorrelationNegative,
         Role::StereometerTrace,
+        Role::CepstrumTrace,
     ];
 }
 
@@ -205,6 +210,7 @@ impl Palette {
             Role::CorrelationPositive => Colour::rgb(0x2f, 0xbf, 0x71),
             Role::CorrelationNegative => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::StereometerTrace => Colour::rgb(0x7f, 0xe0, 0xc8),
+            Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xb6),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -233,6 +239,7 @@ impl Palette {
             Role::CorrelationPositive => Colour::rgb(0x1f, 0x9d, 0x5a),
             Role::CorrelationNegative => Colour::rgb(0xd6, 0x28, 0x28),
             Role::StereometerTrace => Colour::rgb(0x0f, 0x8f, 0x7a),
+            Role::CepstrumTrace => Colour::rgb(0xc2, 0x2f, 0x7a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -260,6 +267,7 @@ impl Palette {
             Role::CorrelationPositive => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::CorrelationNegative => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::StereometerTrace => Colour::rgb(0xff, 0xff, 0xff),
+            Role::CepstrumTrace => Colour::rgb(0x3d, 0xa5, 0xff),
         };
         Palette {
             colours: Role::ALL.map(colour),

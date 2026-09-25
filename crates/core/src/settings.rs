@@ -7,11 +7,11 @@
 use std::time::Duration;
 
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
-use dasmeter_analysis::{PeakHold, SpectrumStyle, StereoScaling};
+use dasmeter_analysis::{CepstrumSettings, PeakHold, SpectrumStyle, StereoScaling};
 
 use crate::meters::{
-    LoudnessMeterSettings, MeterSettings, SpectrumMeterSettings, StereometerMeterSettings,
-    WaveformMeterSettings,
+    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, SpectrumMeterSettings,
+    StereometerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -87,6 +87,10 @@ pub const HISTORY_SPAN: (Duration, Duration) = (Duration::from_secs(10), Duratio
 pub const HISTORY_SPANS: [u64; 4] = [10, 30, 60, 120];
 /// The Loudness Meter's bar range, in dB.
 pub const LOUDNESS_BAR: (f64, f64) = (-120.0, 6.0);
+/// The Cepstrum's FFT sizes, pitch range (Hz) and smoothing.
+pub const CEPSTRUM_FFT_SIZES: [usize; 3] = dasmeter_analysis::cepstrum::FFT_SIZES;
+pub const CEPSTRUM_PITCH: (f32, f32) = dasmeter_analysis::cepstrum::PITCH_LIMITS;
+pub const CEPSTRUM_SMOOTHING: (Duration, Duration) = (Duration::ZERO, Duration::from_secs(1));
 /// The Stereometer's persistence.
 pub const STEREO_PERSISTENCE: (Duration, Duration) =
     (Duration::from_millis(5), Duration::from_millis(340));
@@ -144,6 +148,7 @@ impl MeterSettings {
             MeterSettings::Spectrum(s) => MeterSettings::Spectrum(s.clamped()),
             MeterSettings::Loudness(s) => MeterSettings::Loudness(s.clamped()),
             MeterSettings::Stereometer(s) => MeterSettings::Stereometer(s.clamped()),
+            MeterSettings::Cepstrum(s) => MeterSettings::Cepstrum(s.clamped()),
         }
     }
 }
@@ -231,6 +236,26 @@ impl LoudnessMeterSettings {
         let top = clamp_f64(top, LOUDNESS_BAR, defaults.bar_range.1);
         let span = f64::from(MIN_DB_SPAN);
         self.bar_range = (floor.min(top - span), top.max(floor + span));
+        self
+    }
+}
+
+impl CepstrumMeterSettings {
+    fn clamped(mut self) -> Self {
+        let a = &mut self.analysis;
+        let defaults = CepstrumSettings::default();
+        if !CEPSTRUM_FFT_SIZES.contains(&a.fft_size) {
+            a.fft_size = defaults.fft_size;
+        }
+        let (low, high) = a.pitch_range;
+        let low = clamp_f32(low, CEPSTRUM_PITCH, defaults.pitch_range.0);
+        let high = clamp_f32(high, CEPSTRUM_PITCH, defaults.pitch_range.1);
+        // At least an octave apart.
+        a.pitch_range = (
+            low.min(high / 2.0),
+            high.max(low * 2.0).min(CEPSTRUM_PITCH.1),
+        );
+        a.smoothing = clamp_duration(a.smoothing, CEPSTRUM_SMOOTHING);
         self
     }
 }

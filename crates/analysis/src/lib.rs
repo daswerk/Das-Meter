@@ -4,6 +4,7 @@
 //! code (checked by `scripts/check-headless-deps.sh`). Measurement definitions
 //! are in ADR 0005 (`docs/adr/0005-measurement-definitions-and-verification.md`).
 
+pub mod cepstrum;
 mod channel_view;
 pub mod loudness;
 pub mod seconds;
@@ -13,6 +14,7 @@ pub mod stereometer;
 pub mod test_signal;
 pub mod waveform;
 
+pub use cepstrum::{Cepstrum, CepstrumAnalyser, CepstrumSettings, Pitch};
 pub use channel_view::ChannelView;
 
 pub use loudness::{

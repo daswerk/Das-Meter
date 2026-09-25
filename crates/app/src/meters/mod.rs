@@ -1,6 +1,7 @@
 //! Meter renderers: one per Meter, each its own small shape buffer and text,
 //! drawing that Meter's part of the scene with the palette's colour roles.
 
+mod cepstrum;
 mod labels;
 mod loudness;
 mod shapes;
@@ -246,6 +247,19 @@ impl MeterRenderer {
                     readings,
                     points,
                 } => stereometer::draw(&mut c, inner, settings, readings, points),
+                MeterView::Cepstrum {
+                    settings,
+                    values,
+                    quefrency_range,
+                    pitch,
+                } => cepstrum::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    values,
+                    *quefrency_range,
+                    pitch.as_ref(),
+                ),
             },
         }
         if let Some(source) = &meter.source {

@@ -277,6 +277,7 @@ fn each_setting_changes_the_meter_and_its_scene() {
             MeterView::Spectrum { settings, .. } => MeterSettings::Spectrum(*settings),
             MeterView::Loudness { settings, .. } => MeterSettings::Loudness(*settings),
             MeterView::Stereometer { settings, .. } => MeterSettings::Stereometer(*settings),
+            MeterView::Cepstrum { settings, .. } => MeterSettings::Cepstrum(*settings),
         };
         assert_eq!(drawn, wanted[meter], "meter {meter} draws its new settings");
     }

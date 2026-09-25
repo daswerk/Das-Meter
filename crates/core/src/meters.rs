@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use dasmeter_analysis::{
-    LoudnessAnalyser, LoudnessSettings, Spectrum, SpectrumAnalyser, SpectrumSettings,
-    StereoReadings, StereoView, StereometerAnalyser, StereometerSettings, WaveformAnalyser,
-    WaveformColumn, WaveformSettings, note_name,
+    CepstrumAnalyser, CepstrumSettings, LoudnessAnalyser, LoudnessSettings, Spectrum,
+    SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView, StereometerAnalyser,
+    StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings, note_name,
 };
 
 use crate::scene::{Level, LoudnessDisplay};
@@ -133,6 +133,24 @@ impl Default for StereometerMeterSettings {
     }
 }
 
+/// The Cepstrum Meter: the cepstrum of the mono sum and the pitch it finds.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct CepstrumMeterSettings {
+    pub analysis: CepstrumSettings,
+    /// Whether the detected pitch is marked and read out (Hz and note). Default on.
+    pub show_pitch: bool,
+}
+
+impl Default for CepstrumMeterSettings {
+    fn default() -> Self {
+        CepstrumMeterSettings {
+            analysis: CepstrumSettings::default(),
+            show_pitch: true,
+        }
+    }
+}
+
 /// Most points the Stereometer keeps, whatever the persistence and rate.
 const MAX_STEREO_POINTS: usize = 16_384;
 
@@ -143,23 +161,26 @@ pub enum MeterSettings {
     Spectrum(SpectrumMeterSettings),
     Loudness(LoudnessMeterSettings),
     Stereometer(StereometerMeterSettings),
+    Cepstrum(CepstrumMeterSettings),
 }
 
-/// Which of the four Meters a pane shows.
+/// Which kind of Meter a pane shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MeterKind {
     Waveform,
     Spectrum,
     Loudness,
     Stereometer,
+    Cepstrum,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 4] = [
+    pub const ALL: [MeterKind; 5] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
         MeterKind::Stereometer,
+        MeterKind::Cepstrum,
     ];
 }
 
@@ -173,6 +194,7 @@ impl MeterSettings {
             MeterKind::Stereometer => {
                 MeterSettings::Stereometer(StereometerMeterSettings::default())
             }
+            MeterKind::Cepstrum => MeterSettings::Cepstrum(CepstrumMeterSettings::default()),
         }
     }
 
@@ -182,6 +204,7 @@ impl MeterSettings {
             MeterSettings::Spectrum(_) => MeterKind::Spectrum,
             MeterSettings::Loudness(_) => MeterKind::Loudness,
             MeterSettings::Stereometer(_) => MeterKind::Stereometer,
+            MeterSettings::Cepstrum(_) => MeterKind::Cepstrum,
         }
     }
 
@@ -192,6 +215,7 @@ impl MeterSettings {
             MeterSettings::Spectrum(_) => "Spectrum",
             MeterSettings::Loudness(_) => "Loudness Meter",
             MeterSettings::Stereometer(_) => "Stereometer",
+            MeterSettings::Cepstrum(_) => "Cepstrum",
         }
     }
 }
@@ -236,6 +260,17 @@ pub enum MeterView {
         /// Points in −1..1, oldest first.
         points: Vec<[f32; 2]>,
     },
+    Cepstrum {
+        settings: CepstrumMeterSettings,
+        /// The cepstrum from the shortest period (left) to the longest, 0–1,
+        /// rounded to 0.01.
+        values: Vec<f32>,
+        /// The periods at the left and right edges, in seconds.
+        quefrency_range: (f32, f32),
+        /// The detected pitch, when it's on and there is one: where its
+        /// period sits (0–1 across), its frequency and its note.
+        pitch: Option<CursorReadout>,
+    },
 }
 
 enum Analyser {
@@ -243,6 +278,7 @@ enum Analyser {
     Spectrum(Box<SpectrumAnalyser>),
     Loudness(Box<LoudnessAnalyser>),
     Stereometer(Box<StereometerAnalyser>),
+    Cepstrum(Box<CepstrumAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -320,6 +356,7 @@ impl Meter {
             (Some(Analyser::Stereometer(a)), MeterSettings::Stereometer(s)) => {
                 a.set_settings(stereo_analysis(sample_rate, &s))
             }
+            (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
             _ => debug_assert!(!same_kind),
         }
         if !same_kind {
@@ -333,6 +370,7 @@ impl Meter {
             Analyser::Spectrum(a) => a.sample_rate(),
             Analyser::Loudness(a) => a.sample_rate(),
             Analyser::Stereometer(a) => a.sample_rate(),
+            Analyser::Cepstrum(a) => a.sample_rate(),
         })
     }
 
@@ -342,6 +380,7 @@ impl Meter {
             Some(Analyser::Spectrum(a)) => a.process(frames),
             Some(Analyser::Loudness(a)) => a.process(frames),
             Some(Analyser::Stereometer(a)) => a.process(frames),
+            Some(Analyser::Cepstrum(a)) => a.process(frames),
             None => return,
         }
         self.view = None;
@@ -387,6 +426,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
             sample_rate,
             stereo_analysis(sample_rate, s),
         ))),
+        MeterSettings::Cepstrum(s) => {
+            Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
+        }
     }
 }
 
@@ -474,6 +516,26 @@ fn build_view(
                 settings,
                 readings,
                 points,
+            }
+        }
+        (Analyser::Cepstrum(a), MeterSettings::Cepstrum(settings)) => {
+            let cepstrum = a.update();
+            let (short, long) = cepstrum.quefrency_range;
+            let pitch = settings
+                .show_pitch
+                .then_some(cepstrum.pitch)
+                .flatten()
+                .map(|pitch| CursorReadout {
+                    x: ((1.0 / pitch.frequency - short) / (long - short)).clamp(0.0, 1.0),
+                    // To 0.1 Hz: finer would only redraw for nothing.
+                    frequency: round_to(pitch.frequency, 0.1),
+                    note: note_name(pitch.frequency),
+                });
+            MeterView::Cepstrum {
+                settings,
+                values: cepstrum.values.iter().map(|&v| round_to(v, 0.01)).collect(),
+                quefrency_range: cepstrum.quefrency_range,
+                pitch,
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),
