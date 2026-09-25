@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +26,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies (ALSA, PipeWire, X11/Wayland)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpipewire-0.3-dev libclang-dev pkg-config \
+            libxkbcommon-dev libwayland-dev
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -35,6 +41,7 @@ jobs:
       - name: Microbenchmarks
         run: cargo bench --workspace --locked
       - name: Send Plugin bundles (CLAP and VST3, plus AU on macOS)
+        if: runner.os != 'Linux'
         shell: bash
         run: scripts/bundle-send-plugin.sh
       - name: Validate the AU

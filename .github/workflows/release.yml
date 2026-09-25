@@ -1,7 +1,9 @@
 name: Release
 
 # Pushing a v* tag builds the universal macOS app, signs it, and attaches the
-# DMG, the update tarball and its minisign signature to a draft Release
+# DMG, the update tarball and its minisign signature to a draft Release; then
+# a Linux x86_64 executable (built on Ubuntu, for Arch and other current
+# distributions) is added to the same draft
 # (ADR 0004). A tag with a suffix (v0.1.0-test1) makes a pre-release, for
 # dry runs.
 #
@@ -149,3 +151,40 @@ jobs:
           flags=(--draft --title "Das-Meter $VERSION" --generate-notes)
           [[ $PRERELEASE == true ]] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/Das-Meter-"$VERSION".*
+
+  linux:
+    name: Linux executable (x86_64)
+    needs: macos
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build dependencies (ALSA, PipeWire, X11/Wayland)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpipewire-0.3-dev libclang-dev pkg-config \
+            libxkbcommon-dev libwayland-dev
+      - name: Build
+        run: cargo build --release --locked -p dasmeter-app
+      - name: Package
+        id: package
+        run: |
+          version=$(cargo pkgid -p dasmeter-app | sed 's/.*[#@]//')
+          dir="das-meter-$version-linux-x86_64"
+          mkdir -p "dist/$dir"
+          cp target/release/das-meter "dist/$dir/"
+          strip "dist/$dir/das-meter"
+          cp LICENSE-MIT LICENSE-APACHE "dist/$dir/"
+          cat >"dist/$dir/README.txt" <<TEXT
+          Das-Meter $version for Linux (x86_64)
+
+          Run ./das-meter. System Capture needs PipeWire (the default on Arch,
+          Fedora and current Ubuntu); the app also needs Vulkan or OpenGL.
+          Docs: https://daswerk.github.io/Das-Meter/
+          TEXT
+          tar -czf "dist/$dir.tar.gz" -C dist "$dir"
+          echo "file=dist/$dir.tar.gz" >>"$GITHUB_OUTPUT"
+      - name: Add it to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.file }}" --clobber

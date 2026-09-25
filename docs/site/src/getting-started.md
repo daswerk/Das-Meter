@@ -7,6 +7,11 @@ Get the latest release from
 
 - **macOS** (14.6 or newer, Apple silicon and Intel): `Das-Meter-<version>.dmg`.
 - **Windows** (10 and 11): the installer. *Coming with the Windows release.*
+- **Linux** (x86_64, e.g. Arch): `das-meter-<version>-linux-x86_64.tar.gz`.
+  Unpack it and run `./das-meter`. System Capture needs PipeWire (the default
+  on Arch, Fedora and current Ubuntu). The Bar is an ordinary always-on-top
+  window there (Wayland doesn't let apps dock themselves), there's no menu bar
+  or tray icon, and no Send Plugin for Linux yet.
 
 ## Install on macOS
 

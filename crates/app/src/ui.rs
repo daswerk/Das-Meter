@@ -1078,7 +1078,7 @@ fn card_contents(ui: &mut egui::Ui, card: &Card, actions: &mut Actions) {
                     )
                     .weak(),
                 );
-            } else {
+            } else if cfg!(windows) {
                 ui.label(
                     egui::RichText::new(
                         "Send Plugins are installed: add Das-Meter Send to a track",
