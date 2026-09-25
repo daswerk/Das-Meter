@@ -105,7 +105,8 @@ impl Ui {
         let output = self.ctx.run_ui(input, |ui| {
             let ctx = ui.ctx().clone();
             match surface {
-                Surface::Meters(WindowKey::Bar) => screen_button(&ctx, scene, &mut actions),
+                // Nothing over the Meters: Float on Top is in the menu bar
+                // and the settings.
                 Surface::Meters(_) => {}
                 Surface::Menu => {
                     content_size = menu_window(&ctx, scene, &mut actions);
@@ -790,37 +791,6 @@ fn meter_menu(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
             egui::Frame::menu(ui.style()).show(ui, |ui| {
                 menu_contents(ui, scene, menu.meter, actions);
             });
-        });
-}
-
-/// The Bar's screen button, in its top-right corner.
-fn screen_button(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
-    let Some(mode) = scene
-        .windows
-        .iter()
-        .find(|w| w.key == WindowKey::Bar)
-        .and_then(|w| w.screen)
-    else {
-        return;
-    };
-    // Only while the pointer is over the Bar, so it hides no reading.
-    if ctx.input(|i| i.pointer.hover_pos()).is_none() {
-        return;
-    }
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("screen button"))
-        .order(egui::Order::Foreground)
-        .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(egui::pos2(screen.max.x - 4.0, screen.min.y + 4.0))
-        .show(ctx, |ui| {
-            let label = RichText::new(mode.label()).small();
-            let mut hover = format!("Click for {}.", mode.next(Platform::current()).label());
-            if Platform::current() == Platform::MacOs {
-                hover = format!("{hover}\n{NO_RESERVE_SPACE_ON_MACOS}");
-            }
-            if ui.small_button(label).on_hover_text(hover).clicked() {
-                actions.push(Event::CycleScreenMode);
-            }
         });
 }
 

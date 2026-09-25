@@ -25,8 +25,9 @@ pub struct MainMenu {
     system_capture: CheckMenuItem,
     send_plugins: CheckMenuItem,
     help: MenuId,
+    float_on_top: CheckMenuItem,
     clicks: mpsc::Receiver<MenuId>,
-    shown: Option<ListenTo>,
+    shown: Option<(ListenTo, bool)>,
 }
 
 impl MainMenu {
@@ -41,6 +42,7 @@ impl MainMenu {
         let system_capture = CheckMenuItem::new("System Capture", true, true, None);
         let send_plugins = CheckMenuItem::new("Send Plugins", true, false, None);
         let help = MenuItem::new("Das-Meter Help", true, None);
+        let float_on_top = CheckMenuItem::new("Float on Top", true, true, None);
         let about = AboutMetadata {
             name: Some("Das-Meter".into()),
             version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -68,6 +70,8 @@ impl MainMenu {
             "Window",
             true,
             &[
+                &float_on_top,
+                &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::minimize(None),
                 &PredefinedMenuItem::close_window(None),
             ],
@@ -91,6 +95,7 @@ impl MainMenu {
             system_capture,
             send_plugins,
             help: help.id().clone(),
+            float_on_top,
             clicks,
             shown: None,
         }
@@ -107,6 +112,10 @@ impl MainMenu {
                     Some(Command::Core(Event::SetListenTo(ListenTo::SystemCapture)))
                 } else if id == *self.send_plugins.id() {
                     Some(Command::Core(Event::SetListenTo(ListenTo::SendPlugins)))
+                } else if id == *self.float_on_top.id() {
+                    // The Bar's screen button: on macOS it only toggles Float
+                    // on top and Normal window.
+                    Some(Command::Core(Event::CycleScreenMode))
                 } else if id == self.help {
                     Some(Command::Open(HELP_URL))
                 } else {
@@ -116,13 +125,15 @@ impl MainMenu {
             .collect()
     }
 
-    /// Ticks the Listen to item the app core is on. (A click on a check item
-    /// toggles it on its own, so this runs after every click too.)
-    pub fn show(&mut self, listen_to: ListenTo, force: bool) {
-        if self.shown == Some(listen_to) && !force {
+    /// Ticks the Listen to item the app core is on, and Float on Top when the
+    /// Bar floats. (A click on a check item toggles it on its own, so this runs
+    /// after every click too.)
+    pub fn show(&mut self, listen_to: ListenTo, float_on_top: bool, force: bool) {
+        if self.shown == Some((listen_to, float_on_top)) && !force {
             return;
         }
-        self.shown = Some(listen_to);
+        self.shown = Some((listen_to, float_on_top));
+        self.float_on_top.set_checked(float_on_top);
         self.system_capture
             .set_checked(listen_to == ListenTo::SystemCapture);
         self.send_plugins

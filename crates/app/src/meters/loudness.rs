@@ -7,9 +7,9 @@ use super::labels::Align;
 use super::shapes::Area;
 use super::{Canvas, map};
 
-/// The numbers' column in the side-by-side layout, and the least the bars keep.
-const NUMBERS_WIDTH: f32 = 170.0;
-const MIN_BARS_WIDTH: f32 = 90.0;
+/// A number tile's height and the narrowest one, in logical px.
+const TILE_HEIGHT: f32 = 26.0;
+const TILE_MIN_WIDTH: f32 = 150.0;
 /// The least room between two scale labels.
 const LABEL_SPACING: f32 = 11.0;
 /// The widest a bar gets.
@@ -29,7 +29,7 @@ pub fn draw(
     let (text, dim) = (c.colour(Role::Text), c.dim());
     let size = 13.0;
 
-    // Numbers.
+    // Numbers, each in its own tile: name, value and unit on one line.
     let true_peak = if display.true_peak_oversampled {
         "TP"
     } else {
@@ -47,46 +47,79 @@ pub fn draw(
     let rows: Vec<_> = rows.into_iter().flatten().collect();
     let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
 
-    // Numbers above the bars; in an area wider than it is tall (a Bar along
-    // the top or bottom), numbers on the left and the bars beside them at
-    // full height.
-    let numbers_height = c.px(18.0) * rows.len() as f32 + c.px(10.0);
-    let beside = area.width >= area.height && area.width >= c.px(NUMBERS_WIDTH + MIN_BARS_WIDTH);
-    let (numbers, bars) = if beside {
-        let width = c.px(NUMBERS_WIDTH);
-        let numbers = Area { width, ..area };
-        let bars = Area {
-            x: area.x + width,
-            width: area.width - width,
+    // The bars take only the width they need: the scale, three bars and gaps.
+    let gap = c.px(6.0);
+    let scale_width = c.px(28.0);
+    let bars_width = scale_width + 3.0 * c.px(MAX_BAR_WIDTH) + 4.0 * gap;
+    // Wider than tall (a Bar along the top or bottom): tiles on the left, bars
+    // on the right at full height. Otherwise tiles above, bars below.
+    let beside = area.width >= area.height && area.width >= c.px(TILE_MIN_WIDTH) + bars_width;
+    let (tiles, bars) = if beside {
+        let tiles = Area {
+            width: area.width - bars_width - gap,
             ..area
         };
-        (numbers, bars)
+        let bars = Area {
+            x: area.right() - bars_width,
+            width: bars_width,
+            ..area
+        };
+        (tiles, bars)
     } else {
-        area.split_top(numbers_height)
+        let columns = tile_columns(c, area.width, rows.len());
+        let tile_rows = rows.len().div_ceil(columns) as f32;
+        let height = tile_rows * (c.px(TILE_HEIGHT) + gap) + c.px(14.0);
+        let (tiles, bars) = area.split_top(height.min(area.height / 2.0));
+        // The bar group sits in the middle of the width left under the tiles.
+        let width = bars_width.min(bars.width);
+        let bars = Area {
+            x: bars.x + (bars.width - width) / 2.0,
+            width,
+            ..bars
+        };
+        (tiles, bars)
     };
-    // Rows shrink to fit a short area, the rate line included when beside.
-    let lines = rows.len() as f32 + if beside { 1.0 } else { 0.0 };
-    let line = c.px(18.0).min(numbers.height / lines.max(1.0));
-    let value_right = numbers.x + c.px(96.0);
+    let columns = tile_columns(c, tiles.width, rows.len());
+    let tile_rows = rows.len().div_ceil(columns);
+    // Room for the rate line under the tiles.
+    let rate_height = c.px(16.0);
+    let tile_height = ((tiles.height - rate_height - gap * tile_rows as f32) / tile_rows as f32)
+        .clamp(c.px(16.0), c.px(TILE_HEIGHT));
+    let tile_width = (tiles.width - gap * (columns as f32 - 1.0)) / columns as f32;
+    let tile_fill = c.colour(Role::Grid).faded(0.35);
+    let unit_width = c.px(36.0);
     for (i, &(name, level, unit)) in rows.iter().enumerate() {
-        let y = numbers.y + line * i as f32;
-        c.text(name, numbers.x, y, size, dim, Align::Left);
-        c.bold(&number(level), value_right, y, size, text, Align::Right);
-        c.text(unit, value_right + c.px(6.0), y, size, dim, Align::Left);
+        let (row, column) = (i / columns, i % columns);
+        let tile = Area {
+            x: tiles.x + column as f32 * (tile_width + gap),
+            y: tiles.y + row as f32 * (tile_height + gap),
+            width: tile_width,
+            height: tile_height,
+        };
+        c.shapes.rect(tile, tile_fill);
+        let y = tile.y + (tile_height - c.px(16.0)) / 2.0;
+        let pad = c.px(8.0);
+        c.text(name, tile.x + pad, y, size, dim, Align::Left);
+        let unit_x = tile.right() - pad - unit_width;
+        c.bold(
+            &number(level),
+            unit_x - c.px(4.0),
+            y,
+            size,
+            text,
+            Align::Right,
+        );
+        c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
     }
-    if beside {
-        let y = numbers.y + line * rows.len() as f32;
-        c.text(&rate, numbers.x, y, 10.0, dim, Align::Left);
-    } else {
-        c.text(&rate, area.right(), area.y, 10.0, dim, Align::Right);
-    }
+    let below = tiles.y + tile_rows as f32 * (tile_height + gap);
+    let rate_y = below.min(tiles.bottom() - rate_height);
+    c.text(&rate, tiles.x, rate_y, 10.0, dim, Align::Left);
 
     // Bars: L, R, then the LUFS bar.
     let (bars, names) = bars.split_bottom(c.px(16.0));
     let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
     let y_of = |db: f64| map(db as f32, range, bars.bottom(), bars.y);
-    let left = bars.x + c.px(28.0);
-    let gap = c.px(6.0);
+    let left = bars.x + scale_width;
     let width = ((bars.right() - left - 3.0 * gap) / 3.0)
         .min(c.px(MAX_BAR_WIDTH))
         .max(1.0);
@@ -213,6 +246,12 @@ pub fn draw(
         dim,
         Align::Centre,
     );
+}
+
+/// How many tile columns fit `width`: as many as fit at their narrowest, at most one per reading.
+fn tile_columns(c: &Canvas, width: f32, count: usize) -> usize {
+    let fit = ((width + c.px(6.0)) / (c.px(TILE_MIN_WIDTH) + c.px(6.0))).floor() as usize;
+    fit.clamp(1, count.max(1))
 }
 
 /// A reading as shown: one decimal, or "-inf" for silence.

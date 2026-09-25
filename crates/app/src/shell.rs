@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use dasmeter_core::{
     AppCore, BarEnd, Decision, Edge, Event, ListenTo, MeterScene, MeterState, Rect, Scene,
-    WindowKey, WindowScene,
+    ScreenMode, WindowKey, WindowScene,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -823,7 +823,8 @@ impl ApplicationHandler for Shell {
                     }
                 }
             }
-            menu.show(self.core.listen_to(), clicked);
+            let float_on_top = self.core.layout().screen == ScreenMode::FloatOnTop;
+            menu.show(self.core.listen_to(), float_on_top, clicked);
         }
         let pump_at = self.pump(now);
         let decision = self.core.decide(now);
