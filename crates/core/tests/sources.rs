@@ -36,11 +36,14 @@ fn plugin(id: u64, name: &str) -> SendPlugin {
 
 impl Harness {
     fn new() -> Harness {
+        let mut core = AppCore::with_meters(vec![
+            MeterSettings::Spectrum(SpectrumMeterSettings::default()),
+            MeterSettings::Loudness(LoudnessMeterSettings::default()),
+        ]);
+        // Past the welcome card: System Capture may run.
+        core.handle(Event::StartListening, Duration::ZERO);
         Harness {
-            core: AppCore::with_meters(vec![
-                MeterSettings::Spectrum(SpectrumMeterSettings::default()),
-                MeterSettings::Loudness(LoudnessMeterSettings::default()),
-            ]),
+            core,
             now: Duration::ZERO,
             listed: Vec::new(),
         }

@@ -32,7 +32,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     };
     let mut now = Duration::ZERO;
     core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
-    for (seconds, seed) in [(4.0, 1), (2.0, 3)] {
+    // The silence hint only shows when nothing has played.
+    let noise_for = if open == Some("hint") { 0 } else { 2 };
+    for (seconds, seed) in [(4.0, 1), (2.0, 3)].into_iter().take(noise_for) {
         for block in noise(seconds, seed).chunks(1024) {
             now += Duration::from_secs_f64(512.0 / f64::from(RATE));
             core.handle(Event::Audio(block), now);
@@ -87,6 +89,16 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             now,
         ),
         Some("settings") => core.handle(Event::ShowSettings(true), now),
+        // The first-launch card, and the silence hint after 11 s of nothing.
+        Some("welcome") => core.handle(Event::ShowWelcome, now),
+        Some("hint") => {
+            core.handle(Event::StartListening, now);
+            let silence = vec![0.0f32; 2 * 512];
+            for _ in 0..(11 * RATE / 512) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(&silence), now);
+            }
+        }
         Some(other) => return Err(format!("unknown option {other:?}")),
     }
     now += Duration::from_millis(100);

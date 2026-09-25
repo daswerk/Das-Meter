@@ -122,6 +122,11 @@ fn assert_level(what: &str, level: Level, want: f64, tolerance: f64) {
 fn before_capture_starts_the_meter_says_so() {
     let mut app = Harness::new();
     assert_eq!(app.decide(), Decision::Draw);
+    // Before Start listening (first launch), it offers the button instead.
+    assert_eq!(app.loudness(), MeterState::NotListening);
+    app.send(Event::StartListening)
+        .at(Duration::from_millis(20));
+    app.decide();
     assert_eq!(app.loudness(), MeterState::Starting);
 }
 

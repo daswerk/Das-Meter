@@ -38,6 +38,11 @@ pub struct Scene {
     pub menu: Option<MeterMenu>,
     /// Whether the settings panel is open.
     pub settings_open: bool,
+    /// The first-launch card to show: the welcome card, a hint or a note.
+    pub card: Option<crate::onboarding::Card>,
+    /// Show in Dock and Launch at login, for the settings and the menu.
+    pub show_in_dock: bool,
+    pub launch_at_login: bool,
     pub app: AppSettings,
     /// The highest frame-rate cap the settings panel offers.
     pub max_frame_rate_cap: u32,
@@ -163,11 +168,16 @@ pub enum MeterState {
     PickSendPlugin(Vec<SourceItem>),
     /// On Send Plugins, and there are none: "No Send Plugins yet".
     NoSendPlugins,
+    /// On System Capture before Start listening: the Meter offers a small
+    /// Start listening button and captures nothing.
+    NotListening,
 }
 
 impl MeterState {
     /// What "Pick a Send Plugin" says above its list.
     pub const PICK_TITLE: &str = "Pick a Send Plugin";
+    /// The button a Meter shows before Start listening.
+    pub const START_LISTENING: &str = "Start listening";
     /// What a Meter says with no Send Plugins, and the hint under it.
     pub const NO_SEND_PLUGINS: &str = "No Send Plugins yet";
     pub const NO_SEND_PLUGINS_HINT: &str = "Add Das-Meter Send to a track";

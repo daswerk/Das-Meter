@@ -1,5 +1,5 @@
-//! The egui layer: each Meter's menu and the settings panel, drawn over the
-//! Meters on the same surface.
+//! The egui layer: each Meter's menu, the settings panel and the
+//! first-launch card, each in its own window (or over the Meters for snapshots).
 //!
 //! It keeps no settings of its own. Each frame it draws what the scene says
 //! and turns what the user changes into app core events.
@@ -11,10 +11,11 @@ use dasmeter_analysis::{
     ChannelView, PeakHold, RmsMode, SpectrumStyle, StereoScaling, StereoView, WaveformScale,
     WindowFunction,
 };
+use dasmeter_core::docs::Topic;
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo, LoudnessMeterSettings,
+    Card, Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo, LoudnessMeterSettings,
     LufsBar, MeterKind, MeterScene, MeterSettings, Palette, Platform, Role, Scene, ScreenMode,
     SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
     WaveformMeterSettings, WindowKey,
@@ -45,6 +46,12 @@ pub enum Request {
     ExportPreset,
     /// Ask for a `.dasmeter-preset` file to import.
     ImportPreset,
+    /// Install Send Plugin… (macOS: copy it from the app).
+    InstallSendPlugin,
+    /// Open a docs page ("Learn more").
+    Learn(dasmeter_core::docs::Topic),
+    /// macOS: open Privacy & Security ▸ Screen & System Audio Recording.
+    OpenPrivacySettings,
 }
 
 impl Actions {
@@ -85,6 +92,9 @@ pub enum Surface {
     Menu,
     /// The settings panel, filling its own window.
     Settings,
+    /// The first-launch card (welcome, a hint or a note), in its own small
+    /// window next to the Bar.
+    Card,
     /// The menu and the panel over the Meters, for offscreen snapshots.
     Overlay,
 }
@@ -178,9 +188,13 @@ impl Ui {
                     content_size = menu_window(&ctx, scene, &mut actions);
                 }
                 Surface::Settings => settings_window(ui, scene, &mut actions),
+                Surface::Card => {
+                    content_size = card_window(&ctx, scene, &mut actions);
+                }
                 Surface::Overlay => {
                     meter_menu(&ctx, scene, &mut actions);
                     settings_panel(&ctx, scene, &mut actions);
+                    card_overlay(&ctx, scene, &mut actions);
                 }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -914,6 +928,138 @@ fn menu_window(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) -> Opt
     Some(response.response.rect.size())
 }
 
+/// The card's width, in logical pixels.
+const CARD_WIDTH: f32 = 340.0;
+
+/// The first-launch card, filling its own window, measured for its size.
+fn card_window(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) -> Option<egui::Vec2> {
+    let card = scene.card.as_ref()?;
+    let frame = egui::Frame::menu(&ctx.global_style()).inner_margin(egui::Margin::same(14));
+    let response = egui::Area::new(egui::Id::new("card"))
+        .fixed_pos(egui::Pos2::ZERO)
+        .constrain(false)
+        .show(ctx, |ui| {
+            frame.show(ui, |ui| {
+                ui.set_width(CARD_WIDTH);
+                card_contents(ui, card, actions);
+            });
+        });
+    Some(response.response.rect.size())
+}
+
+/// The card over the Meters, for snapshots.
+fn card_overlay(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
+    let Some(card) = &scene.card else { return };
+    egui::Area::new(egui::Id::new("card"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(16.0, 16.0))
+        .show(ctx, |ui| {
+            egui::Frame::menu(ui.style())
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(CARD_WIDTH);
+                    card_contents(ui, card, actions);
+                });
+        });
+}
+
+/// The ✕ in a card's top-right corner.
+fn close_button(ui: &mut egui::Ui) -> bool {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+        // "×": Geist has no "✕".
+        ui.add(egui::Button::new(RichText::new("×").size(18.0)).frame(false))
+            .on_hover_text("Close")
+            .clicked()
+    })
+    .inner
+}
+
+fn card_contents(ui: &mut egui::Ui, card: &Card, actions: &mut Actions) {
+    let macos = cfg!(target_os = "macos");
+    ui.spacing_mut().item_spacing.y = 6.0;
+    match card {
+        Card::Welcome => {
+            ui.horizontal(|ui| {
+                ui.heading("Welcome to Das-Meter");
+                if close_button(ui) {
+                    actions.push(Event::CloseWelcome);
+                }
+            });
+            ui.label("Meters show what your computer plays");
+            ui.label("Using a DAW? Add the Send Plugin");
+            ui.label("Right-click any Meter for settings");
+            if macos {
+                ui.label(
+                    egui::RichText::new(
+                        "macOS will ask for permission; nothing is recorded or saved",
+                    )
+                    .weak(),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new(
+                        "Send Plugins are installed: add Das-Meter Send to a track",
+                    )
+                    .weak(),
+                );
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let accent = ui.visuals().selection.stroke.color;
+                let start = egui::Button::new(RichText::new("Start listening").strong())
+                    .fill(accent.gamma_multiply(0.8));
+                if ui.add(start).clicked() {
+                    actions.push(Event::StartListening);
+                }
+                if macos && ui.button("Install Send Plugin…").clicked() {
+                    actions.requests.push(Request::InstallSendPlugin);
+                }
+                if ui.link("Learn more").clicked() {
+                    actions.requests.push(Request::Learn(Topic::GettingStarted));
+                }
+            });
+        }
+        Card::SilenceHint => {
+            ui.horizontal(|ui| {
+                ui.strong("Hearing nothing?");
+                if close_button(ui) {
+                    actions.push(Event::CloseCard);
+                }
+            });
+            ui.label("Play some audio. If your DAW uses ASIO, switch to Send Plugins.");
+            ui.horizontal(|ui| {
+                if ui.button("Switch to Send Plugins").clicked() {
+                    actions.push(Event::SetListenTo(ListenTo::SendPlugins));
+                }
+                if macos && ui.button("Privacy Settings…").clicked() {
+                    actions.requests.push(Request::OpenPrivacySettings);
+                }
+                if ui.link("Learn more").clicked() {
+                    actions.requests.push(Request::Learn(Topic::Asio));
+                }
+            });
+        }
+        Card::SendPluginFound { name } => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(name).italics().strong());
+                ui.label("is sending.");
+                if close_button(ui) {
+                    actions.push(Event::CloseCard);
+                }
+            });
+            ui.label("Listen to Send Plugins?");
+            ui.horizontal(|ui| {
+                if ui.button("Switch").clicked() {
+                    actions.push(Event::SetListenTo(ListenTo::SendPlugins));
+                }
+                if ui.link("Learn more").clicked() {
+                    actions.requests.push(Request::Learn(Topic::SendPlugins));
+                }
+            });
+        }
+    }
+}
+
 /// The open Meter menu over the Meters, where it was right-clicked (snapshots).
 fn meter_menu(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
     let Some(menu) = scene.menu else { return };
@@ -1358,6 +1504,23 @@ fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                 .changed();
             if changed {
                 actions.push(Event::SetApp(app));
+            }
+            let mut launch_at_login = scene.launch_at_login;
+            if ui
+                .checkbox(&mut launch_at_login, "Launch at login")
+                .changed()
+            {
+                actions.push(Event::SetLaunchAtLogin(launch_at_login));
+            }
+            if cfg!(target_os = "macos") {
+                let mut show_in_dock = scene.show_in_dock;
+                if ui
+                    .checkbox(&mut show_in_dock, "Show in Dock")
+                    .on_hover_text("The menu bar icon is always there")
+                    .changed()
+                {
+                    actions.push(Event::SetShowInDock(show_in_dock));
+                }
             }
         });
     egui::CollapsingHeader::new("Theme")

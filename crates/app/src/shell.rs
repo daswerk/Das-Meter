@@ -33,6 +33,16 @@ fn open_in_browser(url: &str) {
     let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
 }
 
+/// The card window's size before it measures its contents.
+const CARD_SIZE: (f32, f32) = (370.0, 160.0);
+/// Privacy & Security ▸ Screen & System Audio Recording.
+const PRIVACY_SETTINGS: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
+/// How often Send Plugins are listed while on System Capture, for the
+/// one-time "is sending" note: rarely, as it wakes an otherwise idle app.
+const LIST_ON_CAPTURE_EVERY: Duration = Duration::from_secs(2);
+
 pub fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
@@ -49,6 +59,7 @@ pub fn run() {
         opened_files: crate::macos::receive_opened_files(wake.clone()),
         wake,
         send_plugins: SendPluginInput::new(),
+        send_plugins_listed_at: Duration::ZERO,
         windows: HashMap::new(),
         started: false,
         theme_folder: Vec::new(),
@@ -60,6 +71,8 @@ pub fn run() {
         main_menu: None,
         #[cfg(target_os = "macos")]
         maintenance: None,
+        #[cfg(target_os = "macos")]
+        login_item: None,
     };
     event_loop.run_app(&mut shell).expect("run the event loop");
 }
@@ -73,6 +86,8 @@ enum Role {
     Menu,
     /// The settings panel.
     Settings,
+    /// The first-launch card next to the Bar.
+    Card,
 }
 
 impl Role {
@@ -81,6 +96,7 @@ impl Role {
             Role::Meters(key) => Surface::Meters(key),
             Role::Menu => Surface::Menu,
             Role::Settings => Surface::Settings,
+            Role::Card => Surface::Card,
         }
     }
 }
@@ -176,6 +192,8 @@ struct Shell {
     #[cfg(target_os = "macos")]
     opened_files: std::sync::mpsc::Receiver<std::path::PathBuf>,
     send_plugins: SendPluginInput,
+    /// When the Send Plugins were last listed while on System Capture.
+    send_plugins_listed_at: Duration,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
     /// The themes folder as last read, and when it's next looked at.
@@ -192,6 +210,9 @@ struct Shell {
     /// The Send Plugin refresh, updates and uninstall.
     #[cfg(target_os = "macos")]
     maintenance: Option<crate::maintenance::Maintenance>,
+    /// Launch at Login as last read from or given to macOS.
+    #[cfg(target_os = "macos")]
+    login_item: Option<bool>,
 }
 
 fn logical(rect: Rect) -> (LogicalPosition<f64>, LogicalSize<f64>) {
@@ -244,6 +265,9 @@ fn ui_view(scene: &Scene) -> Scene {
         send_plugins: scene.send_plugins.clone(),
         menu: scene.menu,
         settings_open: scene.settings_open,
+        card: scene.card.clone(),
+        show_in_dock: scene.show_in_dock,
+        launch_at_login: scene.launch_at_login,
         app: scene.app,
         max_frame_rate_cap: scene.max_frame_rate_cap,
     }
@@ -275,12 +299,28 @@ impl Shell {
         match self.core.listen_to() {
             ListenTo::SystemCapture => {
                 self.send_plugins.stop();
-                let wake = self.wake.clone();
-                let audio = self
-                    .audio
-                    .get_or_insert_with(|| Audio::start(move || wake()));
-                audio.pump(&mut self.core, now);
-                None
+                // Before Start listening (first launch), nothing is captured,
+                // so the macOS prompt only follows the welcome card.
+                if self.core.may_capture() {
+                    let wake = self.wake.clone();
+                    let audio = self
+                        .audio
+                        .get_or_insert_with(|| Audio::start(move || wake()));
+                    audio.pump(&mut self.core, now);
+                } else {
+                    self.audio = None;
+                }
+                // Look for a sending Send Plugin now and then, for the
+                // one-time note.
+                if !self.core.wants_send_plugins_listed() {
+                    return None;
+                }
+                if now >= self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY {
+                    self.send_plugins_listed_at = now;
+                    self.send_plugins
+                        .pump(&mut self.core, now, self.start + now);
+                }
+                Some(self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY)
             }
             ListenTo::SendPlugins => {
                 // System Capture pauses while listening to Send Plugins.
@@ -430,8 +470,12 @@ impl Shell {
                 app.title.clone_from(&window_scene.title);
             }
         }
+        // The Dock icon follows Show in Dock, and goes while a window shows
+        // over fullscreen apps (the menu bar icon stays).
         #[cfg(target_os = "macos")]
-        crate::macos::set_dock_icon(!scene.windows.iter().any(|w| w.over_fullscreen));
+        crate::macos::set_dock_icon(
+            scene.show_in_dock && !scene.windows.iter().any(|w| w.over_fullscreen),
+        );
         let gone: Vec<WindowId> = self
             .windows
             .iter()
@@ -439,6 +483,7 @@ impl Shell {
                 Role::Meters(key) => !scene.windows.iter().any(|s| s.key == key),
                 Role::Menu => scene.menu.is_none(),
                 Role::Settings => !scene.settings_open,
+                Role::Card => scene.card.is_none(),
             })
             .map(|(id, _)| *id)
             .collect();
@@ -474,6 +519,29 @@ impl Shell {
                             .with_position(at)
                             .with_inner_size(LogicalSize::new(1.0, 1.0));
                         self.open(event_loop, Role::Menu, attributes);
+                    }
+                }
+            }
+        }
+        // The first-launch card, next to the Bar.
+        if scene.card.is_some() {
+            let size = self
+                .find(Role::Card)
+                .map_or([CARD_SIZE.0, CARD_SIZE.1], |id| {
+                    self.windows[&id].logical_size()
+                });
+            if let Some(at) = self.card_position(size) {
+                match self.find(Role::Card) {
+                    Some(id) => self.windows[&id].window.set_outer_position(at),
+                    None => {
+                        let attributes = Window::default_attributes()
+                            .with_title("Das-Meter")
+                            .with_decorations(false)
+                            .with_resizable(false)
+                            .with_window_level(WindowLevel::AlwaysOnTop)
+                            .with_position(at)
+                            .with_inner_size(LogicalSize::new(CARD_SIZE.0, CARD_SIZE.1));
+                        self.open(event_loop, Role::Card, attributes);
                     }
                 }
             }
@@ -542,6 +610,22 @@ impl Shell {
         );
         app.window.pre_present_notify();
         app.painter.gpu.queue.present(frame);
+        // The card takes the size of what it shows, and moves to stay next to the Bar.
+        if let (Role::Card, Some(size)) = (app.role, app.ui.content_size) {
+            let [width, height] = app.logical_size();
+            if (size.x - width).abs() > 1.0 || (size.y - height).abs() > 1.0 {
+                app.window.request_redraw();
+                let _ = app
+                    .window
+                    .request_inner_size(LogicalSize::new(size.x, size.y));
+                if let Some(at) = self.card_position([size.x, size.y]) {
+                    self.windows[&id].window.set_outer_position(at);
+                }
+            }
+        }
+        let Some(app) = self.windows.get_mut(&id) else {
+            return;
+        };
         // A menu window takes the size of what it shows.
         if let (Role::Menu, Some(size)) = (app.role, app.ui.content_size) {
             let [width, height] = app.logical_size();
@@ -571,8 +655,71 @@ impl Shell {
                 }
                 Request::ExportPreset => crate::sharing::export(&self.core),
                 Request::ImportPreset => crate::sharing::import_chosen(&mut self.core, now),
+                Request::InstallSendPlugin => {
+                    #[cfg(target_os = "macos")]
+                    crate::maintenance::install_send_plugin();
+                }
+                Request::Learn(topic) => self.open_url(&topic.url()),
+                Request::OpenPrivacySettings => self.open_url(PRIVACY_SETTINGS),
             }
         }
+    }
+
+    /// Keeps macOS's login item and the setting in step: at launch the
+    /// setting follows macOS (the user may have changed it in System
+    /// Settings); after that macOS follows the setting.
+    #[cfg(target_os = "macos")]
+    fn sync_launch_at_login(&mut self, now: Duration) {
+        let wanted = self.core.launch_at_login();
+        match self.login_item {
+            None => {
+                let actual = crate::macos::launch_at_login();
+                self.login_item = Some(actual);
+                if actual != wanted {
+                    self.core.handle(Event::SetLaunchAtLogin(actual), now);
+                }
+            }
+            Some(applied) if applied != wanted => match crate::macos::set_launch_at_login(wanted) {
+                Ok(()) => self.login_item = Some(wanted),
+                Err(error) => {
+                    eprintln!("Das-Meter couldn't change Launch at Login: {error}");
+                    self.core.handle(Event::SetLaunchAtLogin(applied), now);
+                }
+            },
+            Some(_) => {}
+        }
+    }
+
+    /// Opens a web page (or a System Settings pane) in the default app.
+    fn open_url(&self, url: &str) {
+        if let Some(app) = self.windows.values().next() {
+            app.ui.ctx.open_url(egui::OpenUrl::new_tab(url));
+            app.window.request_redraw();
+        }
+    }
+
+    /// Where the card goes: next to the Bar, on the side facing the rest of
+    /// the display, or inside the Window's top-left corner.
+    fn card_position(&self, [width, height]: [f32; 2]) -> Option<LogicalPosition<f64>> {
+        const GAP: f32 = 8.0;
+        let window = self
+            .core
+            .scene()?
+            .windows
+            .iter()
+            .find(|w| matches!(w.key, WindowKey::Bar | WindowKey::Main))?;
+        let frame = self
+            .find(Role::Meters(window.key))
+            .and_then(|id| self.windows[&id].frame())
+            .or(window.frame)?;
+        let (x, y) = match window.edge {
+            Some(Edge::Top) => (frame.x + 2.0 * GAP, frame.bottom() + GAP),
+            Some(Edge::Bottom) => (frame.x + 2.0 * GAP, frame.y - height - GAP),
+            Some(Edge::Left) => (frame.right() + GAP, frame.y + 2.0 * GAP),
+            Some(Edge::Right) => (frame.x - width - GAP, frame.y + 2.0 * GAP),
+            None => (frame.x + 2.0 * GAP, frame.y + 4.0 * GAP),
+        };
+        Some(LogicalPosition::new(f64::from(x), f64::from(y)))
     }
 
     /// Where a menu of `size` opened at `anchor` goes: below and right of it,
@@ -829,7 +976,7 @@ impl ApplicationHandler for Shell {
         // egui asks for a repaint after nearly every event, a redraw included;
         // only its own windows, or the Bar's button under the pointer, need one.
         let wants = match role {
-            Role::Menu | Role::Settings => true,
+            Role::Menu | Role::Settings | Role::Card => true,
             // The Bar's screen button shows while the pointer is over the Bar.
             Role::Meters(_) => {
                 app.ui_hot
@@ -853,6 +1000,18 @@ impl ApplicationHandler for Shell {
                 }
                 Role::Menu => self.core.handle(Event::CloseMenu, now),
                 Role::Settings => self.core.handle(Event::ShowSettings(false), now),
+                Role::Card => {
+                    let welcome = self
+                        .core
+                        .scene()
+                        .is_some_and(|scene| scene.card == Some(dasmeter_core::Card::Welcome));
+                    let close = if welcome {
+                        Event::CloseWelcome
+                    } else {
+                        Event::CloseCard
+                    };
+                    self.core.handle(close, now);
+                }
             },
             WindowEvent::Resized(size) => {
                 app.surface
@@ -972,6 +1131,8 @@ impl ApplicationHandler for Shell {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = self.now();
         #[cfg(target_os = "macos")]
+        self.sync_launch_at_login(now);
+        #[cfg(target_os = "macos")]
         if let Some(menu) = &mut self.main_menu {
             let commands = menu.commands();
             let clicked = !commands.is_empty();
@@ -999,6 +1160,15 @@ impl ApplicationHandler for Shell {
                     crate::main_menu::Command::Update => {
                         if let Some(maintenance) = &mut self.maintenance {
                             maintenance.update(open_in_browser);
+                        }
+                    }
+                    crate::main_menu::Command::LaunchAtLogin(on) => {
+                        self.core.handle(Event::SetLaunchAtLogin(on), now);
+                    }
+                    crate::main_menu::Command::ShowWindows => {
+                        crate::macos::activate();
+                        for app in self.windows.values() {
+                            crate::macos::order_front(&app.window);
                         }
                     }
                     crate::main_menu::Command::Uninstall => {
@@ -1030,6 +1200,7 @@ impl ApplicationHandler for Shell {
                 }
                 dasmeter_core::LayoutMode::Window => self.core.window_layout().on_top,
             };
+            menu.show_toggles(self.core.show_in_dock(), self.core.launch_at_login());
             menu.show(
                 self.core.listen_to(),
                 self.core.mode(),

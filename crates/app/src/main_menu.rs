@@ -29,6 +29,10 @@ pub enum Command {
     Update,
     /// Remove the app and its Send Plugins, after asking.
     Uninstall,
+    /// Launch at Login switched on or off.
+    LaunchAtLogin(bool),
+    /// Bring the app's windows forward (the menu bar icon).
+    ShowWindows,
 }
 
 pub struct MainMenu {
@@ -53,6 +57,14 @@ pub struct MainMenu {
     update: MenuItem,
     shown_update: Option<String>,
     uninstall: MenuItem,
+    show_in_dock: CheckMenuItem,
+    launch_at_login: CheckMenuItem,
+    show_welcome: MenuItem,
+    /// The menu bar icon and its menu's items.
+    _tray: tray_icon::TrayIcon,
+    tray_show: MenuItem,
+    tray_settings: MenuItem,
+    shown_toggles: Option<(bool, bool)>,
     clicks: mpsc::Receiver<MenuId>,
     shown: Option<(ListenTo, LayoutMode, bool)>,
 }
@@ -78,6 +90,9 @@ impl MainMenu {
         // Enabled, and named for the version, once a check finds one.
         let update = MenuItem::new("Update Das-Meter…", false, None);
         let uninstall = MenuItem::new("Uninstall Das-Meter…", true, None);
+        let show_in_dock = CheckMenuItem::new("Show in Dock", true, true, None);
+        let launch_at_login = CheckMenuItem::new("Launch at Login", true, false, None);
+        let show_welcome = MenuItem::new("Show Welcome", true, None);
         let about = AboutMetadata {
             name: Some("Das-Meter".into()),
             version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -93,6 +108,9 @@ impl MainMenu {
                 &PredefinedMenuItem::separator(),
                 &settings,
                 &install_send_plugin,
+                &PredefinedMenuItem::separator(),
+                &show_in_dock,
+                &launch_at_login,
                 &PredefinedMenuItem::separator(),
                 &uninstall,
                 &PredefinedMenuItem::separator(),
@@ -121,7 +139,8 @@ impl MainMenu {
             ],
         )
         .expect("build the Window menu");
-        let help_menu = Submenu::with_items("Help", true, &[&help]).expect("build the Help menu");
+        let help_menu = Submenu::with_items("Help", true, &[&help, &show_welcome])
+            .expect("build the Help menu");
         // Filled from the Preset list; see `show_presets`.
         let presets = Submenu::new("Presets", true);
         let revert = MenuItem::new("Revert Preset", false, None);
@@ -137,6 +156,25 @@ impl MainMenu {
         menu.init_for_nsapp();
         window.set_as_windows_menu_for_nsapp();
         help_menu.set_as_help_menu_for_nsapp();
+
+        // The menu bar icon: always there, so Das-Meter stays reachable
+        // without its Dock icon.
+        let tray_show = MenuItem::new("Show Das-Meter", true, None);
+        let tray_settings = MenuItem::new("Settings…", true, None);
+        let tray_menu = Menu::with_items(&[
+            &tray_show,
+            &tray_settings,
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::quit(Some("Quit Das-Meter")),
+        ])
+        .expect("build the menu bar icon's menu");
+        let tray = tray_icon::TrayIconBuilder::new()
+            .with_icon(menu_bar_icon())
+            .with_icon_as_template(true)
+            .with_tooltip("Das-Meter")
+            .with_menu(Box::new(tray_menu))
+            .build()
+            .expect("add the menu bar icon");
 
         let (sender, clicks) = mpsc::channel();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -163,6 +201,13 @@ impl MainMenu {
             update,
             shown_update: None,
             uninstall,
+            show_in_dock,
+            launch_at_login,
+            show_welcome,
+            _tray: tray,
+            tray_show,
+            tray_settings,
+            shown_toggles: None,
             bar_mode,
             window_mode,
             clicks,
@@ -175,8 +220,19 @@ impl MainMenu {
         self.clicks
             .try_iter()
             .filter_map(|id| {
-                if id == self.settings {
+                if id == self.settings || id == *self.tray_settings.id() {
                     Some(Command::Core(Event::ShowSettings(true)))
+                } else if id == *self.tray_show.id() {
+                    Some(Command::ShowWindows)
+                } else if id == *self.show_in_dock.id() {
+                    // A check item toggles itself before the click arrives.
+                    Some(Command::Core(Event::SetShowInDock(
+                        self.show_in_dock.is_checked(),
+                    )))
+                } else if id == *self.launch_at_login.id() {
+                    Some(Command::LaunchAtLogin(self.launch_at_login.is_checked()))
+                } else if id == *self.show_welcome.id() {
+                    Some(Command::Core(Event::ShowWelcome))
                 } else if id == *self.system_capture.id() {
                     Some(Command::Core(Event::SetListenTo(ListenTo::SystemCapture)))
                 } else if id == *self.send_plugins.id() {
@@ -216,6 +272,17 @@ impl MainMenu {
                 }
             })
             .collect()
+    }
+
+    /// Ticks Show in Dock and Launch at Login as the app core has them.
+    pub fn show_toggles(&mut self, show_in_dock: bool, launch_at_login: bool) {
+        let shown = (show_in_dock, launch_at_login);
+        if self.shown_toggles == Some(shown) {
+            return;
+        }
+        self.shown_toggles = Some(shown);
+        self.show_in_dock.set_checked(show_in_dock);
+        self.launch_at_login.set_checked(launch_at_login);
     }
 
     /// Offers the update the check found (or none).
@@ -310,4 +377,25 @@ impl MainMenu {
         self.send_plugins
             .set_checked(listen_to == ListenTo::SendPlugins);
     }
+}
+
+/// The menu bar icon: four level bars, drawn as a template image (macOS
+/// tints it for the menu bar), 18 points tall at 2x.
+fn menu_bar_icon() -> tray_icon::Icon {
+    const SIZE: u32 = 36;
+    // Each bar's x range and top, in pixels; they all end at the bottom.
+    const BARS: [(u32, u32, u32); 4] = [(4, 10, 16), (12, 18, 6), (20, 26, 12), (28, 34, 20)];
+    let mut rgba = vec![0u8; (SIZE * SIZE * 4) as usize];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let on = BARS
+                .iter()
+                .any(|&(left, right, top)| x >= left && x < right && y >= top && y < SIZE - 3);
+            if on {
+                let i = ((y * SIZE + x) * 4) as usize;
+                rgba[i + 3] = 255;
+            }
+        }
+    }
+    tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("a valid icon")
 }

@@ -39,7 +39,11 @@ minisign-verify = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 muda = { version = "0.20", default-features = false }
+# The menu bar icon (first launch: always there, so the app stays reachable without a Dock icon).
+tray-icon = { version = "0.25", default-features = false }
 objc2 = "0.6"
+# Launch at login (SMAppService, macOS 13+).
+objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSScreen", "NSWindow", "NSView", "NSResponder", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSGeometry", "NSString", "NSURL"] }
 

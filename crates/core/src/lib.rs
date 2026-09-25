@@ -9,8 +9,10 @@
 //! drive the core with a fake clock.
 
 pub mod displays;
+pub mod docs;
 pub mod layout;
 pub mod meters;
+pub mod onboarding;
 pub mod panes;
 pub mod presets;
 pub mod scene;
@@ -31,6 +33,7 @@ pub use meters::{
     SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
     WaveformMeterSettings,
 };
+pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
 pub use presets::{
     BuiltIn, MeterPreset, PresetData, PresetFile, PresetInfo, PresetOp, PresetScene, RoleColour,
@@ -275,6 +278,21 @@ pub enum Event<'a> {
     KeepHere,
     /// Show a quiet note from the shell (an update, the Send Plugin refreshed).
     ShowNote(Note),
+    /// Start listening (the welcome card, or a Meter's button): System
+    /// Capture may run from now on.
+    StartListening,
+    /// ✕ on the welcome card: nothing is captured until Start listening.
+    CloseWelcome,
+    /// Help ▸ Show welcome.
+    ShowWelcome,
+    /// ✕ (or a button) on the silence hint or the Send Plugin note.
+    CloseCard,
+    /// Show in Dock (macOS; on by default).
+    SetShowInDock(bool),
+    /// Launch at login (off by default, never prompted for).
+    SetLaunchAtLogin(bool),
+    /// Windows: the user switched to a virtual desktop the Bar isn't on.
+    DesktopWithoutBar,
     /// The update check ran at this time (seconds since the Unix epoch). It's
     /// kept in `settings.toml`, so a relaunch doesn't check again that day.
     UpdateChecked {
@@ -345,6 +363,8 @@ pub struct AppCore {
     silent_since: Option<Duration>,
     /// The Meters have settled in silence: silent blocks are skipped.
     quiet: bool,
+    /// First launch: the welcome card and the hints.
+    onboarding: Onboarding,
     visible: bool,
     app: AppSettings,
     /// The display's refresh rate, once the shell says it.
@@ -433,6 +453,7 @@ impl AppCore {
             changed: true,
             drawn: None,
             drawn_at: None,
+            onboarding: Onboarding::default(),
         }
     }
 
@@ -660,6 +681,33 @@ impl AppCore {
         self.app
     }
 
+    /// Whether System Capture may run: only after Start listening, so the
+    /// macOS permission prompt follows the welcome card's explanation.
+    pub fn may_capture(&self) -> bool {
+        Onboarding::may_capture(&self.presets.settings.first_launch)
+    }
+
+    /// Whether the shell should list Send Plugins while on System Capture
+    /// (for the one-time "is sending" note).
+    pub fn wants_send_plugins_listed(&self) -> bool {
+        self.listen_to == ListenTo::SendPlugins
+            || Onboarding::wants_send_plugins(&self.presets.settings.first_launch)
+    }
+
+    /// The virtual desktop tip to show as a tray notification, once.
+    pub fn take_desktop_tip(&mut self) -> bool {
+        self.onboarding.take_desktop_tip()
+    }
+
+    /// Show in Dock (macOS).
+    pub fn show_in_dock(&self) -> bool {
+        self.presets.settings.show_in_dock
+    }
+
+    pub fn launch_at_login(&self) -> bool {
+        self.presets.settings.launch_at_login
+    }
+
     /// When the update check last ran (seconds since the Unix epoch; 0 for never).
     pub fn last_update_check(&self) -> u64 {
         self.presets.settings.last_update_check
@@ -712,6 +760,7 @@ impl AppCore {
         match event {
             PresetFiles { files, settings } => {
                 let open = self.presets.load(files, settings);
+                self.onboarding.loaded(&self.presets.settings.first_launch);
                 let stored = &self.presets.settings;
                 self.app.frame_rate_cap = stored.frame_rate_cap;
                 self.app.check_for_updates = stored.check_for_updates;
@@ -752,6 +801,13 @@ impl AppCore {
             | ShowSettings(_)
             | ShowNote(_)
             | UpdateChecked { .. }
+            | StartListening
+            | CloseWelcome
+            | ShowWelcome
+            | CloseCard
+            | SetShowInDock(_)
+            | SetLaunchAtLogin(_)
+            | DesktopWithoutBar
             | ResetLoudness { .. } => {}
             // Auto-save a short pause after the last change (with a Preset open).
             _ if self.presets.current_index().is_some() => {
@@ -979,12 +1035,14 @@ impl AppCore {
                 if restarted {
                     self.show_note(Note::OutputChanged, now);
                 }
+                self.onboarding.capture_started(now);
                 for slot in &mut self.meters {
                     slot.meter.start(sample_rate);
                 }
             }
             Event::CaptureFailed(reason) => {
                 self.capture = Capture::Failed(reason.to_owned());
+                self.onboarding.capture_stopped();
                 if self.listen_to != ListenTo::SystemCapture {
                     return;
                 }
@@ -996,7 +1054,9 @@ impl AppCore {
                 if self.listen_to != ListenTo::SystemCapture {
                     return;
                 }
-                if !self.heard(frames, now) {
+                let audible = frames.iter().any(|&x| x != 0.0);
+                let card_changed = self.onboarding.audio(audible, now);
+                if !self.heard(audible, now) && !card_changed {
                     return;
                 }
                 let fed = self.fed_meters();
@@ -1028,6 +1088,10 @@ impl AppCore {
                 // System Capture starts over when it comes back; Send Plugins
                 // are routed from the last list until the next one arrives.
                 self.capture = Capture::Starting;
+                self.onboarding.capture_stopped();
+                if listen_to == ListenTo::SendPlugins {
+                    self.onboarding.close_found();
+                }
                 for slot in &mut self.meters {
                     slot.meter.stop();
                     slot.showing = None;
@@ -1035,6 +1099,12 @@ impl AppCore {
                 self.route(now);
             }
             Event::SendPlugins(listed) => {
+                if self.listen_to == ListenTo::SystemCapture {
+                    let flags = &mut self.presets.settings.first_launch;
+                    if self.onboarding.send_plugins(listed, flags).0 {
+                        self.presets.save_settings();
+                    }
+                }
                 self.send_plugins = listed.to_vec();
                 self.follow_renames();
                 self.route(now);
@@ -1086,6 +1156,12 @@ impl AppCore {
                 }
                 if let Some((meter, id)) = self.item_at(window, at) {
                     self.handle(Event::PickSendPlugin { meter, id }, now);
+                } else if self.listen_to == ListenTo::SystemCapture
+                    && !self.may_capture()
+                    && self.meter_at(window, at).is_some()
+                {
+                    // A Meter's Start listening button.
+                    self.handle(Event::StartListening, now);
                 } else if let Some(meter) = self.meter_at(window, at) {
                     self.handle(Event::ResetLoudness { meter }, now);
                 }
@@ -1322,6 +1398,40 @@ impl AppCore {
                 self.display = self.main_display();
             }
             Event::ShowNote(note) => self.show_note(note, now),
+            Event::StartListening => {
+                let flags = &mut self.presets.settings.first_launch;
+                if self.onboarding.start_listening(flags).0 {
+                    self.presets.save_settings();
+                }
+                if self.listen_to != ListenTo::SystemCapture {
+                    self.handle_event(Event::SetListenTo(ListenTo::SystemCapture), now);
+                }
+            }
+            Event::CloseWelcome => {
+                let flags = &mut self.presets.settings.first_launch;
+                if self.onboarding.close_welcome(flags).0 {
+                    self.presets.save_settings();
+                }
+            }
+            Event::ShowWelcome => self.onboarding.show_welcome(),
+            Event::CloseCard => {
+                self.onboarding.close_hint();
+                self.onboarding.close_found();
+            }
+            Event::SetShowInDock(shown) => {
+                self.presets.settings.show_in_dock = shown;
+                self.presets.save_settings();
+            }
+            Event::SetLaunchAtLogin(on) => {
+                self.presets.settings.launch_at_login = on;
+                self.presets.save_settings();
+            }
+            Event::DesktopWithoutBar => {
+                let flags = &mut self.presets.settings.first_launch;
+                if self.onboarding.desktop_without_bar(flags).0 {
+                    self.presets.save_settings();
+                }
+            }
             Event::UpdateChecked { at } => {
                 self.presets.settings.last_update_check = at;
                 self.presets.save_settings();
@@ -1483,8 +1593,8 @@ impl AppCore {
     /// Notes silence and sound. Returns false for a silent block once the
     /// Meters have settled: it would change nothing, so it's skipped, and the
     /// app stays asleep until something audible comes.
-    fn heard(&mut self, frames: &[f32], now: Duration) -> bool {
-        if frames.iter().any(|&x| x != 0.0) {
+    fn heard(&mut self, audible: bool, now: Duration) -> bool {
+        if audible {
             self.silent_since = None;
             self.quiet = false;
             return true;
@@ -1740,6 +1850,7 @@ impl AppCore {
             let (state, source) = match self.listen_to {
                 ListenTo::SystemCapture => {
                     let state = match &self.capture {
+                        Capture::Starting if !self.may_capture() => MeterState::NotListening,
                         Capture::Starting => MeterState::Starting,
                         Capture::Failed(reason) => MeterState::Unavailable(reason.clone()),
                         Capture::Live => self.live_state(i, frame, pointer),
@@ -1813,6 +1924,9 @@ impl AppCore {
             send_plugins,
             menu: self.menu,
             settings_open: self.settings_open,
+            card: self.onboarding.card(),
+            show_in_dock: self.presets.settings.show_in_dock,
+            launch_at_login: self.presets.settings.launch_at_login,
             app: self.app,
             max_frame_rate_cap: self.max_frame_rate_cap(),
         }

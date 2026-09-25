@@ -20,7 +20,7 @@ pub const MEASUREMENTS_URL: &str =
 /// The line the Loudness Meter's settings show above that link.
 pub const MEASUREMENTS_NOTE: &str = "Measures to ITU-R BS.1770-5 and EBU Tech 3341/3342.";
 /// Where Help goes.
-pub const HELP_URL: &str = "https://github.com/daswerk/Das-Meter#readme";
+pub const HELP_URL: &str = crate::docs::SITE;
 
 /// The default frame-rate cap.
 pub const DEFAULT_FRAME_RATE_CAP: u32 = 60;

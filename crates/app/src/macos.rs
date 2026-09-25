@@ -161,6 +161,15 @@ pub fn set_dock_icon(shown: bool) {
     app.activateIgnoringOtherApps(true);
 }
 
+/// Makes Das-Meter the active app (the menu bar icon's Show Das-Meter).
+pub fn activate() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    #[allow(deprecated)]
+    NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+}
+
 /// Brings `window` in front of other apps' windows without giving it the
 /// keyboard, so returning to Das-Meter shows all of its windows.
 pub fn order_front(window: &Window) {
@@ -229,4 +238,27 @@ pub fn receive_opened_files(wake: Arc<dyn Fn() + Send + Sync>) -> mpsc::Receiver
     app.setDelegate(None);
     app.setDelegate(Some(&delegate));
     files
+}
+
+/// Whether macOS opens Das-Meter at login (System Settings ▸ General ▸
+/// Login Items can change it too).
+pub fn launch_at_login() -> bool {
+    use objc2_service_management::{SMAppService, SMAppServiceStatus};
+    // SAFETY: plain ServiceManagement calls on the app's own main app service.
+    unsafe { SMAppService::mainAppService().status() == SMAppServiceStatus::Enabled }
+}
+
+/// Turns launch at login on or off. Only works for the app bundle.
+pub fn set_launch_at_login(on: bool) -> Result<(), String> {
+    use objc2_service_management::SMAppService;
+    // SAFETY: as above.
+    let result = unsafe {
+        let service = SMAppService::mainAppService();
+        if on {
+            service.registerAndReturnError()
+        } else {
+            service.unregisterAndReturnError()
+        }
+    };
+    result.map_err(|error| error.localizedDescription().to_string())
 }

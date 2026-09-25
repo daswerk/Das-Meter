@@ -182,6 +182,27 @@ impl MeterRenderer {
                     Align::Left,
                 );
             }
+            MeterState::NotListening => {
+                // A small button: a click anywhere on the Meter starts listening.
+                let accent = c.colour(Role::Accent);
+                let text_colour = c.colour(Role::Text);
+                let button = Area {
+                    x: inner.x,
+                    y: inner.y,
+                    width: c.px(116.0).min(inner.width),
+                    height: c.px(24.0).min(inner.height),
+                };
+                c.shapes.rounded_rect(button, c.px(6.0), accent.faded(0.35));
+                let text_y = button.y + (button.height - c.px(13.0)) / 2.0;
+                c.text(
+                    MeterState::START_LISTENING,
+                    button.x + button.width / 2.0,
+                    text_y,
+                    12.0,
+                    text_colour,
+                    Align::Centre,
+                );
+            }
             MeterState::PickSendPlugin(items) => {
                 let text_colour = c.colour(Role::Text);
                 c.text(

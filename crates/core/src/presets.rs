@@ -273,12 +273,15 @@ pub enum PresetOp {
     Settings { contents: String },
 }
 
-/// First-launch flags, kept for the first-launch ticket.
+/// What first launch shows once per install (see `onboarding`).
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FirstLaunch {
     pub built_ins_copied: bool,
+    /// The welcome card was answered (Start listening or ✕).
     pub welcome_shown: bool,
+    /// Start listening was pressed: System Capture may run.
+    pub listening_started: bool,
     pub send_plugin_note_shown: bool,
     pub virtual_desktop_tip_shown: bool,
 }
