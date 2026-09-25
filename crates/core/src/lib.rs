@@ -334,6 +334,10 @@ pub struct AppCore {
     screens: Vec<Screen>,
     note_until: Option<Duration>,
     note: Note,
+    /// When the current stretch of silence began, if it's silent now.
+    silent_since: Option<Duration>,
+    /// The Meters have settled in silence: silent blocks are skipped.
+    quiet: bool,
     visible: bool,
     app: AppSettings,
     /// The display's refresh rate, once the shell says it.
@@ -407,6 +411,8 @@ impl AppCore {
             pointer: None,
             note_until: None,
             note: Note::OutputChanged,
+            silent_since: None,
+            quiet: false,
             visible: true,
             app: AppSettings::default(),
             refresh_rate: None,
@@ -565,6 +571,11 @@ impl AppCore {
     /// The display the Bar is on, once the shell has said.
     pub fn display(&self) -> Option<Display> {
         self.display
+    }
+
+    /// Whether any window can be seen.
+    pub fn visible(&self) -> bool {
+        self.visible
     }
 
     pub fn mode(&self) -> LayoutMode {
@@ -963,10 +974,12 @@ impl AppCore {
                 if self.listen_to != ListenTo::SystemCapture {
                     return;
                 }
-                // Only the Meters the current layout shows are fed.
-                let shown = self.shown_meters();
+                if !self.heard(frames, now) {
+                    return;
+                }
+                let fed = self.fed_meters();
                 for (i, slot) in self.meters.iter_mut().enumerate() {
-                    if shown.contains(&i) {
+                    if fed.contains(&i) {
                         slot.meter.process(frames);
                     }
                 }
@@ -1005,8 +1018,12 @@ impl AppCore {
                 self.route(now);
             }
             Event::SendPluginAudio { id, frames } => {
+                let wanted = self.fed_meters();
                 let mut fed = false;
-                for slot in &mut self.meters {
+                for (i, slot) in self.meters.iter_mut().enumerate() {
+                    if !wanted.contains(&i) {
+                        continue;
+                    }
                     if let Some(showing) = slot.showing.as_mut().filter(|s| s.id == id) {
                         slot.meter.process(frames);
                         showing.fed_at = now;
@@ -1436,6 +1453,49 @@ impl AppCore {
         }
     }
 
+    /// Notes silence and sound. Returns false for a silent block once the
+    /// Meters have settled: it would change nothing, so it's skipped, and the
+    /// app stays asleep until something audible comes.
+    fn heard(&mut self, frames: &[f32], now: Duration) -> bool {
+        if frames.iter().any(|&x| x != 0.0) {
+            self.silent_since = None;
+            self.quiet = false;
+            return true;
+        }
+        self.silent_since.get_or_insert(now);
+        !(self.quiet && self.visible)
+    }
+
+    /// The longest peak hold of any Meter: how long silence must last before
+    /// nothing more can change. (An infinite hold never changes on its own.)
+    fn longest_hold(&self) -> Duration {
+        self.meters
+            .iter()
+            .filter_map(|slot| match slot.meter.settings() {
+                MeterSettings::Loudness(s) => Some(s.analysis.peak_hold),
+                MeterSettings::Spectrum(s) => Some(s.analysis.peak_hold),
+                _ => None,
+            })
+            .filter_map(|hold| match hold {
+                dasmeter_analysis::PeakHold::For(time) => Some(time),
+                dasmeter_analysis::PeakHold::Infinite => None,
+            })
+            .max()
+            .unwrap_or_default()
+    }
+
+    /// The Meters audio goes to: the ones the layout shows, and while nothing
+    /// can be seen only the Loudness Meters among them, whose integrated LUFS
+    /// and peak hold must keep counting.
+    fn fed_meters(&self) -> Vec<usize> {
+        let mut shown = self.shown_meters();
+        if !self.visible {
+            shown
+                .retain(|&i| matches!(self.meters[i].meter.settings(), MeterSettings::Loudness(_)));
+        }
+        shown
+    }
+
     /// A Meter for a new pane: one no layout shows, else a new one. Either
     /// way it becomes a copy of `like` (settings, pick, Source label) and
     /// starts at its rate.
@@ -1542,6 +1602,11 @@ impl AppCore {
         self.changed = false;
         let scene = self.build_scene(note_until.is_some());
         if self.drawn.as_ref() == Some(&scene) {
+            // Nothing visible changes any more, and the silence has outlasted
+            // every peak hold: the Meters have settled.
+            self.quiet = self.silent_since.is_some_and(|since| {
+                now.saturating_sub(since) >= self.longest_hold() + SETTLE_MARGIN
+            });
             return Decision::Sleep {
                 until: earliest(note_until, self.save_after),
             };
@@ -1761,6 +1826,9 @@ impl AppCore {
             .collect()
     }
 }
+
+/// Extra silence after the longest peak hold before the Meters count as settled.
+const SETTLE_MARGIN: Duration = Duration::from_millis(500);
 
 /// How long after the last change a Preset is saved.
 pub const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);

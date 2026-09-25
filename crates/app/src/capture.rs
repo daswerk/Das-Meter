@@ -8,9 +8,10 @@
 //! The audio callback only copies frames into a lock-free ring. It wakes the
 //! event loop for audible blocks, and for silent ones only until the app core
 //! reports that the Meters have settled (or the ring is half full), so silence
-//! costs almost nothing.
+//! costs almost nothing. While nothing can be seen it wakes only when the ring
+//! is half full: the Loudness Meter still gets every sample, twice a second.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -62,6 +63,11 @@ impl Waker {
     }
 }
 
+/// How often the audio callback wakes the main thread; see [`SystemCapture::start`].
+pub const DRAWING: u8 = 0;
+pub const SETTLED: u8 = 1;
+pub const HIDDEN: u8 = 2;
+
 /// Runs System Capture on its own thread until dropped.
 pub struct SystemCapture {
     stop: Arc<AtomicBool>,
@@ -69,10 +75,11 @@ pub struct SystemCapture {
 }
 
 impl SystemCapture {
-    /// `settled` is set by the main thread while the app core has nothing left to draw.
+    /// `pace` is set by the main thread: [`DRAWING`], [`SETTLED`] (the app
+    /// core has nothing left to draw) or [`HIDDEN`] (nothing can be seen).
     pub fn start(
         waker: Arc<Waker>,
-        settled: Arc<AtomicBool>,
+        pace: Arc<AtomicU8>,
     ) -> (SystemCapture, mpsc::Receiver<CaptureMessage>) {
         let (messages, receiver) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -80,7 +87,7 @@ impl SystemCapture {
             let stop = stop.clone();
             thread::Builder::new()
                 .name("system-capture".into())
-                .spawn(move || watch(&stop, &messages, &waker, &settled))
+                .spawn(move || watch(&stop, &messages, &waker, &pace))
                 .expect("spawn the System Capture thread")
         };
         (
@@ -132,13 +139,13 @@ fn watch(
     stop: &AtomicBool,
     messages: &mpsc::Sender<CaptureMessage>,
     waker: &Arc<Waker>,
-    settled: &Arc<AtomicBool>,
+    pace: &Arc<AtomicU8>,
 ) {
     let host = cpal::default_host();
     let mut last_failure = None;
     while !stop.load(Ordering::Acquire) {
         let opened = current_output(&host).and_then(|(device, output)| {
-            open(&device, &output, waker, settled)
+            open(&device, &output, waker, pace)
                 .map(|(stream, audio, broken)| (output, stream, audio, broken))
         });
         match opened {
@@ -184,7 +191,7 @@ fn open(
     device: &cpal::Device,
     output: &Output,
     waker: &Arc<Waker>,
-    settled: &Arc<AtomicBool>,
+    pace: &Arc<AtomicU8>,
 ) -> Result<Opened, String> {
     let channels = usize::from(output.channels.max(1));
     let capacity = output.sample_rate as usize * 2 * RING_SECONDS;
@@ -197,7 +204,7 @@ fn open(
         buffer_size: cpal::BufferSize::Default,
     };
     let data_waker = waker.clone();
-    let settled = settled.clone();
+    let pace = pace.clone();
     let error_broken = broken.clone();
     let error_waker = waker.clone();
     // Recording an output device makes cpal record what it plays (a process tap on macOS).
@@ -214,8 +221,16 @@ fn open(
                     }));
                 }
                 // If the ring is full the main thread has stalled for a second; the block is dropped.
-                let silent = data.iter().all(|&x| x == 0.0);
-                if !silent || !settled.load(Ordering::Acquire) || producer.slots() < capacity / 2 {
+                let half_full = producer.slots() < capacity / 2;
+                let wake = match pace.load(Ordering::Acquire) {
+                    DRAWING => true,
+                    // Silence changes nothing on screen; audible audio does.
+                    SETTLED => half_full || data.iter().any(|&x| x != 0.0),
+                    // Hidden: only often enough that the ring never overflows,
+                    // so the Loudness Meter still gets every sample.
+                    _ => half_full,
+                };
+                if wake {
                     data_waker.wake();
                 }
             },

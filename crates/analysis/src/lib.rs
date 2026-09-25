@@ -10,6 +10,7 @@ pub mod seconds;
 pub mod signals;
 pub mod spectrum;
 pub mod stereometer;
+pub mod test_signal;
 pub mod waveform;
 
 pub use channel_view::ChannelView;

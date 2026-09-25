@@ -997,10 +997,14 @@ impl ApplicationHandler for Shell {
         let pump_at = self.pump(now);
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {
-            audio.settled.store(
-                decision == Decision::Sleep { until: None },
-                Ordering::Release,
-            );
+            let pace = if !self.core.visible() {
+                crate::capture::HIDDEN
+            } else if decision == (Decision::Sleep { until: None }) {
+                crate::capture::SETTLED
+            } else {
+                crate::capture::DRAWING
+            };
+            audio.pace.store(pace, Ordering::Release);
         }
         let wake_at = match decision {
             Decision::Draw => {

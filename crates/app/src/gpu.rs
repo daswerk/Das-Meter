@@ -195,14 +195,24 @@ impl Text {
 
 /// A colour as shader output for `format`: linear when the surface encodes sRGB.
 pub fn linear(colour: Colour, format: wgpu::TextureFormat) -> [f32; 4] {
+    // Every quad converts its colours: a table of the 256 byte values instead
+    // of a `powf` per channel.
+    static TO_LINEAR: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+    let table = TO_LINEAR.get_or_init(|| {
+        std::array::from_fn(|i| {
+            let c = i as f32 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    });
     let channel = |c: u8| {
-        let c = f32::from(c) / 255.0;
-        if !format.is_srgb() {
-            c
-        } else if c <= 0.04045 {
-            c / 12.92
+        if format.is_srgb() {
+            table[usize::from(c)]
         } else {
-            ((c + 0.055) / 1.055).powf(2.4)
+            f32::from(c) / 255.0
         }
     };
     [

@@ -4,6 +4,7 @@
 //! `ebur128` crate (ITU-R BS.1770-5, EBU Tech 3341/3342). Sample peak and RMS
 //! are computed here, per ADR 0005.
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use ebur128::{EbuR128, Mode};
@@ -197,6 +198,15 @@ fn db(linear: f32) -> f64 {
     }
 }
 
+/// The LUFS figures, as last asked of `ebur128`.
+#[derive(Clone, Copy)]
+struct Lufs {
+    momentary: f64,
+    short_term: f64,
+    integrated: f64,
+    range: f64,
+}
+
 /// Stereo frames and a sample rate in, [`LoudnessReadings`] out.
 pub struct LoudnessAnalyser {
     sample_rate: u32,
@@ -204,6 +214,16 @@ pub struct LoudnessAnalyser {
     ebu: EbuR128,
     channels: [Window; 2],
     hold_frames: Option<u64>,
+    /// The LUFS figures and how many frames came since. `ebur128` sums its
+    /// whole window (3 s for short-term) on every query and moves on in
+    /// 100 ms steps, so they're asked again only after that much new audio.
+    lufs: Cell<Option<(Lufs, usize)>>,
+}
+
+/// New audio after which the LUFS figures are asked for again: 100 ms, the
+/// step `ebur128`'s windows move in and the EBU display rate (10 Hz).
+fn lufs_refresh(sample_rate: u32) -> usize {
+    sample_rate as usize / 10
 }
 
 impl LoudnessAnalyser {
@@ -225,6 +245,7 @@ impl LoudnessAnalyser {
                 PeakHold::For(time) => Some(frames_in(sample_rate, time) as u64),
                 PeakHold::Infinite => None,
             },
+            lufs: Cell::new(None),
         }
     }
 
@@ -244,18 +265,39 @@ impl LoudnessAnalyser {
             left.push(frame[0], self.hold_frames);
             right.push(frame[1], self.hold_frames);
         }
+        if let Some((lufs, since)) = self.lufs.get() {
+            self.lufs.set(Some((lufs, since + whole / 2)));
+        }
+    }
+
+    /// The LUFS figures: asked of `ebur128` again after 100 ms of new audio.
+    fn lufs(&self) -> Lufs {
+        if let Some((lufs, since)) = self.lufs.get()
+            && since < lufs_refresh(self.sample_rate)
+        {
+            return lufs;
+        }
+        let value = |value: Result<f64, ebur128::Error>| value.unwrap_or(FLOOR_DB);
+        let lufs = Lufs {
+            momentary: value(self.ebu.loudness_momentary()),
+            short_term: value(self.ebu.loudness_shortterm()),
+            integrated: value(self.ebu.loudness_global()),
+            range: self.ebu.loudness_range().unwrap_or(0.0),
+        };
+        self.lufs.set(Some((lufs, 0)));
+        lufs
     }
 
     pub fn readings(&self) -> LoudnessReadings {
-        let lufs = |value: Result<f64, ebur128::Error>| value.unwrap_or(FLOOR_DB);
+        let lufs = self.lufs();
         let true_peak = (0..2)
             .filter_map(|channel| self.ebu.true_peak(channel).ok())
             .fold(0.0f64, f64::max);
         LoudnessReadings {
-            momentary: lufs(self.ebu.loudness_momentary()),
-            short_term: lufs(self.ebu.loudness_shortterm()),
-            integrated: lufs(self.ebu.loudness_global()),
-            range: self.ebu.loudness_range().unwrap_or(0.0),
+            momentary: lufs.momentary,
+            short_term: lufs.short_term,
+            integrated: lufs.integrated,
+            range: lufs.range,
             true_peak_max: if true_peak > 0.0 {
                 20.0 * true_peak.log10()
             } else {
@@ -272,6 +314,7 @@ impl LoudnessAnalyser {
     /// short-term LUFS start over too (`ebur128` resets them together) and refill within 3 s.
     pub fn reset(&mut self) {
         self.ebu.reset();
+        self.lufs.set(None);
         for channel in &mut self.channels {
             channel.reset_maxima();
         }

@@ -4,6 +4,7 @@
 //! events into the app core, draws the scene when the core says so, and
 //! otherwise sleeps.
 
+mod benchmark;
 mod capture;
 mod gpu;
 #[cfg(target_os = "macos")]
@@ -20,7 +21,7 @@ mod snapshot;
 mod theme_files;
 mod ui;
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,11 @@ fn version_line() -> String {
 fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("--version") => println!("{}", version_line()),
+        // Hidden: the performance budget's scenes, measured in a real window.
+        Some("--benchmark") => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            benchmark::run(&args);
+        }
         // Hidden: System Capture into the app core, readings printed once a second.
         Some("--print-readings") => print_readings(),
         // Hidden: two Loudness Meters on the first two Send Plugins, printed once a second.
@@ -60,20 +66,21 @@ pub(crate) struct Audio {
     messages: mpsc::Receiver<CaptureMessage>,
     ring: Option<Consumer<f32>>,
     waker: Arc<Waker>,
-    pub(crate) settled: Arc<AtomicBool>,
+    /// How often capture wakes the main thread: `capture::DRAWING` and so on.
+    pub(crate) pace: Arc<AtomicU8>,
     _capture: SystemCapture,
 }
 
 impl Audio {
     pub(crate) fn start(wake: impl Fn() + Send + Sync + 'static) -> Audio {
         let waker = Waker::new(wake);
-        let settled = Arc::new(AtomicBool::new(false));
-        let (capture, messages) = SystemCapture::start(waker.clone(), settled.clone());
+        let pace = Arc::new(AtomicU8::new(capture::DRAWING));
+        let (capture, messages) = SystemCapture::start(waker.clone(), pace.clone());
         Audio {
             messages,
             ring: None,
             waker,
-            settled,
+            pace,
             _capture: capture,
         }
     }
