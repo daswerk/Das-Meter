@@ -97,9 +97,9 @@ pub fn render(path: &str) -> Result<(), String> {
     let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
     for y in 0..HEIGHT as usize {
         let start = y * row as usize;
-        let (line, _) = pixels[start..start + WIDTH as usize * 4].as_chunks::<4>();
-        for pixel in line {
-            ppm.extend_from_slice(&pixel[..3]);
+        for x in 0..WIDTH as usize {
+            let pixel = start + 4 * x;
+            ppm.extend_from_slice(&pixels[pixel..pixel + 3]);
         }
     }
     std::fs::write(path, ppm).map_err(|e| e.to_string())
