@@ -5,15 +5,10 @@ use std::time::SystemTime;
 
 use dasmeter_core::{FileWrite, ThemeFile};
 
-/// Where Themes live: `~/Library/Application Support/Das-Meter/themes` on
-/// macOS, `%APPDATA%\Das-Meter\themes` on Windows.
+/// Where Themes live: `themes` in Das-Meter's own folder
+/// ([`app_folder`](crate::preset_files::app_folder)).
 pub fn folder() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
-        PathBuf::from(std::env::var_os("APPDATA")?)
-    } else {
-        PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support")
-    };
-    Some(base.join("Das-Meter").join("themes"))
+    Some(crate::preset_files::app_folder()?.join("themes"))
 }
 
 /// What the folder held when last read: each file's name, size and time.

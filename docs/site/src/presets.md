@@ -13,6 +13,7 @@ Presets are files in the presets folder:
 
 - macOS: `~/Library/Application Support/Das-Meter/presets`
 - Windows: `%APPDATA%\Das-Meter\presets`
+- Linux: `~/.config/das-meter/presets`
 
 ## Sharing
 

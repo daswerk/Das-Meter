@@ -7,14 +7,21 @@ use dasmeter_core::presets::SETTINGS_FILE;
 use dasmeter_core::{PresetFile, PresetOp};
 
 /// Das-Meter's own folder: `~/Library/Application Support/Das-Meter` on
-/// macOS, `%APPDATA%\Das-Meter` on Windows.
+/// macOS, `%APPDATA%\Das-Meter` on Windows, `$XDG_CONFIG_HOME/das-meter`
+/// (`~/.config/das-meter`) on Linux.
 pub fn app_folder() -> Option<PathBuf> {
-    let base = if cfg!(windows) {
-        PathBuf::from(std::env::var_os("APPDATA")?)
+    if cfg!(windows) {
+        Some(PathBuf::from(std::env::var_os("APPDATA")?).join("Das-Meter"))
+    } else if cfg!(target_os = "macos") {
+        let home = PathBuf::from(std::env::var_os("HOME")?);
+        Some(home.join("Library/Application Support/Das-Meter"))
     } else {
-        PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support")
-    };
-    Some(base.join("Das-Meter"))
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .or_else(|| Some(PathBuf::from(std::env::var_os("HOME")?).join(".config")))?;
+        Some(config.join("das-meter"))
+    }
 }
 
 pub fn folder() -> Option<PathBuf> {

@@ -13,5 +13,6 @@ files in the themes folder, so you can share them:
 
 - macOS: `~/Library/Application Support/Das-Meter/themes`
 - Windows: `%APPDATA%\Das-Meter\themes`
+- Linux: `~/.config/das-meter/themes`
 
 A lower background opacity makes the Meters see-through.
