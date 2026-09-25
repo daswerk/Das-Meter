@@ -3,17 +3,33 @@
 # and AUv2 (macOS). The one library holds all three entry points: the CLAP
 # entry, and the VST3 and AU entries clap-wrapper-rs adds (ADR 0001).
 #
-#   scripts/bundle-send-plugin.sh [OUT_DIR]      # default target/plugins
+#   scripts/bundle-send-plugin.sh [--universal] [OUT_DIR]   # default target/plugins
 #
+# --universal (macOS) builds for arm64 and x86_64 and joins them with lipo.
 # On macOS the bundles are signed ad hoc; set IDENTITY to sign with a certificate.
 set -euo pipefail
 
+universal=false
+if [[ ${1:-} == --universal ]]; then
+    universal=true
+    shift
+fi
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-$root/target/plugins}
 name="Das-Meter Send"
 bundle_id=com.daswerk.das-meter.send
 
-cargo build --release --locked -p dasmeter-send --manifest-path "$root/Cargo.toml"
+if $universal; then
+    for target in aarch64-apple-darwin x86_64-apple-darwin; do
+        cargo build --release --locked -p dasmeter-send --target "$target" --manifest-path "$root/Cargo.toml"
+    done
+    mkdir -p "$root/target/universal"
+    lipo -create -output "$root/target/universal/libdasmeter_send.dylib" \
+        "$root/target/aarch64-apple-darwin/release/libdasmeter_send.dylib" \
+        "$root/target/x86_64-apple-darwin/release/libdasmeter_send.dylib"
+else
+    cargo build --release --locked -p dasmeter-send --manifest-path "$root/Cargo.toml"
+fi
 version=$(cargo pkgid -p dasmeter-send --manifest-path "$root/Cargo.toml" | sed 's/.*[#@]//')
 
 rm -rf "$out"
@@ -22,6 +38,9 @@ mkdir -p "$out"
 case "$(uname -s)" in
 Darwin)
     lib="$root/target/release/libdasmeter_send.dylib"
+    if $universal; then
+        lib="$root/target/universal/libdasmeter_send.dylib"
+    fi
     # AU versions are one integer: major << 16 | minor << 8 | patch.
     IFS=. read -r major minor patch <<<"$version"
     au_version=$(((major << 16) | (minor << 8) | patch))
@@ -31,18 +50,23 @@ Darwin)
     # define the same classes. Hosts that load several formats into one
     # process (REAPER does) then resolve the AU's view class to the CLAP's copy,
     # and the AU opens without its window. Rename them
-    # in the AU copy, keeping the length (the digits each shift by one).
+    # in the AU copy, keeping the length (the digits each shift by one). A
+    # universal binary has one number per architecture.
     unique_au_view_classes() { # unique_au_view_classes BINARY
-        local number renamed
+        local numbers number renamed
         # sort -u, not head: head would end the pipe early, and pipefail would
         # take the SIGPIPE for a failure.
-        number=$(strings -a "$1" | sed -n 's/^wrapAsAUV2_cocoaUI_\([0-9][0-9]*\)$/\1/p' | sort -u)
-        if [[ -z $number || $number == *$'\n'* ]]; then
-            echo "bundle-send-plugin.sh: expected one AU view class to rename, found: ${number:-none}" >&2
+        numbers=$(strings -a "$1" | sed -n 's/^wrapAsAUV2_cocoaUI_\([0-9][0-9]*\)$/\1/p' | sort -u)
+        local expected=1
+        $universal && expected=2
+        if [[ $(grep -c . <<<"$numbers") -ne $expected ]]; then
+            echo "bundle-send-plugin.sh: expected $expected AU view class number(s) to rename, found: ${numbers:-none}" >&2
             exit 1
         fi
-        renamed=$(tr 0-9 1-90 <<<"$number")
-        perl -0777 -pi -e "s/(wrapAsAUV2_cocoaUI_(?:nsview_)?)$number/\${1}$renamed/g" "$1"
+        for number in $numbers; do
+            renamed=$(tr 0-9 1-90 <<<"$number")
+            perl -0777 -pi -e "s/(wrapAsAUV2_cocoaUI_(?:nsview_)?)$number/\${1}$renamed/g" "$1"
+        done
     }
 
     bundle() { # bundle EXTENSION PACKAGE_TYPE [EXTRA_PLIST_XML]
@@ -71,6 +95,9 @@ Darwin)
 </dict>
 </plist>
 PLIST
+        # Finder or a file provider may have tagged the folder (FinderInfo),
+        # which codesign refuses.
+        xattr -cr "$dir"
         codesign --force --sign "${IDENTITY:--}" "$dir"
     }
 

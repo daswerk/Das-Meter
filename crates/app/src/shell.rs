@@ -38,13 +38,16 @@ pub fn run() {
         .build()
         .expect("create the event loop");
     let proxy = event_loop.create_proxy();
+    let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let _ = proxy.send_event(());
+    });
     let mut shell = Shell {
         start: Instant::now(),
         core: AppCore::new(),
         audio: None,
-        wake: Arc::new(move || {
-            let _ = proxy.send_event(());
-        }),
+        #[cfg(target_os = "macos")]
+        opened_files: crate::macos::receive_opened_files(wake.clone()),
+        wake,
         send_plugins: SendPluginInput::new(),
         windows: HashMap::new(),
         started: false,
@@ -169,6 +172,9 @@ struct Shell {
     /// System Capture, running only while Listen to is System Capture.
     audio: Option<Audio>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    /// `.dasmeter-preset` files Finder opened with the app, to import.
+    #[cfg(target_os = "macos")]
+    opened_files: std::sync::mpsc::Receiver<std::path::PathBuf>,
     send_plugins: SendPluginInput,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
@@ -1001,6 +1007,12 @@ impl ApplicationHandler for Shell {
                             return;
                         }
                     }
+                }
+            }
+            // After the Presets are read at launch, so an opened file isn't overwritten.
+            for path in self.opened_files.try_iter() {
+                if crate::sharing::is_preset(&path) {
+                    crate::sharing::import(&mut self.core, &path, now);
                 }
             }
             if let Some(maintenance) = &mut self.maintenance {

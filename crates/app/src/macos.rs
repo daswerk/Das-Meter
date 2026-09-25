@@ -1,13 +1,17 @@
-//! What winit doesn't cover on macOS: the display's usable area and whether a
-//! window joins fullscreen apps' Spaces.
+//! What winit doesn't cover on macOS: the display's usable area, whether a
+//! window joins fullscreen apps' Spaces, and files Finder opens with the app.
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, mpsc};
 
 use dasmeter_core::{Display, Fingerprint, Rect, Screen};
-use objc2::MainThreadMarker;
+use objc2::runtime::{AnyClass, AnyObject, ProtocolObject, Sel};
+use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSScreen, NSView, NSWindow,
     NSWindowCollectionBehavior,
 };
-use objc2_foundation::NSRect;
+use objc2_foundation::{NSArray, NSRect, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
@@ -163,4 +167,66 @@ pub fn order_front(window: &Window) {
     if let Some(ns_window) = ns_window(window) {
         ns_window.orderFront(None);
     }
+}
+
+/// Where Finder's opened files go: the files, and how to wake the event loop.
+type Opened = (mpsc::Sender<PathBuf>, Arc<dyn Fn() + Send + Sync>);
+static OPENED: Mutex<Option<Opened>> = Mutex::new(None);
+
+/// `-[NSApplicationDelegate application:openURLs:]`: a `.dasmeter-preset`
+/// double-clicked in Finder (or dropped on the Dock icon), at launch or later.
+unsafe extern "C-unwind" fn open_urls(
+    _delegate: &AnyObject,
+    _selector: Sel,
+    _app: &AnyObject,
+    urls: &NSArray<NSURL>,
+) {
+    let Ok(opened) = OPENED.lock() else { return };
+    let Some((sender, wake)) = opened.as_ref() else {
+        return;
+    };
+    for url in urls.iter() {
+        if let Some(path) = url.path() {
+            let _ = sender.send(PathBuf::from(path.to_string()));
+        }
+    }
+    wake();
+}
+
+/// Makes Finder's "open this file" reach the app: winit's app delegate gets
+/// `application:openURLs:` (winit 0.30 has no event for it). Call after the
+/// event loop is built (which sets the delegate) and before it runs, so files
+/// that launched the app arrive too.
+pub fn receive_opened_files(wake: Arc<dyn Fn() + Send + Sync>) -> mpsc::Receiver<PathBuf> {
+    let (sender, files) = mpsc::channel();
+    if let Ok(mut opened) = OPENED.lock() {
+        *opened = Some((sender, wake));
+    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        return files;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let Some(delegate) = app.delegate() else {
+        return files;
+    };
+    let class: &AnyClass = AnyObject::class(ProtocolObject::as_ref(&*delegate));
+    let imp: unsafe extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, &NSArray<NSURL>) = open_urls;
+    // SAFETY: the function matches the method's type encoding (void; self,
+    // _cmd, NSApplication *, NSArray<NSURL *> *). Adding a method to a
+    // registered class is allowed; if the class already has one, nothing changes.
+    unsafe {
+        objc2::ffi::class_addMethod(
+            class as *const AnyClass as *mut AnyClass,
+            sel!(application:openURLs:),
+            std::mem::transmute::<
+                unsafe extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, &NSArray<NSURL>),
+                objc2::runtime::Imp,
+            >(imp),
+            c"v@:@@".as_ptr(),
+        );
+    }
+    // AppKit looks at what the delegate answers to when it's set: set it again.
+    app.setDelegate(None);
+    app.setDelegate(Some(&delegate));
+    files
 }

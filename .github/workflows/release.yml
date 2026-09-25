@@ -1,0 +1,151 @@
+name: Release
+
+# Pushing a v* tag builds the universal macOS app, signs it, and attaches the
+# DMG, the update tarball and its minisign signature to a draft Release
+# (ADR 0004). A tag with a suffix (v0.1.0-test1) makes a pre-release, for
+# dry runs.
+#
+# Secrets and variables live in the `release` environment, which needs the
+# owner's approval to run (Settings ▸ Environments ▸ release):
+# - MACOS_CERTIFICATE (secret): the self-made code-signing certificate and its
+#   key, as a base64 .p12. MACOS_CERTIFICATE_PASSWORD (secret): its password.
+# - CERTIFICATE_SHA1 (variable): that certificate's SHA-1, built into the app
+#   so it only accepts updates signed with it.
+# - MINISIGN_SECRET_KEY (secret): the minisign secret key file's text, from
+#   `minisign -G -W` (no password). MINISIGN_PUBLIC_KEY (variable): the
+#   public key's base64 line, built into the app.
+# - Notarization switches on once APPLE_DEVELOPER_ID_CERTIFICATE,
+#   APPLE_DEVELOPER_ID_PASSWORD, APPLE_ID, APPLE_TEAM_ID and
+#   APPLE_APP_PASSWORD exist; the Developer ID then signs instead.
+# Without the certificate the app is signed ad hoc and can't update itself.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS app, DMG and update tarball
+    runs-on: macos-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Version from the tag
+        id: version
+        run: |
+          tag=${GITHUB_REF_NAME}
+          version=$(cargo pkgid -p dasmeter-app | sed 's/.*[#@]//')
+          if [[ ${tag#v} != "$version" && ${tag#v} != "$version"-* ]]; then
+            echo "::error::tag $tag doesn't match the app's version $version"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          [[ $tag == *-* ]] && echo "prerelease=true" >>"$GITHUB_OUTPUT" || echo "prerelease=false" >>"$GITHUB_OUTPUT"
+
+      - name: Signing identity
+        id: identity
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_PASSWORD }}
+        run: |
+          # A Developer ID, once there is one, else our own certificate, else ad hoc.
+          p12=$DEVELOPER_ID; password=$DEVELOPER_ID_PASSWORD
+          if [[ -z $p12 ]]; then p12=$CERTIFICATE; password=$CERTIFICATE_PASSWORD; fi
+          if [[ -z $p12 ]]; then
+            echo "::warning::no signing certificate: signing ad hoc; this build can't update itself"
+            echo "identity=-" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keychain=$RUNNER_TEMP/release.keychain-db
+          keychain_password=$(uuidgen)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          echo "$p12" | base64 --decode >"$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$password" -A -t cert -f pkcs12 -k "$keychain"
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          sha1=$(security find-certificate -a -Z "$keychain" | awk '/SHA-1/ { print $3; exit }')
+          if [[ -z $DEVELOPER_ID ]]; then
+            # A self-made certificate isn't trusted for code signing until we say so.
+            security find-certificate -a -p "$keychain" >"$RUNNER_TEMP/certificate.pem"
+            sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+              -k /Library/Keychains/System.keychain "$RUNNER_TEMP/certificate.pem"
+          fi
+          echo "identity=$sha1" >>"$GITHUB_OUTPUT"
+
+      - name: Build the app (universal, Send Plugin inside)
+        env:
+          IDENTITY: ${{ steps.identity.outputs.identity }}
+          DASMETER_MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+          DASMETER_CERTIFICATE_SHA1: ${{ vars.CERTIFICATE_SHA1 }}
+        run: |
+          # Unset variables must not build in an empty key.
+          [[ -n $DASMETER_MINISIGN_PUBLIC_KEY ]] || unset DASMETER_MINISIGN_PUBLIC_KEY
+          [[ -n $DASMETER_CERTIFICATE_SHA1 ]] || unset DASMETER_CERTIFICATE_SHA1
+          scripts/macos-bundle.sh --universal dist
+          lipo -archs dist/Das-Meter.app/Contents/MacOS/das-meter
+          codesign --verify --deep --strict --verbose=2 dist/Das-Meter.app
+
+      - name: Notarize (once the Developer ID secrets exist)
+        env:
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [[ -z $DEVELOPER_ID || -z $APPLE_ID ]]; then
+            echo "No Developer ID yet: skipping notarization (ADR 0004)."
+            exit 0
+          fi
+          ditto -c -k --keepParent dist/Das-Meter.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          xcrun stapler staple dist/Das-Meter.app
+
+      - name: DMG and update tarball
+        env:
+          IDENTITY: ${{ steps.identity.outputs.identity }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ $IDENTITY == - ]]; then unset IDENTITY; fi
+          scripts/macos-dmg.sh dist/Das-Meter.app "dist/Das-Meter-$VERSION.dmg"
+          COPYFILE_DISABLE=1 tar -czf "dist/Das-Meter-$VERSION.app.tar.gz" -C dist Das-Meter.app
+
+      - name: Sign the tarball (minisign)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ -z $MINISIGN_SECRET_KEY ]]; then
+            echo "::warning::no minisign key: the tarball is unsigned and apps won't install it"
+            exit 0
+          fi
+          brew install minisign
+          echo "$MINISIGN_SECRET_KEY" >"$RUNNER_TEMP/minisign.key"
+          minisign -S -s "$RUNNER_TEMP/minisign.key" -m "dist/Das-Meter-$VERSION.app.tar.gz" \
+            -t "Das-Meter $VERSION"
+          rm "$RUNNER_TEMP/minisign.key"
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          flags=(--draft --title "Das-Meter $VERSION" --generate-notes)
+          [[ $PRERELEASE == true ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/Das-Meter-"$VERSION".*
