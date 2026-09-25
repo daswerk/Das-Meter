@@ -61,7 +61,8 @@ pub fn draw(
                 }
                 WaveformColouring::Rgb => {
                     let span = envelope(x, width, y(column.max), y(column.min));
-                    c.shapes.rect(span, mix(bands, [column.low, column.mid, column.high]));
+                    c.shapes
+                        .rect(span, mix(bands, [column.low, column.mid, column.high]));
                 }
                 WaveformColouring::Rekordbox => {
                     // Each band's height follows its own level, low widest underneath.

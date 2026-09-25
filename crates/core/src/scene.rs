@@ -6,7 +6,7 @@
 use dasmeter_analysis::{ChannelLevels, LoudnessReadings};
 
 use crate::meters::MeterView;
-use crate::theme::Palette;
+use crate::theme::{Colour, Palette};
 
 /// Everything on screen: the windows, the notes shown over them and the colours.
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +29,29 @@ pub struct WindowScene {
 pub struct MeterScene {
     pub frame: Frame,
     pub state: MeterState,
+    /// The small Source label, when the Meter shows it.
+    pub source: Option<SourceLabel>,
+}
+
+/// The Source a Meter shows, as its small label says it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLabel {
+    pub name: String,
+    /// The Send Plugin's colour; `None` for System Capture.
+    pub colour: Option<Colour>,
+}
+
+/// A Send Plugin in a Meter's "Pick a Send Plugin" list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceItem {
+    pub id: u64,
+    /// The name, or "<name> (outdated — restart your DAW)".
+    pub label: String,
+    pub colour: Colour,
+    /// False for an outdated Send Plugin: listed, but it can't be picked.
+    pub pickable: bool,
+    /// Where the item sits, as fractions of the window. A click inside picks it.
+    pub frame: Frame,
 }
 
 /// A rectangle as fractions of the window: 0 to 1 from the top-left corner.
@@ -59,6 +82,27 @@ pub enum MeterState {
     /// System Capture couldn't start; the reason is shown in place of the Meter.
     Unavailable(String),
     Live(MeterView),
+    /// On Send Plugins: the picked Send Plugin is gone. The Meter dims and
+    /// shows "Waiting for <name>" until it is back.
+    WaitingFor(String),
+    /// On Send Plugins: several Send Plugins and no pick. The list is shown in
+    /// place of the Meter.
+    PickSendPlugin(Vec<SourceItem>),
+    /// On Send Plugins, and there are none: "No Send Plugins yet".
+    NoSendPlugins,
+}
+
+impl MeterState {
+    /// What "Pick a Send Plugin" says above its list.
+    pub const PICK_TITLE: &str = "Pick a Send Plugin";
+    /// What a Meter says with no Send Plugins, and the hint under it.
+    pub const NO_SEND_PLUGINS: &str = "No Send Plugins yet";
+    pub const NO_SEND_PLUGINS_HINT: &str = "Add Das-Meter Send to a track";
+
+    /// "Waiting for <name>".
+    pub fn waiting_text(name: &str) -> String {
+        format!("Waiting for {name}")
+    }
 }
 
 /// A brief note shown over the Meters.

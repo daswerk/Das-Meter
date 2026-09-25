@@ -1,28 +1,33 @@
 //! The Das-Meter app: turns the app core's scene into windows and Meters.
 //!
-//! The shell is thin: it feeds System Capture audio and window events into the
-//! app core, draws the scene when the core says so, and otherwise sleeps.
+//! The shell is thin: it feeds System Capture or Send Plugin audio and window
+//! events into the app core, draws the scene when the core says so, and
+//! otherwise sleeps.
 
 mod capture;
 mod gpu;
 mod meters;
+mod send_plugins;
 mod snapshot;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-use dasmeter_core::{AppCore, Decision, Event, MeterState, MeterView, Palette, Role, Scene};
+use dasmeter_core::{
+    AppCore, Decision, Event, ListenTo, MeterState, MeterView, Palette, Role, Scene,
+};
 use rtrb::Consumer;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use capture::{CaptureMessage, SystemCapture, Waker};
 use gpu::{Gpu, Text, WindowSurface, clear_colour};
 use meters::{Area, MeterRenderer};
+use send_plugins::{LIST_EVERY, SendPluginInput};
 
 fn version_line() -> String {
     format!("Das-Meter {}", env!("CARGO_PKG_VERSION"))
@@ -41,7 +46,26 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        _ => run(),
+        _ => run(Options::from_args()),
+    }
+}
+
+/// Startup switches, until the menus (#35) can set these.
+#[derive(Default)]
+struct Options {
+    /// `--send-plugins`: start on Listen to Send Plugins.
+    send_plugins: bool,
+    /// `--source-labels`: show every Meter's Source label.
+    source_labels: bool,
+}
+
+impl Options {
+    fn from_args() -> Options {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        Options {
+            send_plugins: args.iter().any(|a| a == "--send-plugins"),
+            source_labels: args.iter().any(|a| a == "--source-labels"),
+        }
     }
 }
 
@@ -97,17 +121,32 @@ impl Audio {
     }
 }
 
-fn run() {
+fn run(options: Options) {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
         .expect("create the event loop");
     let proxy = event_loop.create_proxy();
+    let mut core = AppCore::new();
+    if options.send_plugins {
+        core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
+    }
+    if options.source_labels {
+        for meter in 0..4 {
+            core.handle(
+                Event::ShowSourceLabel { meter, shown: true },
+                Duration::ZERO,
+            );
+        }
+    }
     let mut shell = Shell {
         start: Instant::now(),
-        core: AppCore::new(),
-        audio: Audio::start(move || {
+        core,
+        audio: None,
+        wake: Arc::new(move || {
             let _ = proxy.send_event(());
         }),
+        send_plugins: SendPluginInput::new(),
+        pointer: None,
         window: None,
     };
     event_loop.run_app(&mut shell).expect("run the event loop");
@@ -116,7 +155,12 @@ fn run() {
 struct Shell {
     start: Instant,
     core: AppCore,
-    audio: Audio,
+    /// System Capture, running only while Listen to is System Capture.
+    audio: Option<Audio>,
+    wake: Arc<dyn Fn() + Send + Sync>,
+    send_plugins: SendPluginInput,
+    /// The pointer's last position in the window (fractions), for clicks.
+    pointer: Option<[f32; 2]>,
     window: Option<AppWindow>,
 }
 
@@ -176,7 +220,7 @@ impl Painter {
                 width: (area.width - gap).max(1.0),
                 height: (area.height - 2.0 * gap).max(1.0),
             };
-            renderer.prepare(&self.gpu, &mut self.text, area, scale, palette, &meter.state);
+            renderer.prepare(&self.gpu, &mut self.text, area, scale, palette, meter);
         }
         let window = Area {
             x: 0.0,
@@ -225,6 +269,35 @@ impl Painter {
 impl Shell {
     fn now(&self) -> Duration {
         self.start.elapsed()
+    }
+
+    /// Feeds the active Source's audio into the core, starting System Capture
+    /// or pausing it to follow Listen to. Returns when to pump again, if a
+    /// timer is needed (Send Plugins can't wake the app).
+    fn pump(&mut self, now: Duration) -> Option<Duration> {
+        match self.core.listen_to() {
+            ListenTo::SystemCapture => {
+                self.send_plugins.stop();
+                let wake = self.wake.clone();
+                let audio = self
+                    .audio
+                    .get_or_insert_with(|| Audio::start(move || wake()));
+                audio.pump(&mut self.core, now);
+                None
+            }
+            ListenTo::SendPlugins => {
+                // System Capture pauses while listening to Send Plugins.
+                self.audio = None;
+                self.send_plugins
+                    .pump(&mut self.core, now, self.start + now);
+                let every = if self.send_plugins.listening() {
+                    dasmeter_core::DEFAULT_FRAME_INTERVAL
+                } else {
+                    LIST_EVERY
+                };
+                Some(now + every)
+            }
+        }
     }
 
     fn draw(&mut self) {
@@ -302,13 +375,25 @@ impl ApplicationHandler for Shell {
                         position.x as f32 / size.width.max(1) as f32,
                         position.y as f32 / size.height.max(1) as f32,
                     ];
+                    self.pointer = Some(point);
                     let now = self.now();
                     self.core.handle(Event::Pointer(Some(point)), now);
                 }
             }
             WindowEvent::CursorLeft { .. } => {
+                self.pointer = None;
                 let now = self.now();
                 self.core.handle(Event::Pointer(None), now);
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if let Some(point) = self.pointer {
+                    let now = self.now();
+                    self.core.handle(Event::Click(point), now);
+                }
             }
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}
@@ -317,23 +402,30 @@ impl ApplicationHandler for Shell {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = self.now();
-        self.audio.pump(&mut self.core, now);
+        let pump_at = self.pump(now);
         let decision = self.core.decide(now);
-        self.audio.settled.store(
-            decision == Decision::Sleep { until: None },
-            Ordering::Release,
-        );
-        match decision {
+        if let Some(audio) = &self.audio {
+            audio.settled.store(
+                decision == Decision::Sleep { until: None },
+                Ordering::Release,
+            );
+        }
+        let wake_at = match decision {
             Decision::Draw => {
                 if let Some(app) = &self.window {
                     app.window.request_redraw();
                 }
-                event_loop.set_control_flow(ControlFlow::Wait);
+                None
             }
-            Decision::Sleep { until: Some(until) } => {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(self.start + until));
-            }
-            Decision::Sleep { until: None } => event_loop.set_control_flow(ControlFlow::Wait),
+            Decision::Sleep { until } => until,
+        };
+        let wake_at = match (wake_at, pump_at) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        match wake_at {
+            Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(self.start + at)),
+            None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
 }
@@ -353,11 +445,14 @@ fn print_readings() {
         }
         let Some(scene) = core.scene() else { continue };
         let notes: Vec<_> = scene.notes.iter().map(|note| note.text()).collect();
-        let loudness = scene.windows[0].meters.iter().find_map(|meter| match &meter.state {
-            MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(*display)),
-            MeterState::Live(_) => None,
-            other => Some(Err(other.clone())),
-        });
+        let loudness = scene.windows[0]
+            .meters
+            .iter()
+            .find_map(|meter| match &meter.state {
+                MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(*display)),
+                MeterState::Live(_) => None,
+                other => Some(Err(other.clone())),
+            });
         match loudness {
             Some(Ok(d)) => {
                 let show = |level: dasmeter_core::Level| {

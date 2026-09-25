@@ -70,7 +70,8 @@ pub fn draw(
             StereoView::Polar => [0.0, 0.0],
             StereoView::Lissajous => [-end[0], -end[1]],
         };
-        c.shapes.line(place(from), place(end), thin, grid.faded(0.7));
+        c.shapes
+            .line(place(from), place(end), thin, grid.faded(0.7));
         let [x, y] = place([end[0] * 1.06, end[1] * 1.06]);
         c.text(name, x, y - c.px(6.0), 9.0, dim, Align::Centre);
     }
@@ -96,8 +97,12 @@ pub fn draw(
         StereoDrawing::Lines => {
             let width = c.px(1.0);
             for (i, pair) in points.windows(2).enumerate() {
-                c.shapes
-                    .line(place(pair[0]), place(pair[1]), width, trace.faded(fade(i + 1)));
+                c.shapes.line(
+                    place(pair[0]),
+                    place(pair[1]),
+                    width,
+                    trace.faded(fade(i + 1)),
+                );
             }
         }
     }
@@ -118,7 +123,13 @@ pub fn draw(
     } else {
         colour
     };
-    bar(c, correlation_area, readings.correlation, colour, ["−1", "0", "+1"]);
+    bar(
+        c,
+        correlation_area,
+        readings.correlation,
+        colour,
+        ["−1", "0", "+1"],
+    );
     if settings.show_balance {
         let accent = c.colour(Role::Accent);
         bar(c, balance_area, readings.balance, accent, ["L", "C", "R"]);

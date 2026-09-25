@@ -8,7 +8,7 @@ mod spectrum;
 mod stereometer;
 mod waveform;
 
-use dasmeter_core::{Colour, MeterState, MeterView, Note, Palette, Role};
+use dasmeter_core::{Colour, MeterScene, MeterState, MeterView, Note, Palette, Role, SourceItem};
 
 use crate::gpu::{Gpu, Text};
 use labels::{Align, Labels, Style};
@@ -102,23 +102,77 @@ impl MeterRenderer {
         area: Area,
         scale: f32,
         palette: &Palette,
-        state: &MeterState,
+        meter: &MeterScene,
     ) {
         self.begin(gpu, area);
         let mut c = self.canvas(palette, scale);
         let panel = c.colour(Role::Panel);
         c.shapes.rect(area, panel);
         let inner = area.inset(c.px(10.0));
-        match state {
+        match &meter.state {
             MeterState::Starting => {
                 let dim = c.dim();
-                c.text("Starting System Capture…", inner.x, inner.y, 13.0, dim, Align::Left);
+                c.text(
+                    "Starting System Capture…",
+                    inner.x,
+                    inner.y,
+                    13.0,
+                    dim,
+                    Align::Left,
+                );
             }
             MeterState::Unavailable(reason) => {
                 let (text_colour, dim) = (c.colour(Role::Text), c.dim());
-                c.text("System Capture is unavailable", inner.x, inner.y, 13.0, text_colour, Align::Left);
+                c.text(
+                    "System Capture is unavailable",
+                    inner.x,
+                    inner.y,
+                    13.0,
+                    text_colour,
+                    Align::Left,
+                );
                 let y = inner.y + c.px(20.0);
                 c.text(reason, inner.x, y, 11.0, dim, Align::Left);
+            }
+            MeterState::WaitingFor(name) => {
+                // Dimmed: the Meter has nothing to show until its Send Plugin is back.
+                let dim = c.dim().faded(0.7);
+                let text = MeterState::waiting_text(name);
+                c.text(&text, inner.x, inner.y, 13.0, dim, Align::Left);
+            }
+            MeterState::NoSendPlugins => {
+                let (text_colour, dim) = (c.colour(Role::Text), c.dim());
+                c.text(
+                    MeterState::NO_SEND_PLUGINS,
+                    inner.x,
+                    inner.y,
+                    13.0,
+                    text_colour,
+                    Align::Left,
+                );
+                let y = inner.y + c.px(20.0);
+                c.text(
+                    MeterState::NO_SEND_PLUGINS_HINT,
+                    inner.x,
+                    y,
+                    11.0,
+                    dim,
+                    Align::Left,
+                );
+            }
+            MeterState::PickSendPlugin(items) => {
+                let text_colour = c.colour(Role::Text);
+                c.text(
+                    MeterState::PICK_TITLE,
+                    inner.x,
+                    inner.y,
+                    13.0,
+                    text_colour,
+                    Align::Left,
+                );
+                for item in items {
+                    draw_item(&mut c, area, meter, item);
+                }
             }
             MeterState::Live(view) => match view {
                 MeterView::Waveform { settings, traces } => {
@@ -139,6 +193,26 @@ impl MeterRenderer {
                     points,
                 } => stereometer::draw(&mut c, inner, settings, readings, points),
             },
+        }
+        if let Some(source) = &meter.source {
+            let dim = c.dim();
+            let size = c.px(6.0);
+            let (x, y) = (area.right() - c.px(8.0), area.y + c.px(6.0));
+            let width = if let Some(colour) = source.colour {
+                c.shapes.rect(
+                    Area {
+                        x: x - size,
+                        y: y + c.px(3.0),
+                        width: size,
+                        height: size,
+                    },
+                    colour,
+                );
+                size + c.px(4.0)
+            } else {
+                0.0
+            };
+            c.text(&source.name, x - width, y, 10.0, dim, Align::Right);
         }
         self.finish(gpu, text, area);
     }
@@ -182,4 +256,49 @@ impl MeterRenderer {
 pub fn map(value: f32, range: (f32, f32), from: f32, to: f32) -> f32 {
     let t = ((value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0);
     from + t * (to - from)
+}
+
+/// One row of a "Pick a Send Plugin" list: a colour swatch and the name,
+/// where the core put it (the core hit-tests clicks against the same frame).
+fn draw_item(c: &mut Canvas, area: Area, meter: &MeterScene, item: &SourceItem) {
+    let top = (item.frame.y - meter.frame.y) / meter.frame.height;
+    let height = item.frame.height / meter.frame.height;
+    let row = Area {
+        x: area.x,
+        y: area.y + top * area.height,
+        width: area.width,
+        height: height * area.height,
+    };
+    let inner = row.inset(c.px(2.0));
+    let swatch = c.px(10.0);
+    let y = inner.y + (inner.height - swatch) / 2.0;
+    let x = area.x + c.px(10.0);
+    let colour = if item.pickable {
+        item.colour
+    } else {
+        item.colour.faded(0.4)
+    };
+    c.shapes.rect(
+        Area {
+            x,
+            y,
+            width: swatch,
+            height: swatch,
+        },
+        colour,
+    );
+    let text_colour = if item.pickable {
+        c.colour(Role::Text)
+    } else {
+        c.dim()
+    };
+    let text_y = inner.y + (inner.height - c.px(13.0)) / 2.0;
+    c.text(
+        &item.label,
+        x + swatch + c.px(8.0),
+        text_y,
+        12.0,
+        text_colour,
+        Align::Left,
+    );
 }

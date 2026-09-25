@@ -64,7 +64,14 @@ pub fn draw(
             ..area
         };
         c.shapes.rect(line, grid.faded(0.6));
-        c.text(&format!("{db}"), area.x + c.px(2.0), y + c.px(1.0), 9.0, dim, Align::Left);
+        c.text(
+            &format!("{db}"),
+            area.x + c.px(2.0),
+            y + c.px(1.0),
+            9.0,
+            dim,
+            Align::Left,
+        );
         db -= DB_STEP;
     }
 
@@ -84,9 +91,17 @@ pub fn draw(
         match settings.analysis.style {
             SpectrumStyle::Line { .. } => {
                 let curve = points(&trace.levels);
-                let fill_top = if spectrum.traces.len() > 1 { line } else { fill };
-                c.shapes
-                    .fill_under(&curve, area.bottom(), fill_top.faded(0.45), fill_top.faded(0.05));
+                let fill_top = if spectrum.traces.len() > 1 {
+                    line
+                } else {
+                    fill
+                };
+                c.shapes.fill_under(
+                    &curve,
+                    area.bottom(),
+                    fill_top.faded(0.45),
+                    fill_top.faded(0.05),
+                );
                 c.shapes.polyline(&curve, c.px(1.5), line);
                 if settings.show_peak_hold {
                     c.shapes
