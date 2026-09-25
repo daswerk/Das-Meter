@@ -111,9 +111,11 @@ fn merge(
     pixels: usize,
 ) -> Vec<(f32, WaveformColumn)> {
     let shown = columns.len().min(capacity);
-    if shown == 0 || completed == 0 {
+    if shown == 0 {
         return Vec::new();
     }
+    // 0: the core left the count out (silence); any numbering draws the same.
+    let completed = completed.max(columns.len() as u64);
     let per_pixel = f64::from(per_pixel.max(1.0));
     let group_of = |number: u64| (number as f64 / per_pixel).floor() as u64;
     let newest_group = group_of(completed - 1);

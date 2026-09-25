@@ -384,13 +384,23 @@ fn build_view(
     pointer: Option<[f32; 2]>,
 ) -> MeterView {
     match (analyser, *settings) {
-        (Analyser::Waveform(a), MeterSettings::Waveform(settings)) => MeterView::Waveform {
-            settings,
-            traces: (0..a.traces())
+        (Analyser::Waveform(a), MeterSettings::Waveform(settings)) => {
+            let traces: Vec<Vec<WaveformColumn>> = (0..a.traces())
                 .map(|trace| a.columns(trace).copied().collect())
-                .collect(),
-            completed: a.completed(),
-        },
+                .collect();
+            // In silence (a flat envelope) every column looks the same however
+            // they're grouped: leave the count out, so the scene stops changing
+            // and the app sleeps.
+            let silent = traces
+                .iter()
+                .flatten()
+                .all(|c| c.min == 0.0 && c.max == 0.0);
+            MeterView::Waveform {
+                settings,
+                traces,
+                completed: if silent { 0 } else { a.completed() },
+            }
+        }
         (Analyser::Spectrum(a), MeterSettings::Spectrum(settings)) => {
             let nyquist = a.sample_rate() as f32 / 2.0;
             let (low, high) = settings.analysis.frequency_range;
