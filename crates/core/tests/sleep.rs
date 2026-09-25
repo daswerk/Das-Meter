@@ -129,3 +129,19 @@ fn peak_holds_still_release_before_it_sleeps() {
     assert_eq!(display.left.peak_hold, Level::Silent, "the 2 s hold let go");
     assert_eq!(app.play(&quiet(1.0)), 0);
 }
+
+#[test]
+fn it_settles_only_once_silence_can_change_nothing() {
+    let mut app = App::new();
+    app.play(&tone(1.0));
+    app.play(&quiet(0.05));
+    // Between frames nothing may change, but the peak still has to fall.
+    assert!(
+        !app.core.settled(),
+        "the peak and its hold haven't let go yet"
+    );
+    app.play(&quiet(8.0));
+    assert!(app.core.settled());
+    app.play(&tone(0.1));
+    assert!(!app.core.settled(), "sound wakes it");
+}

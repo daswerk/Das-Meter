@@ -999,7 +999,7 @@ impl ApplicationHandler for Shell {
         if let Some(audio) = &self.audio {
             let pace = if !self.core.visible() {
                 crate::capture::HIDDEN
-            } else if decision == (Decision::Sleep { until: None }) {
+            } else if decision == (Decision::Sleep { until: None }) && self.core.settled() {
                 crate::capture::SETTLED
             } else {
                 crate::capture::DRAWING

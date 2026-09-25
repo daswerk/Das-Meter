@@ -31,7 +31,10 @@ const RATE: u32 = 48_000;
 /// Frames fed at once, as a capture callback would deliver them.
 const BLOCK: usize = 256;
 const WARM_UP: Duration = Duration::from_secs(5);
-/// A frame later than this after the last one is late (60 fps with 1 ms slack).
+/// Capture's ring holds a second; settled, silence wakes the app when it's half full.
+const RING_HALF: Duration = Duration::from_millis(500);
+/// A frame later than this after the last one is late (60 fps with 1 ms slack),
+/// unless the app had nothing new to draw in between.
 const LATE: Duration = Duration::from_micros(17_700);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,18 +236,30 @@ impl Bench {
         Duration::from_secs_f64((run.fed + BLOCK) as f64 / f64::from(RATE))
     }
 
-    /// Whether the next block to feed has sound in it.
-    fn next_block_audible(&self) -> bool {
-        let Some(run) = &self.run else { return false };
+    /// When the next audible block is due, looking at most `ahead` past the
+    /// blocks already fed.
+    fn next_audible(&self, ahead: Duration) -> Option<Duration> {
+        let run = self.run.as_ref()?;
         if run.kind == Kind::Silent {
-            return false;
+            return None;
         }
         let total = self.signal.frames.len() / 2;
-        let at = run.fed % total;
-        let end = (at + BLOCK).min(total);
-        self.signal.frames[2 * at..2 * end]
-            .iter()
-            .any(|&x| x != 0.0)
+        let limit = run.fed + (ahead.as_secs_f64() * f64::from(RATE)) as usize;
+        let mut at = run.fed;
+        while at < limit {
+            let start = at % total;
+            let end = (start + BLOCK).min(total);
+            if self.signal.frames[2 * start..2 * end]
+                .iter()
+                .any(|&x| x != 0.0)
+            {
+                // A block is delivered once its last frame has arrived.
+                let delivered = at + (end - start);
+                return Some(Duration::from_secs_f64(delivered as f64 / f64::from(RATE)));
+            }
+            at += end - start;
+        }
+        None
     }
 
     fn draw(&mut self) {
@@ -284,9 +299,13 @@ impl Bench {
                 })
             });
             let up = peak.is_some_and(|db| db > -30.0);
-            if up && !run.peak_up && !run.clicks.is_empty() {
-                let fed = run.clicks.remove(0);
-                run.result.latency.push(presented - fed);
+            // It pairs with the latest click: an earlier one that came while the
+            // peak was still up (from the noise before) never shows on its own.
+            if up && !run.peak_up {
+                if let Some(fed) = run.clicks.pop() {
+                    run.result.latency.push(presented - fed);
+                }
+                run.clicks.clear();
             }
             run.peak_up = up;
         }
@@ -393,22 +412,33 @@ impl ApplicationHandler for Bench {
             return;
         }
         let next_block = self.feed();
-        let audible = self.next_block_audible();
         let Some(run) = &mut self.run else { return };
         let now = run.start.elapsed();
-        let wake = match run.core.decide(now) {
+        let decision = run.core.decide(now);
+        let settled = run.core.settled();
+        if decision == (Decision::Sleep { until: None }) {
+            // Nothing changed on screen: a gap until the next frame isn't late.
+            run.last_present = None;
+        }
+        let wake = match decision {
             Decision::Draw => {
                 if let Some((window, ..)) = &self.window {
                     window.request_redraw();
                 }
                 next_block
             }
-            // Nothing to draw: like capture, wake for the next audible block,
-            // but for silence only when its ring would be half full.
-            Decision::Sleep { until: None } if !audible => now + Duration::from_millis(500),
+            // Settled, like capture: wake for the next audible block, and for
+            // silence only when its ring would be half full.
+            Decision::Sleep { until: None } if settled => {
+                let half_ring = now + RING_HALF;
+                self.next_audible(RING_HALF)
+                    .map_or(half_ring, |at| at.min(half_ring))
+            }
+            // Not settled yet: every block wakes it, as capture does while drawing.
             Decision::Sleep { until: None } => next_block,
             Decision::Sleep { until: Some(until) } => until.min(next_block),
         };
+        let Some(run) = &self.run else { return };
         // Wake at least each second for the CPU samples.
         let wake = wake.min(now + Duration::from_secs(1));
         event_loop.set_control_flow(ControlFlow::WaitUntil(run.start + wake));

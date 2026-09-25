@@ -578,6 +578,14 @@ impl AppCore {
         self.visible
     }
 
+    /// Whether the Meters have settled in silence: silence can't change the
+    /// screen any more, so only an audible block needs to wake the app. A
+    /// [`Decision::Sleep`] without a time alone doesn't mean this: between
+    /// frames, silence still moves peaks and holds on.
+    pub fn settled(&self) -> bool {
+        self.quiet
+    }
+
     pub fn mode(&self) -> LayoutMode {
         self.mode
     }
