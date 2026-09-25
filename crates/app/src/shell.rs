@@ -656,7 +656,15 @@ impl ApplicationHandler for Shell {
         // only its own windows, or the Bar's button under the pointer, need one.
         let wants = match role {
             Role::Menu | Role::Settings => true,
-            Role::Meters(_) => app.ui_hot || app.ui.ctx.is_pointer_over_egui(),
+            // The Bar's screen button shows while the pointer is over the Bar.
+            Role::Meters(_) => {
+                app.ui_hot
+                    || app.ui.ctx.is_pointer_over_egui()
+                    || matches!(
+                        event,
+                        WindowEvent::CursorEntered { .. } | WindowEvent::CursorLeft { .. }
+                    )
+            }
         };
         if response.repaint && wants && !matches!(event, WindowEvent::RedrawRequested) {
             app.window.request_redraw();

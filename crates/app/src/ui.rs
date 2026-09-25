@@ -803,6 +803,10 @@ fn screen_button(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
     else {
         return;
     };
+    // Only while the pointer is over the Bar, so it hides no reading.
+    if ctx.input(|i| i.pointer.hover_pos()).is_none() {
+        return;
+    }
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("screen button"))
         .order(egui::Order::Foreground)

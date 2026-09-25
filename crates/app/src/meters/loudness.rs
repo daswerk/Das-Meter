@@ -7,6 +7,15 @@ use super::labels::Align;
 use super::shapes::Area;
 use super::{Canvas, map};
 
+/// Below this height (logical px) under the numbers, the bars move beside
+/// them instead, as in a short, wide Bar.
+const MIN_BARS_BELOW: f32 = 120.0;
+/// The numbers' column in the side-by-side layout, and the least the bars keep.
+const NUMBERS_WIDTH: f32 = 170.0;
+const MIN_BARS_WIDTH: f32 = 90.0;
+/// The least room between two scale labels.
+const LABEL_SPACING: f32 = 11.0;
+
 /// Scale marks on the bars, in dB, kept if inside the bar range.
 const MARKS: [f32; 10] = [
     0.0, -6.0, -12.0, -18.0, -24.0, -30.0, -36.0, -48.0, -60.0, -72.0,
@@ -20,7 +29,6 @@ pub fn draw(
 ) {
     let (text, dim) = (c.colour(Role::Text), c.dim());
     let size = 13.0;
-    let line = c.px(18.0);
 
     // Numbers.
     let true_peak = if display.true_peak_oversampled {
@@ -38,18 +46,43 @@ pub fn draw(
             .then_some((true_peak, display.true_peak_max, "dBTP")),
     ];
     let rows: Vec<_> = rows.into_iter().flatten().collect();
-    let value_right = area.x + c.px(96.0);
+    let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
+
+    // Numbers above the bars; in a short, wide area, numbers on the left and
+    // the bars beside them at full height.
+    let numbers_height = c.px(18.0) * rows.len() as f32 + c.px(10.0);
+    let beside = area.height - numbers_height < c.px(MIN_BARS_BELOW)
+        && area.width >= c.px(NUMBERS_WIDTH + MIN_BARS_WIDTH);
+    let (numbers, bars) = if beside {
+        let width = c.px(NUMBERS_WIDTH);
+        let numbers = Area { width, ..area };
+        let bars = Area {
+            x: area.x + width,
+            width: area.width - width,
+            ..area
+        };
+        (numbers, bars)
+    } else {
+        area.split_top(numbers_height)
+    };
+    // Rows shrink to fit a short area, the rate line included when beside.
+    let lines = rows.len() as f32 + if beside { 1.0 } else { 0.0 };
+    let line = c.px(18.0).min(numbers.height / lines.max(1.0));
+    let value_right = numbers.x + c.px(96.0);
     for (i, &(name, level, unit)) in rows.iter().enumerate() {
-        let y = area.y + line * i as f32;
-        c.text(name, area.x, y, size, dim, Align::Left);
+        let y = numbers.y + line * i as f32;
+        c.text(name, numbers.x, y, size, dim, Align::Left);
         c.bold(&number(level), value_right, y, size, text, Align::Right);
         c.text(unit, value_right + c.px(6.0), y, size, dim, Align::Left);
     }
-    let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
-    c.text(&rate, area.right(), area.y, 10.0, dim, Align::Right);
+    if beside {
+        let y = numbers.y + line * rows.len() as f32;
+        c.text(&rate, numbers.x, y, 10.0, dim, Align::Left);
+    } else {
+        c.text(&rate, area.right(), area.y, 10.0, dim, Align::Right);
+    }
 
     // Bars: L, R, then the LUFS bar.
-    let (_, bars) = area.split_top(line * rows.len() as f32 + c.px(10.0));
     let (bars, names) = bars.split_bottom(c.px(16.0));
     let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
     let y_of = |db: f64| map(db as f32, range, bars.bottom(), bars.y);
@@ -59,11 +92,17 @@ pub fn draw(
     let grid = c.colour(Role::Grid);
     let thin = c.px(1.0).max(1.0);
 
+    // Labels from the top down, skipping any that would crowd the one above.
+    let mut last_label: Option<f32> = None;
     for db in MARKS
         .into_iter()
         .filter(|&db| db >= range.0 && db <= range.1)
     {
         let y = y_of(f64::from(db));
+        if last_label.is_some_and(|last| y - last < c.px(LABEL_SPACING)) {
+            continue;
+        }
+        last_label = Some(y);
         c.text(
             &format!("{db}"),
             bars.x,
