@@ -95,7 +95,7 @@ pub fn draw(
             }
         }
         StereoDrawing::Lines => {
-            let width = c.px(1.0);
+            let width = c.stroke(1.0);
             for (i, pair) in points.windows(2).enumerate() {
                 c.shapes.line(
                     place(pair[0]),
@@ -130,6 +130,14 @@ pub fn draw(
         colour,
         ["−1", "0", "+1"],
     );
+    // Shape cue (High contrast): correlation below the threshold is marked
+    // with "!" by the bar, so it doesn't rely on colour alone.
+    let warn = readings.correlation < settings.correlation_threshold && !readings.no_signal;
+    if c.styling.shape_cues && warn {
+        let text = c.colour(Role::Text);
+        let y = correlation_area.y;
+        c.bold("!", correlation_area.x, y, 12.0, text, Align::Left);
+    }
     if settings.show_balance {
         let accent = c.colour(Role::Accent);
         bar(c, balance_area, readings.balance, accent, ["L", "C", "R"]);

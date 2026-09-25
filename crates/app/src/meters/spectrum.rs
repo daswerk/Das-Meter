@@ -118,10 +118,10 @@ pub fn draw(
                     fill_top.faded(0.45),
                     fill_top.faded(0.05),
                 );
-                c.shapes.polyline(&curve, c.px(1.5), line);
+                c.shapes.polyline(&curve, c.stroke(1.5), line);
                 if settings.show_peak_hold {
                     c.shapes
-                        .polyline(&points(&trace.peak_hold), c.px(1.0), hold.faded(0.6));
+                        .polyline(&points(&trace.peak_hold), c.stroke(1.0), hold.faded(0.6));
                 }
             }
             SpectrumStyle::Bars { .. } => {

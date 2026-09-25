@@ -213,7 +213,7 @@ pub fn draw(
         if let Some(db) = levels.peak.db() {
             let y = y_of(db);
             c.shapes
-                .line([x, y], [x + width, y], c.px(1.5), peak.faded(0.7));
+                .line([x, y], [x + width, y], c.stroke(1.5), peak.faded(0.7));
         }
         if let Some(db) = levels.peak_hold.db() {
             let y = y_of(db);
@@ -254,6 +254,25 @@ pub fn draw(
             height: bars.bottom() - y,
         };
         c.shapes.rect(fill, lufs_colour);
+        // Shape cue (High contrast): the part over the target is hatched, so
+        // it doesn't rely on colour alone.
+        if let (true, Some(target)) = (c.styling.shape_cues, settings.target) {
+            let top = y_of(target);
+            if y < top {
+                let stripe = c.px(6.0);
+                let back = c.colour(Role::Background);
+                let mut offset = -width;
+                while offset < top - y {
+                    let from = [x, y + offset + width];
+                    let to = [x + width, y + offset];
+                    let (from, to) = clip_to(from, to, y, top);
+                    if let Some((from, to)) = from.zip(to) {
+                        c.shapes.line(from, to, c.px(2.0), back);
+                    }
+                    offset += stripe;
+                }
+            }
+        }
     }
     if let Some(target) = settings.target {
         let y = y_of(target);
@@ -265,7 +284,7 @@ pub fn draw(
         c.shapes.line(
             [x - c.px(3.0), y],
             [x + width + c.px(3.0), y],
-            c.px(2.0),
+            c.stroke(2.0),
             colour,
         );
         let label = format!("{target}");
@@ -300,6 +319,35 @@ fn priority(name: &str, bar: &str) -> u8 {
         "TP" | "Peak" => 2,
         "M" | "S" => 3,
         _ => 4,
+    }
+}
+
+/// The part of the line from `from` to `to` between the heights `top` and
+/// `bottom`, if any: for hatching inside a band.
+fn clip_to(
+    from: [f32; 2],
+    to: [f32; 2],
+    top: f32,
+    bottom: f32,
+) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+    let at = |y: f32| {
+        let t = (y - from[1]) / (to[1] - from[1]);
+        [from[0] + t * (to[0] - from[0]), y]
+    };
+    let clamp = |p: [f32; 2]| {
+        if p[1] < top {
+            at(top)
+        } else if p[1] > bottom {
+            at(bottom)
+        } else {
+            p
+        }
+    };
+    let (a, b) = (clamp(from), clamp(to));
+    if (a[1] - b[1]).abs() < 0.5 {
+        (None, None)
+    } else {
+        (Some(a), Some(b))
     }
 }
 

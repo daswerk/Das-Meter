@@ -157,6 +157,53 @@ impl Shapes {
         self.gradient(area, colour, colour);
     }
 
+    /// A rectangle with rounded corners of `radius` pixels.
+    pub fn rounded_rect(&mut self, area: Area, radius: f32, colour: Colour) {
+        let r = radius.min(area.width / 2.0).min(area.height / 2.0);
+        if r < 0.5 {
+            self.rect(area, colour);
+            return;
+        }
+        let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());
+        // The middle column, then the side strips between the corners.
+        self.rect(
+            Area {
+                x: x0 + r,
+                width: area.width - 2.0 * r,
+                ..area
+            },
+            colour,
+        );
+        for x in [x0, x1 - r] {
+            self.rect(
+                Area {
+                    x,
+                    y: y0 + r,
+                    width: r,
+                    height: area.height - 2.0 * r,
+                },
+                colour,
+            );
+        }
+        // Each corner as a fan of thin triangles around its centre.
+        const STEPS: usize = 6;
+        let corners = [
+            ([x0 + r, y0 + r], std::f32::consts::PI),
+            ([x1 - r, y0 + r], 1.5 * std::f32::consts::PI),
+            ([x1 - r, y1 - r], 0.0),
+            ([x0 + r, y1 - r], 0.5 * std::f32::consts::PI),
+        ];
+        for (centre, start) in corners {
+            let point = |i: usize| {
+                let angle = start + std::f32::consts::FRAC_PI_2 * i as f32 / STEPS as f32;
+                [centre[0] + r * angle.cos(), centre[1] + r * angle.sin()]
+            };
+            for i in 0..STEPS {
+                self.quad([point(i), point(i + 1), centre, centre], colour, colour);
+            }
+        }
+    }
+
     /// A rectangle shaded from `top` to `bottom`.
     pub fn gradient(&mut self, area: Area, top: Colour, bottom: Colour) {
         let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());

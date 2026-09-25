@@ -14,8 +14,8 @@ use dasmeter_analysis::{
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    Colour, Direction, Edge, Event, LayoutMode, ListenTo, LoudnessMeterSettings, LufsBar,
-    MeterKind, MeterScene, MeterSettings, Palette, Platform, Role, Scene, ScreenMode,
+    Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo, LoudnessMeterSettings,
+    LufsBar, MeterKind, MeterScene, MeterSettings, Palette, Platform, Role, Scene, ScreenMode,
     SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
     WaveformMeterSettings, WindowKey,
 };
@@ -55,37 +55,50 @@ impl Ui {
         }
     }
 
-    /// Gives egui the system's sans-serif and monospace fonts, as the Meters'
-    /// text uses. (egui's bundled fonts carry font licences we don't take on.)
+    /// Gives egui the bundled Geist and Geist Mono, with the system's
+    /// sans-serif font as fallback for other scripts. (egui's own bundled
+    /// fonts carry licences we don't take on.)
     pub fn use_fonts(&self, fonts: &glyphon::fontdb::Database) {
         use glyphon::fontdb::{Family, Query};
 
-        let load = |family| {
-            let id = fonts.query(&Query {
-                families: &[family],
-                ..Query::default()
-            })?;
-            fonts.with_face_data(id, |data, index| {
-                let mut font = egui::FontData::from_owned(data.to_vec());
-                font.index = index;
-                font
-            })
-        };
-        let Some(sans) = load(Family::SansSerif) else {
-            return;
-        };
-        let mono = load(Family::Monospace).unwrap_or_else(|| sans.clone());
+        let bundled = |data: &'static [u8]| egui::FontData::from_static(data);
+        let [sans, _, mono, _] = crate::gpu::FONTS;
         let mut definitions = egui::FontDefinitions::empty();
-        definitions.font_data.insert("sans".into(), sans.into());
-        definitions.font_data.insert("mono".into(), mono.into());
+        definitions
+            .font_data
+            .insert("geist".into(), bundled(sans).into());
+        definitions
+            .font_data
+            .insert("geist mono".into(), bundled(mono).into());
+        let mut fallback = Vec::new();
+        let system = fonts
+            .query(&Query {
+                families: &[Family::SansSerif],
+                ..Query::default()
+            })
+            .and_then(|id| {
+                fonts.with_face_data(id, |data, index| {
+                    let mut font = egui::FontData::from_owned(data.to_vec());
+                    font.index = index;
+                    font
+                })
+            });
+        if let Some(system) = system {
+            definitions.font_data.insert("system".into(), system.into());
+            fallback.push("system".to_owned());
+        }
+        let family = |first: &str, second: &str| {
+            let mut names = vec![first.to_owned(), second.to_owned()];
+            names.extend(fallback.iter().cloned());
+            names
+        };
         definitions.families.insert(
             egui::FontFamily::Proportional,
-            vec!["sans".into(), "mono".into()],
+            family("geist", "geist mono"),
         );
-        definitions.families.insert(
-            egui::FontFamily::Monospace,
-            vec!["mono".into(), "sans".into()],
-        );
+        definitions
+            .families
+            .insert(egui::FontFamily::Monospace, family("geist mono", "geist"));
         self.ctx.set_fonts(definitions);
     }
 
@@ -896,7 +909,225 @@ fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     }
 }
 
-/// App settings, the Bar, then every setting of every Meter.
+/// A colour button for `colour`; returns the new colour when it's changed.
+fn colour_button(ui: &mut egui::Ui, colour: Colour) -> Option<Colour> {
+    let mut edited = colour32(colour);
+    let changed = egui::color_picker::color_edit_button_srgba(
+        ui,
+        &mut edited,
+        egui::color_picker::Alpha::OnlyBlend,
+    )
+    .changed();
+    changed.then(|| {
+        let [r, g, b, a] = edited.to_srgba_unmultiplied();
+        Colour { r, g, b, a }
+    })
+}
+
+/// A combo box over the Theme list. Returns the index picked.
+fn theme_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    scene: &Scene,
+    selected: Option<usize>,
+) -> Option<usize> {
+    let themes = &scene.theme.themes;
+    let label = |i: usize| {
+        let theme = &themes[i];
+        if theme.built_in {
+            format!("{} (built-in)", theme.name)
+        } else {
+            theme.name.clone()
+        }
+    };
+    let shown = selected.map_or_else(|| scene.theme.name.clone(), label);
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .show_ui(ui, |ui| {
+            for i in 0..themes.len() {
+                if ui.selectable_label(selected == Some(i), label(i)).clicked() {
+                    picked = Some(i);
+                }
+            }
+        });
+    picked
+}
+
+/// Which Theme is used, Duplicate, and the editor for the folder's Themes.
+fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    let theme = &scene.theme;
+    ui.label(format!("In use: {}", theme.name));
+    let mut follow = theme.follows_system();
+    if ui
+        .checkbox(&mut follow, "Follow the system's light / dark setting")
+        .changed()
+    {
+        // Following: Light and Dark; not: the Theme in use for both.
+        let (light, dark) = if follow {
+            (1, 0)
+        } else {
+            let current = theme.current.unwrap_or(0);
+            (current, current)
+        };
+        actions.push(Event::ChooseTheme { light, dark });
+    }
+    if follow {
+        ui.horizontal(|ui| {
+            ui.label("Light");
+            if let Some(light) = theme_combo(ui, "light theme", scene, theme.light) {
+                let dark = theme.dark.unwrap_or(0);
+                actions.push(Event::ChooseTheme { light, dark });
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Dark");
+            if let Some(dark) = theme_combo(ui, "dark theme", scene, theme.dark) {
+                let light = theme.light.unwrap_or(1);
+                actions.push(Event::ChooseTheme { light, dark });
+            }
+        });
+    } else {
+        ui.horizontal(|ui| {
+            ui.label("Theme");
+            if let Some(pick) = theme_combo(ui, "theme", scene, theme.current) {
+                actions.push(Event::ChooseTheme {
+                    light: pick,
+                    dark: pick,
+                });
+            }
+        });
+    }
+    let current = theme.current.unwrap_or(0);
+    if ui
+        .button("Duplicate")
+        .on_hover_text("Copy the Theme in use into one you can edit")
+        .clicked()
+    {
+        actions.push(Event::DuplicateTheme { theme: current });
+    }
+    let editable = theme.current.is_some_and(|i| !theme.themes[i].built_in);
+    if !editable {
+        ui.label(
+            RichText::new("Built-in Themes can't be edited. Duplicate one to make your own.")
+                .weak(),
+        );
+        return;
+    }
+    // Styling.
+    let mut styling = theme.styling;
+    let mut changed = ui
+        .add(Slider::new(&mut styling.background_opacity, 0.0..=1.0).text("Background opacity"))
+        .changed();
+    changed |= choice(
+        ui,
+        "Lines",
+        &mut styling.line,
+        &[
+            (LineWeight::Thin, "Thin"),
+            (LineWeight::Normal, "Normal"),
+            (LineWeight::Thick, "Thick"),
+        ],
+    );
+    let (lo, hi) = dasmeter_core::theme::GAP_RANGE;
+    changed |= ui
+        .add(
+            Slider::new(&mut styling.gap, lo..=hi)
+                .text("Gap")
+                .suffix(" px"),
+        )
+        .changed();
+    let (lo, hi) = dasmeter_core::theme::CORNER_RANGE;
+    changed |= ui
+        .add(
+            Slider::new(&mut styling.corner_radius, lo..=hi)
+                .text("Corner radius")
+                .suffix(" px"),
+        )
+        .changed();
+    let (lo, hi) = dasmeter_core::theme::TEXT_SCALE_RANGE;
+    changed |= ui
+        .add(Slider::new(&mut styling.text_scale, lo..=hi).text("Text size"))
+        .changed();
+    changed |= ui
+        .checkbox(&mut styling.shape_cues, "Shape cues besides colour")
+        .changed();
+    if changed {
+        actions.push(Event::SetThemeStyling {
+            theme: current,
+            styling,
+        });
+    }
+    // Colours, with a live preview: the Meters and this panel use them at once.
+    egui::Grid::new("theme colours")
+        .num_columns(2)
+        .show(ui, |ui| {
+            for role in Role::ALL {
+                ui.label(role.label());
+                if let Some(colour) = colour_button(ui, scene.palette[role]) {
+                    actions.push(Event::SetThemeColour {
+                        theme: current,
+                        role,
+                        colour,
+                    });
+                }
+                ui.end_row();
+            }
+        });
+}
+
+/// The roles a Meter draws with, which it can override.
+fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
+    match settings {
+        MeterSettings::Waveform(_) => &[Role::WaveformLow, Role::WaveformMid, Role::WaveformHigh],
+        MeterSettings::Spectrum(_) => &[
+            Role::SpectrumLine,
+            Role::SpectrumFill,
+            Role::SpectrumPeakHold,
+        ],
+        MeterSettings::Loudness(_) => &[
+            Role::LoudnessBar,
+            Role::LoudnessPeak,
+            Role::LoudnessOverTarget,
+        ],
+        MeterSettings::Stereometer(_) => &[
+            Role::StereometerTrace,
+            Role::CorrelationPositive,
+            Role::CorrelationNegative,
+        ],
+    }
+}
+
+/// A Meter's own colours: each of its roles, the Theme's or overridden.
+fn meter_colours(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &mut Actions) {
+    ui.label(RichText::new("Colours (this Meter only)").small());
+    egui::Grid::new(("meter colours", meter.meter))
+        .num_columns(3)
+        .show(ui, |ui| {
+            for &role in meter_roles(&meter.settings) {
+                let own = meter.overrides.iter().find(|(r, _)| *r == role);
+                ui.label(role.label());
+                let shown = own.map_or(scene.palette[role], |(_, c)| *c);
+                if let Some(colour) = colour_button(ui, shown) {
+                    actions.push(Event::SetOverride {
+                        meter: meter.meter,
+                        role,
+                        colour: Some(colour),
+                    });
+                }
+                if own.is_some() && ui.small_button("Theme's").clicked() {
+                    actions.push(Event::SetOverride {
+                        meter: meter.meter,
+                        role,
+                        colour: None,
+                    });
+                }
+                ui.end_row();
+            }
+        });
+}
+
+/// App settings, the Theme, the Bar, then every setting of every Meter.
 fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     egui::CollapsingHeader::new("App")
         .default_open(true)
@@ -925,6 +1156,9 @@ fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                 actions.push(Event::SetApp(app));
             }
         });
+    egui::CollapsingHeader::new("Theme")
+        .default_open(false)
+        .show(ui, |ui| theme_settings(ui, scene, actions));
     egui::CollapsingHeader::new("Bar")
         .default_open(false)
         .show(ui, |ui| bar_settings(ui, scene, actions));
@@ -947,6 +1181,8 @@ fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                     .unwrap_or(meter_scene.settings);
                 ui.separator();
                 advanced(ui, meter, settings, &mut edited);
+                ui.separator();
+                meter_colours(ui, scene, meter_scene, &mut edited);
                 if let Some(last) = edited
                     .iter()
                     .rev()

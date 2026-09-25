@@ -75,7 +75,16 @@ impl Gpu {
             height: size.height.max(1),
             // Vsync; the app core caps the rate further and skips frames with nothing new.
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: capabilities.alpha_modes[0],
+            // See-through where the Theme's background opacity says so: any
+            // mode that composites with what's behind the window. Metal treats
+            // a non-opaque layer's colours as premultiplied.
+            alpha_mode: [
+                wgpu::CompositeAlphaMode::PreMultiplied,
+                wgpu::CompositeAlphaMode::PostMultiplied,
+            ]
+            .into_iter()
+            .find(|mode| capabilities.alpha_modes.contains(mode))
+            .unwrap_or(capabilities.alpha_modes[0]),
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
             color_space: wgpu::SurfaceColorSpace::Auto,
@@ -147,11 +156,30 @@ impl WindowSurface {
     }
 }
 
+/// The bundled fonts: Geist and Geist Mono (SIL OFL 1.1, see `assets/fonts/OFL.txt`).
+pub const FONTS: [&[u8]; 4] = [
+    include_bytes!("../assets/fonts/Geist-Regular.otf"),
+    include_bytes!("../assets/fonts/Geist-SemiBold.otf"),
+    include_bytes!("../assets/fonts/GeistMono-Regular.otf"),
+    include_bytes!("../assets/fonts/GeistMono-SemiBold.otf"),
+];
+
+/// A font system with the bundled Geist fonts as its sans-serif and monospace
+/// families; the system's fonts stay as fallback for other scripts.
+fn font_system() -> FontSystem {
+    let fonts = FONTS.map(|data| glyphon::fontdb::Source::Binary(std::sync::Arc::new(data)));
+    let mut system = FontSystem::new_with_fonts(fonts);
+    let db = system.db_mut();
+    db.set_sans_serif_family("Geist");
+    db.set_monospace_family("Geist Mono");
+    system
+}
+
 impl Text {
     pub fn new(gpu: &Gpu) -> Text {
         let cache = Cache::new(&gpu.device);
         Text {
-            font_system: FontSystem::new(),
+            font_system: font_system(),
             swash_cache: SwashCache::new(),
             viewport: Viewport::new(&gpu.device, &cache),
             atlas: TextAtlas::new(&gpu.device, &gpu.queue, &cache, gpu.format),
@@ -185,13 +213,14 @@ pub fn linear(colour: Colour, format: wgpu::TextureFormat) -> [f32; 4] {
     ]
 }
 
-/// A colour as a render pass's clear colour.
+/// A colour as a render pass's clear colour, premultiplied by its alpha (as
+/// see-through windows composite it; an opaque colour is unchanged).
 pub fn clear_colour(colour: Colour, format: wgpu::TextureFormat) -> wgpu::Color {
     let [r, g, b, a] = linear(colour, format);
     wgpu::Color {
-        r: f64::from(r),
-        g: f64::from(g),
-        b: f64::from(b),
+        r: f64::from(r * a),
+        g: f64::from(g * a),
+        b: f64::from(b * a),
         a: f64::from(a),
     }
 }

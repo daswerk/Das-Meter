@@ -1,10 +1,10 @@
 //! Draws one window: its Meters with the GPU renderers, the notes, and the
 //! egui layer on top, all in one render pass.
 
-use dasmeter_core::{Palette, Role, Scene, WindowKey};
+use dasmeter_core::{Palette, Role, Scene, Styling, WindowKey};
 
 use crate::gpu::{Gpu, Text, clear_colour};
-use crate::meters::{Area, MeterRenderer};
+use crate::meters::{Area, Look, MeterRenderer};
 
 /// Draws a scene with the GPU: one renderer per Meter, one for the notes, and
 /// their shared text, then the menus and panel on top.
@@ -73,7 +73,13 @@ impl Painter {
             self.meters
                 .push(MeterRenderer::new(&self.gpu, &mut self.text));
         }
-        let gap = 6.0 * scale;
+        let styling = scene.map_or_else(Styling::default, |scene| scene.theme.styling);
+        let gap = styling.gap * scale;
+        let look = Look {
+            palette,
+            styling,
+            scale,
+        };
         for (renderer, meter) in self.meters.iter_mut().zip(meters) {
             let frame = meter.frame;
             let area = Area {
@@ -97,7 +103,7 @@ impl Painter {
                 width,
                 height,
             };
-            renderer.prepare(&self.gpu, &mut self.text, area, scale, palette, meter);
+            renderer.prepare(&self.gpu, &mut self.text, area, look, meter);
         }
         let window = Area {
             x: 0.0,
@@ -109,7 +115,7 @@ impl Painter {
             .filter(|_| key == Some(WindowKey::Bar))
             .map_or(&[][..], |scene| &scene.notes[..]);
         self.notes
-            .prepare_notes(&self.gpu, &mut self.text, window, scale, palette, notes);
+            .prepare_notes(&self.gpu, &mut self.text, window, look, notes);
 
         let mut encoder = self
             .gpu
@@ -144,7 +150,7 @@ impl Painter {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_colour(
-                            palette[Role::Background],
+                            palette[Role::Background].faded(styling.background_opacity),
                             self.gpu.format,
                         )),
                         store: wgpu::StoreOp::Store,

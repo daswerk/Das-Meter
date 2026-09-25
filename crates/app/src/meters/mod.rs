@@ -8,7 +8,9 @@ mod spectrum;
 mod stereometer;
 mod waveform;
 
-use dasmeter_core::{Colour, MeterScene, MeterState, MeterView, Note, Palette, Role, SourceItem};
+use dasmeter_core::{
+    Colour, MeterScene, MeterState, MeterView, Note, Palette, Role, SourceItem, Styling,
+};
 
 use crate::gpu::{Gpu, Text};
 use labels::{Align, Labels, Style};
@@ -22,12 +24,19 @@ pub struct Canvas<'a> {
     palette: &'a Palette,
     /// Physical pixels per logical pixel.
     pub scale: f32,
+    /// The Theme's styling: line weight, text size, shape cues.
+    pub styling: Styling,
 }
 
 impl Canvas<'_> {
     /// Logical pixels to physical ones.
     pub fn px(&self, logical: f32) -> f32 {
         logical * self.scale
+    }
+
+    /// A line width in logical pixels, in physical ones at the Theme's line weight.
+    pub fn stroke(&self, logical: f32) -> f32 {
+        self.px(logical) * self.styling.line.factor()
     }
 
     pub fn colour(&self, role: Role) -> Colour {
@@ -42,7 +51,7 @@ impl Canvas<'_> {
     /// Text whose top edge is at `y`, `size` logical pixels high.
     pub fn text(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
         let style = Style {
-            size: self.px(size),
+            size: self.px(size) * self.styling.text_scale,
             colour,
             bold: false,
             align,
@@ -52,13 +61,22 @@ impl Canvas<'_> {
 
     pub fn bold(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
         let style = Style {
-            size: self.px(size),
+            size: self.px(size) * self.styling.text_scale,
             colour,
             bold: true,
             align,
         };
         self.labels.add(text, x, y, style);
     }
+}
+
+/// How a window is drawn: its colours, the Theme's styling and the scale.
+#[derive(Clone, Copy)]
+pub struct Look<'a> {
+    pub palette: &'a Palette,
+    pub styling: Styling,
+    /// Physical pixels per logical pixel.
+    pub scale: f32,
 }
 
 /// Draws one Meter (or the notes over a window) into its area.
@@ -75,12 +93,13 @@ impl MeterRenderer {
         }
     }
 
-    fn canvas<'a>(&'a mut self, palette: &'a Palette, scale: f32) -> Canvas<'a> {
+    fn canvas<'a>(&'a mut self, palette: &'a Palette, scale: f32, styling: Styling) -> Canvas<'a> {
         Canvas {
             shapes: &mut self.shapes,
             labels: &mut self.labels,
             palette,
             scale,
+            styling,
         }
     }
 
@@ -100,14 +119,17 @@ impl MeterRenderer {
         gpu: &Gpu,
         text: &mut Text,
         area: Area,
-        scale: f32,
-        palette: &Palette,
+        look: Look,
         meter: &MeterScene,
     ) {
         self.begin(gpu, area);
-        let mut c = self.canvas(palette, scale);
-        let panel = c.colour(Role::Panel);
-        c.shapes.rect(area, panel);
+        let (scale, styling) = (look.scale, look.styling);
+        // The Meter's own colour overrides go over the Theme's.
+        let palette = look.palette.with(&meter.overrides);
+        let mut c = self.canvas(&palette, scale, styling);
+        let panel = c.colour(Role::Panel).faded(styling.background_opacity);
+        c.shapes
+            .rounded_rect(area, c.px(styling.corner_radius), panel);
         let inner = area.inset(c.px(10.0));
         match &meter.state {
             MeterState::Starting => {
@@ -223,12 +245,11 @@ impl MeterRenderer {
         gpu: &Gpu,
         text: &mut Text,
         window: Area,
-        scale: f32,
-        palette: &Palette,
+        look: Look,
         notes: &[Note],
     ) {
         self.begin(gpu, window);
-        let mut c = self.canvas(palette, scale);
+        let mut c = self.canvas(look.palette, look.scale, look.styling);
         let line = c.px(24.0);
         for (i, note) in notes.iter().rev().enumerate() {
             let y = window.bottom() - line * (i + 1) as f32;

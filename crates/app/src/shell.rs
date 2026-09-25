@@ -12,8 +12,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use dasmeter_core::{
-    AppCore, BarEnd, Decision, Direction, Edge, Event, ListenTo, MeterScene, MeterState, Rect,
-    Scene, SplitId, WindowKey, WindowScene,
+    AppCore, Appearance, BarEnd, Decision, Direction, Edge, Event, ListenTo, MeterScene,
+    MeterState, Rect, Scene, SplitId, WindowKey, WindowScene,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -42,6 +42,8 @@ pub fn run() {
         send_plugins: SendPluginInput::new(),
         windows: HashMap::new(),
         started: false,
+        theme_folder: Vec::new(),
+        theme_scan_at: Duration::ZERO,
         menu_anchor: None,
         ui_view: None,
         ui_wake: None,
@@ -84,6 +86,10 @@ enum Drag {
     /// A divider between Window mode's panes.
     Split(SplitId, Direction),
 }
+
+/// How often the themes folder is looked at, so a Theme file that comes back
+/// (or is edited by hand) is picked up.
+const THEME_SCAN_EVERY: Duration = Duration::from_secs(2);
 
 /// How close to a divider or the Bar's inner edge the pointer grabs it, in logical px.
 const GRAB: f32 = 5.0;
@@ -158,6 +164,9 @@ struct Shell {
     send_plugins: SendPluginInput,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
+    /// The themes folder as last read, and when it's next looked at.
+    theme_folder: crate::theme_files::Signature,
+    theme_scan_at: Duration,
     /// Where the open menu was right-clicked, on screen.
     menu_anchor: Option<[f32; 2]>,
     /// The scene without the Meters' live content, as the menu and panel last drew it.
@@ -192,6 +201,7 @@ fn ui_view(scene: &Scene) -> Scene {
                     settings: meter.settings,
                     picked: meter.picked,
                     show_source_label: meter.show_source_label,
+                    overrides: meter.overrides.clone(),
                 })
                 .collect(),
             key: window.key,
@@ -209,6 +219,7 @@ fn ui_view(scene: &Scene) -> Scene {
         windows,
         notes: Vec::new(),
         palette: scene.palette.clone(),
+        theme: scene.theme.clone(),
         listen_to: scene.listen_to,
         mode: scene.mode,
         send_plugins: scene.send_plugins.clone(),
@@ -216,6 +227,13 @@ fn ui_view(scene: &Scene) -> Scene {
         settings_open: scene.settings_open,
         app: scene.app,
         max_frame_rate_cap: scene.max_frame_rate_cap,
+    }
+}
+
+fn appearance(theme: winit::window::Theme) -> Appearance {
+    match theme {
+        winit::window::Theme::Light => Appearance::Light,
+        winit::window::Theme::Dark => Appearance::Dark,
     }
 }
 
@@ -295,6 +313,11 @@ impl Shell {
             Some(painter.gpu.device.limits().max_texture_dimension_2d as usize),
         );
         window.request_redraw();
+        if let Some(theme) = window.theme() {
+            let now = self.now();
+            self.core
+                .handle(Event::SystemAppearance(appearance(theme)), now);
+        }
         self.windows.insert(
             window.id(),
             AppWindow {
@@ -319,7 +342,10 @@ impl Shell {
     }
 
     fn attributes_for(scene: &WindowScene) -> WindowAttributes {
-        let mut attributes = Window::default_attributes().with_title(scene.title.clone());
+        // See-through when the Theme's background opacity is below 100 %.
+        let mut attributes = Window::default_attributes()
+            .with_title(scene.title.clone())
+            .with_transparent(true);
         if let Some(frame) = scene.frame {
             let (position, size) = logical(frame);
             attributes = attributes.with_position(position).with_inner_size(size);
@@ -537,6 +563,27 @@ impl Shell {
         LogicalPosition::new(f64::from(x), f64::from(y))
     }
 
+    /// Reads the themes folder into the core if it changed since last time.
+    fn scan_themes(&mut self, now: Duration) {
+        self.theme_scan_at = now + THEME_SCAN_EVERY;
+        let signature = crate::theme_files::signature();
+        if signature == self.theme_folder && now > Duration::ZERO {
+            return;
+        }
+        self.theme_folder = signature;
+        let files = crate::theme_files::read();
+        self.core.handle(Event::ThemeFiles(&files), now);
+    }
+
+    /// Saves Theme edits the core made, and remembers the folder as written.
+    fn save_themes(&mut self) {
+        let writes = self.core.take_writes();
+        if !writes.is_empty() {
+            crate::theme_files::write(&writes);
+            self.theme_folder = crate::theme_files::signature();
+        }
+    }
+
     /// The display the Bar lives on, and its refresh rate for the frame-rate cap.
     fn report_display(&mut self) {
         let now = self.now();
@@ -690,6 +737,7 @@ impl ApplicationHandler for Shell {
             return;
         }
         self.started = true;
+        self.scan_themes(Duration::ZERO);
         self.report_display();
         // A first scene, so the Bar opens where it belongs.
         let now = self.now();
@@ -771,6 +819,10 @@ impl ApplicationHandler for Shell {
             // Clicking anywhere else closes the menu.
             WindowEvent::Focused(false) if role == Role::Menu && app.had_focus => {
                 self.core.handle(Event::CloseMenu, now);
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                self.core
+                    .handle(Event::SystemAppearance(appearance(theme)), now);
             }
             WindowEvent::Occluded(occluded) => {
                 app.occluded = occluded;
@@ -880,6 +932,10 @@ impl ApplicationHandler for Shell {
                 clicked,
             );
         }
+        self.save_themes();
+        if now >= self.theme_scan_at {
+            self.scan_themes(now);
+        }
         let pump_at = self.pump(now);
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {
@@ -901,7 +957,10 @@ impl ApplicationHandler for Shell {
                 app.window.request_redraw();
             }
         }
-        let wake_at = [wake_at, pump_at, self.ui_wake].into_iter().flatten().min();
+        let wake_at = [wake_at, pump_at, self.ui_wake, Some(self.theme_scan_at)]
+            .into_iter()
+            .flatten()
+            .min();
         match wake_at {
             Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(self.start + at)),
             None => event_loop.set_control_flow(ControlFlow::Wait),

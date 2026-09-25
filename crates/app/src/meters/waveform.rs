@@ -125,7 +125,8 @@ fn merge(
     merged
 }
 
-/// The band colours mixed by energy, at full brightness.
+/// The band colours mixed by energy, as bright as the brightest band colour
+/// (full brightness on Dark; darker on a light Theme so it stays visible).
 fn mix(colours: [Colour; 3], energies: [f32; 3]) -> Colour {
     let total: f32 = energies.iter().sum();
     if total <= 0.0 {
@@ -140,7 +141,11 @@ fn mix(colours: [Colour; 3], energies: [f32; 3]) -> Colour {
     };
     let (r, g, b) = (channel(|c| c.r), channel(|c| c.g), channel(|c| c.b));
     let brightest = r.max(g).max(b).max(1.0);
-    let scale = 255.0 / brightest;
+    let ceiling = colours
+        .iter()
+        .map(|c| f32::from(c.r.max(c.g).max(c.b)))
+        .fold(1.0, f32::max);
+    let scale = ceiling / brightest;
     Colour::rgb(
         (r * scale).min(255.0) as u8,
         (g * scale).min(255.0) as u8,

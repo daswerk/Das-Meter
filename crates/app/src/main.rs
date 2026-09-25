@@ -15,6 +15,7 @@ mod painter;
 mod send_plugins;
 mod shell;
 mod snapshot;
+mod theme_files;
 mod ui;
 
 use std::sync::atomic::AtomicBool;

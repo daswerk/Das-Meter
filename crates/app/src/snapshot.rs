@@ -1,4 +1,5 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|WxH]`: runs the app core on a
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|light|contrast|glass|WxH]`
+//! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
 //! size of a Bar on a laptop display. It checks the
@@ -8,7 +9,7 @@
 use std::time::Duration;
 
 use dasmeter_analysis::signals::{frames, pink_noise, stereo};
-use dasmeter_core::{AppCore, Decision, Event, LayoutMode, WindowKey};
+use dasmeter_core::{AppCore, Decision, Event, LayoutMode, Styling, WindowKey};
 
 use crate::gpu::Gpu;
 use crate::painter::{Painter, UiPaint};
@@ -63,6 +64,20 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             core.handle(Event::Pointer(Some((WindowKey::Main, [0.4, 0.25]))), now);
         }
         Some(_) if custom.is_some() => {}
+        // Themes: the built-ins, and a see-through copy of Dark.
+        Some("light") => core.handle(Event::ChooseTheme { light: 1, dark: 1 }, now),
+        Some("contrast") => core.handle(Event::ChooseTheme { light: 2, dark: 2 }, now),
+        Some("glass") => {
+            core.handle(Event::DuplicateTheme { theme: 0 }, now);
+            let styling = Styling {
+                background_opacity: 0.55,
+                corner_radius: 10.0,
+                gap: 8.0,
+                ..Styling::default()
+            };
+            core.handle(Event::SetThemeStyling { theme: 3, styling }, now);
+            core.take_writes();
+        }
         // Right-click the Loudness Meter, as a user would.
         Some("menu") => core.handle(
             Event::OpenMenu {
@@ -72,7 +87,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             now,
         ),
         Some("settings") => core.handle(Event::ShowSettings(true), now),
-        Some(other) => return Err(format!("unknown panel {other:?}: menu or settings")),
+        Some(other) => return Err(format!("unknown option {other:?}")),
     }
     now += Duration::from_millis(100);
     core.decide(now);
@@ -167,12 +182,21 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let pixels = buffer.get_mapped_range(..).map_err(|e| e.to_string())?;
 
-    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+    // A .pam file keeps the alpha channel (for see-through Themes); else PPM.
+    let alpha = path.ends_with(".pam");
+    let mut ppm = if alpha {
+        format!(
+            "P7\nWIDTH {width}\nHEIGHT {height}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+        )
+        .into_bytes()
+    } else {
+        format!("P6\n{width} {height}\n255\n").into_bytes()
+    };
     for y in 0..height as usize {
         let start = y * row as usize;
         let (line, _) = pixels[start..start + width as usize * 4].as_chunks::<4>();
         for pixel in line {
-            ppm.extend_from_slice(&pixel[..3]);
+            ppm.extend_from_slice(if alpha { &pixel[..] } else { &pixel[..3] });
         }
     }
     std::fs::write(path, ppm).map_err(|e| e.to_string())
