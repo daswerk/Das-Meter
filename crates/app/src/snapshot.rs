@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar]`: runs the app core on a
+//! Hidden `--render-snapshot PATH [menu|settings|bar|WxH]`: runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
 //! size of a Bar on a laptop display. It checks the
@@ -45,13 +45,19 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
-    let (width, height) = if open == Some("bar") {
-        BAR
-    } else {
-        (WIDTH, HEIGHT)
+    // "WxH": a window of that many logical px, for checking small sizes.
+    let custom = open.and_then(|o| {
+        let (w, h) = o.split_once('x')?;
+        Some((w.parse::<u32>().ok()? * 2, h.parse::<u32>().ok()? * 2))
+    });
+    let (width, height) = match (open, custom) {
+        (_, Some(size)) => size,
+        (Some("bar"), _) => BAR,
+        _ => (WIDTH, HEIGHT),
     };
     match open {
         None | Some("bar") => {}
+        Some(_) if custom.is_some() => {}
         // Right-click the Loudness Meter, as a user would.
         Some("menu") => core.handle(
             Event::OpenMenu {

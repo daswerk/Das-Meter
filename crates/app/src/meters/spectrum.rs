@@ -8,6 +8,11 @@ use super::labels::Align;
 use super::shapes::Area;
 use super::{Canvas, map};
 
+/// About how wide `text` is in the monospace labels at `size`, in px.
+fn text_width(c: &Canvas, text: &str, size: f32) -> f32 {
+    c.px(size * 0.6) * text.chars().count() as f32
+}
+
 const FREQUENCY_MARKS: [(f32, &str); 10] = [
     (20.0, ""),
     (50.0, "50"),
@@ -39,7 +44,8 @@ pub fn draw(
     let db_range = spectrum.db_range;
     let y_of = |db: f32| map(db, db_range, area.bottom(), area.y);
 
-    // Grid.
+    // Grid. A label that would run into the one before it is left out.
+    let mut last_label: Option<f32> = None;
     for (frequency, name) in FREQUENCY_MARKS {
         if frequency < range.0 || frequency > range.1 {
             continue;
@@ -51,10 +57,14 @@ pub fn draw(
             ..area
         };
         c.shapes.rect(line, grid.faded(0.6));
-        if !name.is_empty() {
+        let half = text_width(c, name, 9.0) / 2.0;
+        let clear = last_label.is_none_or(|last| x - half > last + c.px(4.0));
+        if !name.is_empty() && clear {
             c.text(name, x, area.bottom() - c.px(13.0), 9.0, dim, Align::Centre);
+            last_label = Some(x + half);
         }
     }
+    let mut last_db_label: Option<f32> = None;
     let mut db = (db_range.1 / DB_STEP).floor() * DB_STEP;
     while db > db_range.0 {
         let y = y_of(db);
@@ -64,14 +74,20 @@ pub fn draw(
             ..area
         };
         c.shapes.rect(line, grid.faded(0.6));
-        c.text(
-            &format!("{db}"),
-            area.x + c.px(2.0),
-            y + c.px(1.0),
-            9.0,
-            dim,
-            Align::Left,
-        );
+        // Right-aligned so "0" lines up with "-12"; none so low that it runs
+        // into the frequency labels.
+        let crowded = last_db_label.is_some_and(|last| y - last < c.px(11.0));
+        if y + c.px(14.0) < area.bottom() - c.px(13.0) && !crowded {
+            last_db_label = Some(y);
+            c.text(
+                &format!("{db}"),
+                area.x + c.px(22.0),
+                y + c.px(1.0),
+                9.0,
+                dim,
+                Align::Right,
+            );
+        }
         db -= DB_STEP;
     }
 
@@ -156,12 +172,26 @@ pub fn draw(
         if let Some(note) = cursor.note {
             readout += &format!("  {note} {:+.0}¢", note.cents);
         }
-        // Keep the readout inside the Meter: right of the line, or left near the edge.
-        let (anchor, align) = if cursor.x < 0.6 {
-            (x + c.px(4.0), Align::Left)
+        // Keep the readout inside the Meter: right of the line, else left of
+        // it, else against whichever edge it would cross.
+        let width = text_width(c, &readout, 11.0);
+        let right = x + c.px(4.0);
+        let left = x - c.px(4.0) - width;
+        let start = if right + width <= area.right() {
+            right
+        } else if left >= area.x {
+            left
         } else {
-            (x - c.px(4.0), Align::Right)
+            (area.right() - width).max(area.x)
         };
-        c.text(&readout, anchor, area.y, 11.0, text, align);
+        // Below the top dB label.
+        c.text(
+            &readout,
+            start,
+            area.y + c.px(12.0),
+            11.0,
+            text,
+            Align::Left,
+        );
     }
 }

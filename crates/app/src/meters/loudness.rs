@@ -9,6 +9,14 @@ use super::{Canvas, map};
 
 /// A number tile's height and the narrowest one, in logical px.
 const TILE_HEIGHT: f32 = 26.0;
+/// The lowest a tile gets before readings are left out.
+const MIN_TILE_HEIGHT: f32 = 20.0;
+/// The narrowest single tile, beside the bars in a small, wide area.
+const SINGLE_TILE_WIDTH: f32 = 110.0;
+/// Below this height the tiles shrink to the single reading the bar shows.
+const TINY_HEIGHT: f32 = 64.0;
+/// The rate line under the tiles.
+const RATE_HEIGHT: f32 = 16.0;
 const TILE_MIN_WIDTH: f32 = 150.0;
 /// The least room between two scale labels.
 const LABEL_SPACING: f32 = 11.0;
@@ -53,7 +61,10 @@ pub fn draw(
     let bars_width = scale_width + 3.0 * c.px(MAX_BAR_WIDTH) + 4.0 * gap;
     // Wider than tall (a Bar along the top or bottom): tiles on the left, bars
     // on the right at full height. Otherwise tiles above, bars below.
-    let beside = area.width >= area.height && area.width >= c.px(TILE_MIN_WIDTH) + bars_width;
+    let beside = area.width >= area.height && area.width >= c.px(TILE_MIN_WIDTH) + bars_width
+        // A short, wide area keeps its bars beside a single narrower tile.
+        || (area.width >= 1.2 * area.height
+            && area.width >= c.px(SINGLE_TILE_WIDTH) + bars_width);
     let (tiles, bars) = if beside {
         let tiles = Area {
             width: area.width - bars_width - gap,
@@ -66,30 +77,55 @@ pub fn draw(
         };
         (tiles, bars)
     } else {
+        // At most half the height for tiles; the bars keep the rest.
         let columns = tile_columns(c, area.width, rows.len());
         let tile_rows = rows.len().div_ceil(columns) as f32;
-        let height = tile_rows * (c.px(TILE_HEIGHT) + gap) + c.px(14.0);
-        let (tiles, bars) = area.split_top(height.min(area.height / 2.0));
+        let wanted = tile_rows * (c.px(TILE_HEIGHT) + gap) + c.px(RATE_HEIGHT);
+        let (tiles, bars) = area.split_top(wanted.min(area.height / 2.0));
         // The bar group sits in the middle of the width left under the tiles.
         let width = bars_width.min(bars.width);
         let bars = Area {
             x: bars.x + (bars.width - width) / 2.0,
+            y: bars.y + gap,
             width,
-            ..bars
+            height: (bars.height - gap).max(0.0),
         };
         (tiles, bars)
     };
+
+    // As many readings as fit, most important first; shown in their usual order.
     let columns = tile_columns(c, tiles.width, rows.len());
-    let tile_rows = rows.len().div_ceil(columns);
-    // Room for the rate line under the tiles.
-    let rate_height = c.px(16.0);
-    let tile_height = ((tiles.height - rate_height - gap * tile_rows as f32) / tile_rows as f32)
-        .clamp(c.px(16.0), c.px(TILE_HEIGHT));
+    let min_tile = c.px(MIN_TILE_HEIGHT);
+    let fit_rows = ((tiles.height + gap) / (min_tile + gap)).floor().max(0.0) as usize;
+    // A very short area (a thin Bar) shows just the one reading the bar shows.
+    // So does one too narrow for a tile at its narrowest.
+    let capacity = if tiles.height < c.px(TINY_HEIGHT) || tiles.width < c.px(TILE_MIN_WIDTH) {
+        fit_rows.min(1)
+    } else {
+        (fit_rows * columns).min(rows.len())
+    };
+    let bar_name = match settings.lufs_bar {
+        LufsBar::ShortTerm => "S",
+        LufsBar::Momentary => "M",
+    };
+    let mut shown: Vec<usize> = (0..rows.len()).collect();
+    shown.sort_by_key(|&i| priority(rows[i].0, bar_name));
+    shown.truncate(capacity);
+    shown.sort_unstable();
+    let tile_rows = shown.len().div_ceil(columns).max(1);
+    // The rate line goes under the tiles only where there's room left for it.
+    let room = tiles.height - tile_rows as f32 * (min_tile + gap);
+    let show_rate = !shown.is_empty() && room >= c.px(RATE_HEIGHT);
+    let for_tiles = tiles.height - if show_rate { c.px(RATE_HEIGHT) } else { 0.0 };
+    let tile_height = ((for_tiles - gap * (tile_rows as f32 - 1.0)) / tile_rows as f32)
+        .clamp(min_tile, c.px(TILE_HEIGHT));
     let tile_width = (tiles.width - gap * (columns as f32 - 1.0)) / columns as f32;
     let tile_fill = c.colour(Role::Grid).faded(0.35);
     let unit_width = c.px(36.0);
-    for (i, &(name, level, unit)) in rows.iter().enumerate() {
-        let (row, column) = (i / columns, i % columns);
+    let pad = c.px(8.0);
+    for (slot, &i) in shown.iter().enumerate() {
+        let (name, level, unit) = rows[i];
+        let (row, column) = (slot / columns, slot % columns);
         let tile = Area {
             x: tiles.x + column as f32 * (tile_width + gap),
             y: tiles.y + row as f32 * (tile_height + gap),
@@ -98,7 +134,6 @@ pub fn draw(
         };
         c.shapes.rect(tile, tile_fill);
         let y = tile.y + (tile_height - c.px(16.0)) / 2.0;
-        let pad = c.px(8.0);
         c.text(name, tile.x + pad, y, size, dim, Align::Left);
         let unit_x = tile.right() - pad - unit_width;
         c.bold(
@@ -111,9 +146,10 @@ pub fn draw(
         );
         c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
     }
-    let below = tiles.y + tile_rows as f32 * (tile_height + gap);
-    let rate_y = below.min(tiles.bottom() - rate_height);
-    c.text(&rate, tiles.x, rate_y, 10.0, dim, Align::Left);
+    if show_rate {
+        let y = tiles.y + tile_rows as f32 * (tile_height + gap);
+        c.text(&rate, tiles.x, y, 10.0, dim, Align::Left);
+    }
 
     // Bars: L, R, then the LUFS bar.
     let (bars, names) = bars.split_bottom(c.px(16.0));
@@ -137,13 +173,14 @@ pub fn draw(
             continue;
         }
         last_label = Some(y);
+        // Right-aligned against the bars, so "0" lines up with "-60".
         c.text(
             &format!("{db}"),
-            bars.x,
+            left - c.px(6.0),
             y - c.px(6.0),
             9.0,
             dim,
-            Align::Left,
+            Align::Right,
         );
         let tick = Area {
             x: left - c.px(3.0),
@@ -252,6 +289,18 @@ pub fn draw(
 fn tile_columns(c: &Canvas, width: f32, count: usize) -> usize {
     let fit = ((width + c.px(6.0)) / (c.px(TILE_MIN_WIDTH) + c.px(6.0))).floor() as usize;
     fit.clamp(1, count.max(1))
+}
+
+/// Which readings stay when not all fit, lowest first: the LUFS the bar
+/// shows, integrated, true peak, the other of M and S, then LRA.
+fn priority(name: &str, bar: &str) -> u8 {
+    match name {
+        _ if name == bar => 0,
+        "I" => 1,
+        "TP" | "Peak" => 2,
+        "M" | "S" => 3,
+        _ => 4,
+    }
 }
 
 /// A reading as shown: one decimal, or "-inf" for silence.
