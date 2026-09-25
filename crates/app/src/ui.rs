@@ -642,6 +642,29 @@ fn loudness_advanced(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings) -> bool {
         .checkbox(&mut s.show_true_peak, "Show true peak")
         .changed();
     changed |= ui.checkbox(&mut s.show_range, "Show LRA").changed();
+    changed |= ui
+        .checkbox(&mut s.show_peak_to_loudness, "Show PLR and PSR")
+        .on_hover_text(
+            "Peak to loudness: the true-peak maximum minus integrated loudness (PLR), \
+             and the last 3 s' true peak minus short-term loudness (PSR)",
+        )
+        .changed();
+    changed |= ui
+        .checkbox(&mut s.show_history, "Loudness graph")
+        .on_hover_text("The LUFS bar's reading over time, where there's room")
+        .changed();
+    if s.show_history {
+        let mut seconds = s.history_span.as_secs();
+        let spans: Vec<(u64, String)> = limits::HISTORY_SPANS
+            .iter()
+            .map(|&span| (span, format!("{span} s")))
+            .collect();
+        let spans: Vec<(u64, &str)> = spans.iter().map(|(v, l)| (*v, l.as_str())).collect();
+        if choice(ui, "Graph span", &mut seconds, &spans) {
+            s.history_span = Duration::from_secs(seconds);
+            changed = true;
+        }
+    }
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(MEASUREMENTS_NOTE).small());
         ui.hyperlink_to(RichText::new("What it measures").small(), MEASUREMENTS_URL);

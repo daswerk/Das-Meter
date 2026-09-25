@@ -1,5 +1,6 @@
-//! The Loudness Meter: numbers for M, S, I, LRA and true peak; L/R RMS bars
-//! with sample-peak lines and hold ticks; a LUFS bar with the target line.
+//! The Loudness Meter: numbers for M, S, I, LRA, true peak, PLR and PSR; L/R
+//! RMS bars with sample-peak lines and hold ticks; a LUFS bar with the target
+//! line; and, where there's room, the loudness graph.
 
 use dasmeter_core::{Level, LoudnessDisplay, LoudnessMeterSettings, LufsBar, Role};
 
@@ -22,6 +23,9 @@ const TILE_MIN_WIDTH: f32 = 150.0;
 const LABEL_SPACING: f32 = 11.0;
 /// The widest a bar gets.
 const MAX_BAR_WIDTH: f32 = 26.0;
+/// The smallest loudness graph worth drawing.
+const MIN_GRAPH_WIDTH: f32 = 120.0;
+const MIN_GRAPH_HEIGHT: f32 = 48.0;
 
 /// Scale marks on the bars, in dB, kept if inside the bar range.
 const MARKS: [f32; 10] = [
@@ -51,6 +55,12 @@ pub fn draw(
         settings
             .show_true_peak
             .then_some((true_peak, display.true_peak_max, "dBTP")),
+        settings
+            .show_peak_to_loudness
+            .then_some(("PLR", display.plr, "LU")),
+        settings
+            .show_peak_to_loudness
+            .then_some(("PSR", display.psr, "LU")),
     ];
     let rows: Vec<_> = rows.into_iter().flatten().collect();
     let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
@@ -65,6 +75,8 @@ pub fn draw(
         // A short, wide area keeps its bars beside a single narrower tile.
         || (area.width >= 1.2 * area.height
             && area.width >= c.px(SINGLE_TILE_WIDTH) + bars_width);
+    let graph_wanted = settings.show_history;
+    let mut graph: Option<Area> = None;
     let (tiles, bars) = if beside {
         let tiles = Area {
             width: area.width - bars_width - gap,
@@ -81,14 +93,34 @@ pub fn draw(
         let columns = tile_columns(c, area.width, rows.len());
         let tile_rows = rows.len().div_ceil(columns) as f32;
         let wanted = tile_rows * (c.px(TILE_HEIGHT) + gap) + c.px(RATE_HEIGHT);
-        let (tiles, bars) = area.split_top(wanted.min(area.height / 2.0));
-        // The bar group sits in the middle of the width left under the tiles.
-        let width = bars_width.min(bars.width);
-        let bars = Area {
-            x: bars.x + (bars.width - width) / 2.0,
-            y: bars.y + gap,
-            width,
-            height: (bars.height - gap).max(0.0),
+        let (tiles, row) = area.split_top(wanted.min(area.height / 2.0));
+        let width = bars_width.min(row.width);
+        let graph_width = row.width - width - gap;
+        let bars = if graph_wanted
+            && graph_width >= c.px(MIN_GRAPH_WIDTH)
+            && row.height - gap >= c.px(MIN_GRAPH_HEIGHT)
+        {
+            // The loudness graph fills the width beside the bars, which go right.
+            graph = Some(Area {
+                x: row.x,
+                y: row.y + gap,
+                width: graph_width,
+                height: row.height - gap - c.px(16.0),
+            });
+            Area {
+                x: row.right() - width,
+                y: row.y + gap,
+                width,
+                height: (row.height - gap).max(0.0),
+            }
+        } else {
+            // The bar group sits in the middle of the width left under the tiles.
+            Area {
+                x: row.x + (row.width - width) / 2.0,
+                y: row.y + gap,
+                width,
+                height: (row.height - gap).max(0.0),
+            }
         };
         (tiles, bars)
     };
@@ -146,9 +178,24 @@ pub fn draw(
         );
         c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
     }
+    let below = tiles.y + tile_rows as f32 * (tile_height + gap);
     if show_rate {
-        let y = tiles.y + tile_rows as f32 * (tile_height + gap);
-        c.text(&rate, tiles.x, y, 10.0, dim, Align::Left);
+        c.text(&rate, tiles.x, below, 10.0, dim, Align::Left);
+    }
+    // Beside the bars (a wide area), the graph takes the room under the tiles.
+    if beside && graph_wanted && !shown.is_empty() {
+        let top = below + if show_rate { c.px(RATE_HEIGHT) } else { 0.0 };
+        let room = Area {
+            y: top,
+            height: tiles.bottom() - top - c.px(16.0),
+            ..tiles
+        };
+        if room.width >= c.px(MIN_GRAPH_WIDTH) && room.height >= c.px(MIN_GRAPH_HEIGHT) {
+            graph = Some(room);
+        }
+    }
+    if let Some(graph) = graph {
+        draw_graph(c, graph, settings, display);
     }
 
     // Bars: L, R, then the LUFS bar.
@@ -304,6 +351,102 @@ pub fn draw(
     );
 }
 
+/// The loudness graph: the LUFS bar's reading over the span, newest at the
+/// right, on the bars' scale, with the target and integrated lines.
+fn draw_graph(
+    c: &mut Canvas,
+    area: Area,
+    settings: &LoudnessMeterSettings,
+    display: &LoudnessDisplay,
+) {
+    let dim = c.dim();
+    c.shapes.rect(area, c.colour(Role::Grid).faded(0.2));
+    let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
+    let y_of = |db: f64| map(db as f32, range, area.bottom(), area.y).clamp(area.y, area.bottom());
+    let thin = c.px(1.0).max(1.0);
+    // A grid line every 12 dB, labelled at the left.
+    let grid = c.colour(Role::Grid).faded(0.6);
+    let mut db = (range.1 / 12.0).floor() * 12.0;
+    while db > range.0 {
+        let y = y_of(f64::from(db));
+        if y - area.y > c.px(10.0) && area.bottom() - y > c.px(4.0) {
+            c.shapes.rect(
+                Area {
+                    y,
+                    height: thin,
+                    ..area
+                },
+                grid,
+            );
+            c.text(
+                &format!("{db}"),
+                area.x + c.px(3.0),
+                y - c.px(11.0),
+                9.0,
+                dim,
+                Align::Left,
+            );
+        }
+        db -= 12.0;
+    }
+    if let Some(target) = settings.target {
+        let y = y_of(target);
+        c.shapes.line(
+            [area.x, y],
+            [area.right(), y],
+            c.stroke(1.0),
+            c.colour(Role::Text).faded(0.6),
+        );
+    }
+    if let Some(integrated) = display.integrated.db() {
+        let y = y_of(integrated);
+        c.shapes
+            .line([area.x, y], [area.right(), y], c.stroke(1.0), dim);
+        c.text(
+            "I",
+            area.right() - c.px(10.0),
+            y - c.px(12.0),
+            9.0,
+            dim,
+            Align::Left,
+        );
+    }
+    let steps = (settings.history_span.as_secs_f32() * 10.0).max(1.0);
+    let dx = area.width / steps;
+    let (normal, over) = (
+        c.colour(Role::LoudnessBar),
+        c.colour(Role::LoudnessOverTarget),
+    );
+    let stroke = c.stroke(1.5);
+    let newest = display.history.len();
+    let x_of = |i: usize| area.right() - (newest - 1 - i) as f32 * dx;
+    for (i, pair) in display.history.windows(2).enumerate() {
+        let (Some(a), Some(b)) = (pair[0].db(), pair[1].db()) else {
+            continue;
+        };
+        let colour = if settings.target.is_some_and(|t| a.max(b) > t) {
+            over
+        } else {
+            normal
+        };
+        c.shapes
+            .line([x_of(i), y_of(a)], [x_of(i + 1), y_of(b)], stroke, colour);
+    }
+    let name = match settings.lufs_bar {
+        LufsBar::ShortTerm => "S",
+        LufsBar::Momentary => "M",
+    };
+    let label = format!("{name} · {} s", settings.history_span.as_secs());
+    c.text(
+        &label,
+        area.x,
+        area.bottom() + c.px(2.0),
+        10.0,
+        dim,
+        Align::Left,
+    );
+}
+
 /// How many tile columns fit `width`: as many as fit at their narrowest, at most one per reading.
 fn tile_columns(c: &Canvas, width: f32, count: usize) -> usize {
     let fit = ((width + c.px(6.0)) / (c.px(TILE_MIN_WIDTH) + c.px(6.0))).floor() as usize;
@@ -318,7 +461,8 @@ fn priority(name: &str, bar: &str) -> u8 {
         "I" => 1,
         "TP" | "Peak" => 2,
         "M" | "S" => 3,
-        _ => 4,
+        "LRA" => 4,
+        _ => 5,
     }
 }
 

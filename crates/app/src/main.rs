@@ -139,7 +139,7 @@ fn print_readings() {
             .meters
             .iter()
             .find_map(|meter| match &meter.state {
-                MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(*display)),
+                MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(display.clone())),
                 MeterState::Live(_) => None,
                 other => Some(Err(other.clone())),
             });

@@ -8,7 +8,7 @@ use dasmeter_analysis::{
     WaveformColumn, WaveformSettings, note_name,
 };
 
-use crate::scene::LoudnessDisplay;
+use crate::scene::{Level, LoudnessDisplay};
 
 /// How the Waveform is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -67,6 +67,14 @@ pub struct LoudnessMeterSettings {
     pub show_true_peak: bool,
     /// Whether the loudness range (LRA) is shown. Default on.
     pub show_range: bool,
+    /// Whether PLR and PSR (peak to loudness) are shown. Default on.
+    pub show_peak_to_loudness: bool,
+    /// Whether the loudness graph (the LUFS bar's reading over time) is shown
+    /// where there's room. Default on.
+    pub show_history: bool,
+    /// How much time the loudness graph spans. Default 30 s.
+    #[serde(with = "dasmeter_analysis::seconds")]
+    pub history_span: Duration,
 }
 
 impl Default for LoudnessMeterSettings {
@@ -78,6 +86,9 @@ impl Default for LoudnessMeterSettings {
             bar_range: (-60.0, 0.0),
             show_true_peak: true,
             show_range: true,
+            show_peak_to_loudness: true,
+            show_history: true,
+            history_span: Duration::from_secs(30),
         }
     }
 }
@@ -429,7 +440,13 @@ fn build_view(
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {
             settings,
-            display: LoudnessDisplay::new(a.sample_rate(), &a.readings()),
+            display: {
+                let mut display = LoudnessDisplay::new(a.sample_rate(), &a.readings());
+                if settings.show_history {
+                    display.history = history(a, &settings);
+                }
+                display
+            },
         },
         (Analyser::Stereometer(a), MeterSettings::Stereometer(settings)) => {
             let mut readings = a.readings();
@@ -445,4 +462,21 @@ fn build_view(
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),
     }
+}
+
+/// The loudness graph's points: the LUFS bar's reading every 100 ms over the
+/// span, oldest first.
+fn history(a: &LoudnessAnalyser, settings: &LoudnessMeterSettings) -> Vec<Level> {
+    let steps = (settings.history_span.as_secs_f64() * 10.0).round() as usize;
+    let skip = a.history().len().saturating_sub(steps);
+    a.history()
+        .skip(skip)
+        .map(|(momentary, short_term)| {
+            let lufs = match settings.lufs_bar {
+                LufsBar::ShortTerm => short_term,
+                LufsBar::Momentary => momentary,
+            };
+            Level::from_db(lufs, crate::scene::LUFS_FLOOR)
+        })
+        .collect()
 }

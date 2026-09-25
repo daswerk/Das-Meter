@@ -216,7 +216,7 @@ impl Note {
 }
 
 /// Loudness readings as shown: in 0.1 dB steps, with anything below the floor as silence.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LoudnessDisplay {
     pub sample_rate: u32,
     /// Momentary, short-term and integrated LUFS. [`Level::Silent`] below the −70 LUFS gate.
@@ -225,6 +225,13 @@ pub struct LoudnessDisplay {
     pub integrated: Level,
     /// Loudness range in LU.
     pub range: Level,
+    /// Peak to loudness ratio (true-peak maximum − integrated) and peak to
+    /// short-term loudness ratio (last 3 s), in LU.
+    pub plr: Level,
+    pub psr: Level,
+    /// The loudness graph: the LUFS bar's reading every 100 ms, oldest first
+    /// (empty when the graph is off).
+    pub history: Vec<Level>,
     /// Highest true peak since the last reset, in dBTP.
     pub true_peak_max: Level,
     /// False when the true peak is only a sample peak (192 kHz and above).
@@ -269,6 +276,8 @@ impl Level {
 
 /// LUFS below the absolute gate (ITU-R BS.1770) show as silence.
 pub const LUFS_FLOOR: f64 = -70.0;
+/// PLR and PSR below this (in LU) can't happen with real audio: shown as none.
+const RATIO_FLOOR: f64 = -30.0;
 /// Sample levels below this show as silence.
 pub const LEVEL_FLOOR_DB: f64 = -90.0;
 
@@ -281,6 +290,9 @@ impl LoudnessDisplay {
             short_term: lufs(readings.short_term),
             integrated: lufs(readings.integrated),
             range: Level::from_db(readings.range, 0.0),
+            plr: Level::from_db(readings.plr, RATIO_FLOOR),
+            psr: Level::from_db(readings.psr, RATIO_FLOOR),
+            history: Vec::new(),
             true_peak_max: Level::from_db(readings.true_peak_max, LEVEL_FLOOR_DB),
             true_peak_oversampled: readings.true_peak_oversampled,
             left: ChannelDisplay::new(&readings.left),

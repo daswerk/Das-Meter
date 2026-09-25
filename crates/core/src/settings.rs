@@ -81,6 +81,10 @@ pub const PEAK_HOLD: (Duration, Duration) = (Duration::from_millis(100), Duratio
 pub const LOUDNESS_TARGET: (f64, f64) = (-40.0, 0.0);
 /// The Loudness Meter's RMS window.
 pub const RMS_WINDOW: (Duration, Duration) = (Duration::from_millis(50), Duration::from_secs(3));
+/// The loudness graph's span.
+pub const HISTORY_SPAN: (Duration, Duration) = (Duration::from_secs(10), Duration::from_secs(120));
+/// The loudness graph's span choices.
+pub const HISTORY_SPANS: [u64; 4] = [10, 30, 60, 120];
 /// The Loudness Meter's bar range, in dB.
 pub const LOUDNESS_BAR: (f64, f64) = (-120.0, 6.0);
 /// The Stereometer's persistence.
@@ -220,6 +224,7 @@ impl LoudnessMeterSettings {
             .map(|t| clamp_f64(t, LOUDNESS_TARGET, defaults.target.unwrap_or(-14.0)));
         let a = &mut self.analysis;
         a.rms_window = clamp_duration(a.rms_window, RMS_WINDOW);
+        self.history_span = clamp_duration(self.history_span, HISTORY_SPAN);
         a.peak_hold = clamp_hold(a.peak_hold);
         let (floor, top) = self.bar_range;
         let floor = clamp_f64(floor, LOUDNESS_BAR, defaults.bar_range.0);

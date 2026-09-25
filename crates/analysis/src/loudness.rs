@@ -5,6 +5,7 @@
 //! are computed here, per ADR 0005.
 
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use ebur128::{EbuR128, Mode};
@@ -14,6 +15,11 @@ pub const FLOOR_DB: f64 = f64::NEG_INFINITY;
 
 /// AES17 reference: a full-scale sine reads 0 dB, i.e. plain RMS + 20·log10(√2).
 const AES17_OFFSET_DB: f64 = 3.010_299_956_639_812;
+
+/// The loudness history's length in 100 ms steps: two minutes.
+pub const HISTORY_STEPS: usize = 1_200;
+/// How far back the peak in PSR looks, in 100 ms steps: the short-term window (3 s).
+const PSR_STEPS: usize = 30;
 
 /// Sample rate at and above which `ebur128` doesn't oversample true peak.
 const NO_OVERSAMPLING_RATE: u32 = 192_000;
@@ -83,6 +89,12 @@ pub struct LoudnessReadings {
     pub range: f64,
     /// The highest true peak (dBTP) of either channel since the last reset.
     pub true_peak_max: f64,
+    /// Peak to loudness ratio: the true-peak maximum minus integrated
+    /// loudness, in LU. [`f64::NEG_INFINITY`] until both exist.
+    pub plr: f64,
+    /// Peak to short-term loudness ratio: the true peak of the last 3 s minus
+    /// short-term loudness, in LU. [`f64::NEG_INFINITY`] in silence.
+    pub psr: f64,
     /// False at 192 kHz and above, where true peak isn't oversampled and is only
     /// a sample peak. The UI then labels it "Peak" instead of "TP".
     pub true_peak_oversampled: bool,
@@ -218,6 +230,12 @@ pub struct LoudnessAnalyser {
     /// whole window (3 s for short-term) on every query and moves on in
     /// 100 ms steps, so they're asked again only after that much new audio.
     lufs: Cell<Option<(Lufs, usize)>>,
+    /// Momentary and short-term LUFS every 100 ms of audio, oldest first.
+    history: VecDeque<(f64, f64)>,
+    /// Frames since the last history step, and the highest true peak (linear) in them.
+    step: (usize, f64),
+    /// The highest true peak (linear) of each of the last 3 s of steps.
+    step_peaks: VecDeque<f64>,
 }
 
 /// New audio after which the LUFS figures are asked for again: 100 ms, the
@@ -246,6 +264,9 @@ impl LoudnessAnalyser {
                 PeakHold::Infinite => None,
             },
             lufs: Cell::new(None),
+            history: VecDeque::with_capacity(HISTORY_STEPS),
+            step: (0, 0.0),
+            step_peaks: VecDeque::with_capacity(PSR_STEPS),
         }
     }
 
@@ -268,6 +289,34 @@ impl LoudnessAnalyser {
         if let Some((lufs, since)) = self.lufs.get() {
             self.lufs.set(Some((lufs, since + whole / 2)));
         }
+        // Every 100 ms of audio: a history point, and the step's true peak for PSR.
+        let block_peak = (0..2)
+            .filter_map(|channel| self.ebu.prev_true_peak(channel).ok())
+            .fold(0.0f64, f64::max);
+        self.step.0 += whole / 2;
+        self.step.1 = self.step.1.max(block_peak);
+        let refresh = lufs_refresh(self.sample_rate);
+        if self.step.0 >= refresh {
+            let value = |value: Result<f64, ebur128::Error>| value.unwrap_or(FLOOR_DB);
+            if self.history.len() == HISTORY_STEPS {
+                self.history.pop_front();
+            }
+            self.history.push_back((
+                value(self.ebu.loudness_momentary()),
+                value(self.ebu.loudness_shortterm()),
+            ));
+            if self.step_peaks.len() == PSR_STEPS {
+                self.step_peaks.pop_front();
+            }
+            self.step_peaks.push_back(self.step.1);
+            self.step = (self.step.0 - refresh, 0.0);
+        }
+    }
+
+    /// Momentary and short-term LUFS every 100 ms of audio, oldest first, for
+    /// the last [`HISTORY_STEPS`] steps. Silence reads [`f64::NEG_INFINITY`].
+    pub fn history(&self) -> impl ExactSizeIterator<Item = (f64, f64)> + '_ {
+        self.history.iter().copied()
     }
 
     /// The LUFS figures: asked of `ebur128` again after 100 ms of new audio.
@@ -293,16 +342,30 @@ impl LoudnessAnalyser {
         let true_peak = (0..2)
             .filter_map(|channel| self.ebu.true_peak(channel).ok())
             .fold(0.0f64, f64::max);
+        let db = |linear: f64| {
+            if linear > 0.0 {
+                20.0 * linear.log10()
+            } else {
+                FLOOR_DB
+            }
+        };
+        let true_peak_max = db(true_peak);
+        let recent_peak = db(self.step_peaks.iter().copied().fold(0.0, f64::max));
+        let ratio = |peak: f64, loudness: f64| {
+            if peak.is_finite() && loudness.is_finite() {
+                peak - loudness
+            } else {
+                FLOOR_DB
+            }
+        };
         LoudnessReadings {
             momentary: lufs.momentary,
             short_term: lufs.short_term,
             integrated: lufs.integrated,
             range: lufs.range,
-            true_peak_max: if true_peak > 0.0 {
-                20.0 * true_peak.log10()
-            } else {
-                FLOOR_DB
-            },
+            true_peak_max,
+            plr: ratio(true_peak_max, lufs.integrated),
+            psr: ratio(recent_peak, lufs.short_term),
             true_peak_oversampled: self.sample_rate < NO_OVERSAMPLING_RATE,
             left: self.channels[0].levels(self.settings.rms_mode),
             right: self.channels[1].levels(self.settings.rms_mode),
@@ -315,6 +378,9 @@ impl LoudnessAnalyser {
     pub fn reset(&mut self) {
         self.ebu.reset();
         self.lufs.set(None);
+        self.history.clear();
+        self.step = (0, 0.0);
+        self.step_peaks.clear();
         for channel in &mut self.channels {
             channel.reset_maxima();
         }

@@ -320,3 +320,89 @@ fn the_rms_window_is_configurable() {
     analyser.process(&both(&silence(frames(rate, 0.06))));
     assert_eq!(analyser.readings().left.rms, f64::NEG_INFINITY);
 }
+
+#[test]
+fn the_history_has_a_point_every_100_ms() {
+    for rate in RATES {
+        let analyser = analyse(
+            rate,
+            LoudnessSettings::default(),
+            &stereo_sine(rate, -23.0, 5.0),
+        );
+        let history: Vec<(f64, f64)> = analyser.history().collect();
+        // 512-frame blocks round each step up to the next block.
+        assert!(
+            (48..=50).contains(&history.len()),
+            "{rate} Hz: {}",
+            history.len()
+        );
+        let (momentary, short_term) = *history.last().unwrap();
+        assert_near("history momentary", rate, momentary, -23.0, LUFS_TOLERANCE);
+        assert_near(
+            "history short-term",
+            rate,
+            short_term,
+            -23.0,
+            LUFS_TOLERANCE,
+        );
+    }
+}
+
+#[test]
+fn the_history_keeps_two_minutes_and_a_reset_clears_it() {
+    let rate = 48_000;
+    let mut analyser = analyse(
+        rate,
+        LoudnessSettings::default(),
+        &stereo_sine(rate, -23.0, 125.0),
+    );
+    assert_eq!(
+        analyser.history().len(),
+        dasmeter_analysis::loudness::HISTORY_STEPS
+    );
+    analyser.reset();
+    assert_eq!(analyser.history().len(), 0);
+}
+
+#[test]
+fn a_sine_has_no_headroom_between_peak_and_loudness() {
+    // A stereo sine at X dBFS reads X LUFS with a true peak of X dBTP: PLR and PSR ≈ 0.
+    for rate in [44_100, 48_000] {
+        let readings = analyse(
+            rate,
+            LoudnessSettings::default(),
+            &stereo_sine(rate, -18.0, 10.0),
+        )
+        .readings();
+        assert_near("PLR", rate, readings.plr, 0.0, 0.3);
+        assert_near("PSR", rate, readings.psr, 0.0, 0.3);
+    }
+}
+
+#[test]
+fn a_quiet_signal_with_loud_clicks_has_a_high_plr() {
+    let rate = 48_000;
+    // A −30 dBFS sine with a −6 dBFS click every second.
+    let mut audio = stereo_sine(rate, -30.0, 10.0);
+    for second in 0..10 {
+        let at = 2 * (second * rate as usize + 100);
+        audio[at] = 0.5;
+        audio[at + 1] = 0.5;
+    }
+    let readings = analyse(rate, LoudnessSettings::default(), &audio).readings();
+    assert!(readings.plr > 20.0, "PLR {}", readings.plr);
+    assert!(readings.psr > 20.0, "PSR {}", readings.psr);
+}
+
+#[test]
+fn silence_has_no_ratios() {
+    let rate = 48_000;
+    let readings = analyse(
+        rate,
+        LoudnessSettings::default(),
+        &both(&silence(frames(rate, 5.0))),
+    )
+    .readings();
+    assert_eq!(readings.plr, f64::NEG_INFINITY);
+    assert_eq!(readings.psr, f64::NEG_INFINITY);
+}
