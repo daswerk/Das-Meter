@@ -8,7 +8,9 @@ use super::shapes::Area;
 use super::{Canvas, map};
 
 /// Scale marks on the bars, in dB, kept if inside the bar range.
-const MARKS: [f32; 10] = [0.0, -6.0, -12.0, -18.0, -24.0, -30.0, -36.0, -48.0, -60.0, -72.0];
+const MARKS: [f32; 10] = [
+    0.0, -6.0, -12.0, -18.0, -24.0, -30.0, -36.0, -48.0, -60.0, -72.0,
+];
 
 pub fn draw(
     c: &mut Canvas,
@@ -54,9 +56,19 @@ pub fn draw(
     let grid = c.colour(Role::Grid);
     let thin = c.px(1.0).max(1.0);
 
-    for db in MARKS.into_iter().filter(|&db| db >= range.0 && db <= range.1) {
+    for db in MARKS
+        .into_iter()
+        .filter(|&db| db >= range.0 && db <= range.1)
+    {
         let y = y_of(f64::from(db));
-        c.text(&format!("{db}"), bars.x, y - c.px(6.0), 9.0, dim, Align::Left);
+        c.text(
+            &format!("{db}"),
+            bars.x,
+            y - c.px(6.0),
+            9.0,
+            dim,
+            Align::Left,
+        );
         let tick = Area {
             x: left - c.px(3.0),
             y,
@@ -87,7 +99,8 @@ pub fn draw(
         }
         if let Some(db) = levels.peak.db() {
             let y = y_of(db);
-            c.shapes.line([x, y], [x + width, y], c.px(1.5), peak.faded(0.7));
+            c.shapes
+                .line([x, y], [x + width, y], c.px(1.5), peak.faded(0.7));
         }
         if let Some(db) = levels.peak_hold.db() {
             let y = y_of(db);
@@ -136,8 +149,12 @@ pub fn draw(
         } else {
             text
         };
-        c.shapes
-            .line([x - c.px(3.0), y], [x + width + c.px(3.0), y], c.px(2.0), colour);
+        c.shapes.line(
+            [x - c.px(3.0), y],
+            [x + width + c.px(3.0), y],
+            c.px(2.0),
+            colour,
+        );
         let label = format!("{target}");
         c.text(&label, x + width, y - c.px(14.0), 9.0, colour, Align::Right);
     }
@@ -145,7 +162,14 @@ pub fn draw(
         LufsBar::ShortTerm => "S",
         LufsBar::Momentary => "M",
     };
-    c.text(name, x + width / 2.0, names.y + c.px(2.0), 10.0, dim, Align::Centre);
+    c.text(
+        name,
+        x + width / 2.0,
+        names.y + c.px(2.0),
+        10.0,
+        dim,
+        Align::Centre,
+    );
 }
 
 /// A reading as shown: one decimal, or "-inf" for silence.

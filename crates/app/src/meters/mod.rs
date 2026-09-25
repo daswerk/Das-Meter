@@ -112,11 +112,25 @@ impl MeterRenderer {
         match state {
             MeterState::Starting => {
                 let dim = c.dim();
-                c.text("Starting System Capture…", inner.x, inner.y, 13.0, dim, Align::Left);
+                c.text(
+                    "Starting System Capture…",
+                    inner.x,
+                    inner.y,
+                    13.0,
+                    dim,
+                    Align::Left,
+                );
             }
             MeterState::Unavailable(reason) => {
                 let (text_colour, dim) = (c.colour(Role::Text), c.dim());
-                c.text("System Capture is unavailable", inner.x, inner.y, 13.0, text_colour, Align::Left);
+                c.text(
+                    "System Capture is unavailable",
+                    inner.x,
+                    inner.y,
+                    13.0,
+                    text_colour,
+                    Align::Left,
+                );
                 let y = inner.y + c.px(20.0);
                 c.text(reason, inner.x, y, 11.0, dim, Align::Left);
             }

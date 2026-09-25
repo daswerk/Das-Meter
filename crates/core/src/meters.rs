@@ -201,7 +201,9 @@ impl Meter {
         let same_kind = std::mem::discriminant(&settings) == std::mem::discriminant(&self.settings);
         self.settings = settings;
         self.view = None;
-        let Some(sample_rate) = sample_rate else { return };
+        let Some(sample_rate) = sample_rate else {
+            return;
+        };
         match (&mut self.analyser, settings) {
             (Some(Analyser::Waveform(a)), MeterSettings::Waveform(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Spectrum(a)), MeterSettings::Spectrum(s)) => {
@@ -276,9 +278,10 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Loudness(s) => {
             Analyser::Loudness(Box::new(LoudnessAnalyser::new(sample_rate, s.analysis)))
         }
-        MeterSettings::Stereometer(s) => Analyser::Stereometer(Box::new(
-            StereometerAnalyser::new(sample_rate, stereo_analysis(sample_rate, s)),
-        )),
+        MeterSettings::Stereometer(s) => Analyser::Stereometer(Box::new(StereometerAnalyser::new(
+            sample_rate,
+            stereo_analysis(sample_rate, s),
+        ))),
     }
 }
 

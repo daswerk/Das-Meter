@@ -19,8 +19,7 @@ pub use meters::{
     StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use scene::{
-    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterScene, MeterState, Note, Scene,
-    WindowScene,
+    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterScene, MeterState, Note, Scene, WindowScene,
 };
 pub use theme::{Colour, Palette, Role};
 

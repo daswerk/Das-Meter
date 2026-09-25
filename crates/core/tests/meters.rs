@@ -107,12 +107,22 @@ fn each_meter_carries_its_draw_data() {
     };
     assert_eq!(traces.len(), 1, "Mono by default");
     // Two seconds at 200 columns per second.
-    assert!((398..=400).contains(&traces[0].len()), "{}", traces[0].len());
+    assert!(
+        (398..=400).contains(&traces[0].len()),
+        "{}",
+        traces[0].len()
+    );
     let newest = traces[0].last().unwrap();
     assert!((newest.max - 0.251).abs() < 0.01, "peak {}", newest.max);
-    assert!(newest.mid > newest.low && newest.mid > newest.high, "1 kHz is mid band");
+    assert!(
+        newest.mid > newest.low && newest.mid > newest.high,
+        "1 kHz is mid band"
+    );
 
-    let MeterView::Spectrum { spectrum, range, .. } = &views[SPECTRUM] else {
+    let MeterView::Spectrum {
+        spectrum, range, ..
+    } = &views[SPECTRUM]
+    else {
         unreachable!()
     };
     assert_eq!(*range, (20.0, 20_000.0));
@@ -121,7 +131,10 @@ fn each_meter_carries_its_draw_data() {
         .max_by(|&a, &b| levels[a].total_cmp(&levels[b]))
         .unwrap();
     let peak = spectrum.frequencies[loudest];
-    assert!((900.0..1_100.0).contains(&peak), "Spectrum peaks at {peak} Hz");
+    assert!(
+        (900.0..1_100.0).contains(&peak),
+        "Spectrum peaks at {peak} Hz"
+    );
 
     let MeterView::Stereometer {
         readings, points, ..
@@ -186,7 +199,10 @@ fn changing_a_setting_changes_the_scene() {
     };
     assert_eq!(settings.analysis.channel_view, ChannelView::LeftRight);
     assert_eq!(traces.len(), 2, "L above, R below");
-    assert!(traces[1].last().unwrap().max.abs() < 1e-6, "right is silent");
+    assert!(
+        traces[1].last().unwrap().max.abs() < 1e-6,
+        "right is silent"
+    );
 
     let MeterView::Spectrum {
         settings, spectrum, ..
@@ -194,9 +210,15 @@ fn changing_a_setting_changes_the_scene() {
     else {
         unreachable!()
     };
-    assert!(matches!(settings.analysis.style, SpectrumStyle::Bars { .. }));
+    assert!(matches!(
+        settings.analysis.style,
+        SpectrumStyle::Bars { .. }
+    ));
     let bands = spectrum.frequencies.len();
-    assert!((28..=31).contains(&bands), "{bands} third-octave bands instead of 512 line points");
+    assert!(
+        (28..=31).contains(&bands),
+        "{bands} third-octave bands instead of 512 line points"
+    );
 
     let MeterView::Stereometer {
         settings, readings, ..
@@ -245,18 +267,28 @@ fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
     };
     let cursor = cursor.expect("a readout under the cursor");
     assert!((cursor.x - 0.5).abs() < 1e-6);
-    assert!((cursor.frequency - 632.5).abs() < 1.0, "{}", cursor.frequency);
+    assert!(
+        (cursor.frequency - 632.5).abs() < 1.0,
+        "{}",
+        cursor.frequency
+    );
     assert_eq!(cursor.note.unwrap().to_string(), "D#5");
 
     // Over another Meter, or outside the window: no readout.
     app.send(Event::Pointer(Some([0.9, 0.5])));
     let views = app.draw();
-    assert!(matches!(views[SPECTRUM], MeterView::Spectrum { cursor: None, .. }));
+    assert!(matches!(
+        views[SPECTRUM],
+        MeterView::Spectrum { cursor: None, .. }
+    ));
     app.send(Event::Pointer(Some([0.375, 0.5])));
     app.draw();
     app.send(Event::Pointer(None));
     let views = app.draw();
-    assert!(matches!(views[SPECTRUM], MeterView::Spectrum { cursor: None, .. }));
+    assert!(matches!(
+        views[SPECTRUM],
+        MeterView::Spectrum { cursor: None, .. }
+    ));
 }
 
 #[test]
@@ -269,5 +301,8 @@ fn colours_come_from_the_palette_roles() {
         palette[Role::CorrelationPositive],
         palette[Role::CorrelationNegative]
     );
-    assert_ne!(palette[Role::LoudnessBar], palette[Role::LoudnessOverTarget]);
+    assert_ne!(
+        palette[Role::LoudnessBar],
+        palette[Role::LoudnessOverTarget]
+    );
 }

@@ -176,7 +176,14 @@ impl Painter {
                 width: (area.width - gap).max(1.0),
                 height: (area.height - 2.0 * gap).max(1.0),
             };
-            renderer.prepare(&self.gpu, &mut self.text, area, scale, palette, &meter.state);
+            renderer.prepare(
+                &self.gpu,
+                &mut self.text,
+                area,
+                scale,
+                palette,
+                &meter.state,
+            );
         }
         let window = Area {
             x: 0.0,
@@ -353,11 +360,14 @@ fn print_readings() {
         }
         let Some(scene) = core.scene() else { continue };
         let notes: Vec<_> = scene.notes.iter().map(|note| note.text()).collect();
-        let loudness = scene.windows[0].meters.iter().find_map(|meter| match &meter.state {
-            MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(*display)),
-            MeterState::Live(_) => None,
-            other => Some(Err(other.clone())),
-        });
+        let loudness = scene.windows[0]
+            .meters
+            .iter()
+            .find_map(|meter| match &meter.state {
+                MeterState::Live(MeterView::Loudness { display, .. }) => Some(Ok(*display)),
+                MeterState::Live(_) => None,
+                other => Some(Err(other.clone())),
+            });
         match loudness {
             Some(Ok(d)) => {
                 let show = |level: dasmeter_core::Level| {

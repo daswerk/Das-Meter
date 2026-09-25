@@ -170,7 +170,10 @@ impl Shapes {
         if length == 0.0 {
             return;
         }
-        let (nx, ny) = (-dy / length * thickness / 2.0, dx / length * thickness / 2.0);
+        let (nx, ny) = (
+            -dy / length * thickness / 2.0,
+            dx / length * thickness / 2.0,
+        );
         self.quad(
             [
                 [from[0] + nx, from[1] + ny],

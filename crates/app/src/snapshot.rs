@@ -97,7 +97,8 @@ pub fn render(path: &str) -> Result<(), String> {
     let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
     for y in 0..HEIGHT as usize {
         let start = y * row as usize;
-        for pixel in pixels[start..start + WIDTH as usize * 4].chunks_exact(4) {
+        let (line, _) = pixels[start..start + WIDTH as usize * 4].as_chunks::<4>();
+        for pixel in line {
             ppm.extend_from_slice(&pixel[..3]);
         }
     }
