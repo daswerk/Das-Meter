@@ -92,8 +92,9 @@ impl Default for ThemeRef {
 pub struct PresetData {
     pub version: u32,
     pub name: String,
-    /// Which built-in this was copied from, for Reset to built-in.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Which built-in this was copied from, for Reset to built-in. (Its own
+    /// default: a file without it is no built-in, whatever the struct default.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built_in: Option<BuiltIn>,
     pub mode: LayoutMode,
     pub listen_to: ListenTo,

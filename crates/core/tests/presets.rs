@@ -432,3 +432,14 @@ fn print_a_preset_file() {
         PresetData::built_in(dasmeter_core::BuiltIn::Mastering).to_toml()
     );
 }
+
+#[test]
+fn a_saved_copy_isnt_taken_for_a_built_in_after_relaunch() {
+    let mut app = App::first_launch();
+    app.send(Event::SavePresetAsNew);
+    app.flush();
+    let mut app = app.relaunch();
+    let list = app.scene().presets.list;
+    let copy = list.iter().find(|p| p.name == "Bar (2)").unwrap();
+    assert!(!copy.built_in);
+}
