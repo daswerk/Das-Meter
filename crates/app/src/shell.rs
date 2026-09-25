@@ -25,7 +25,7 @@ use crate::Audio;
 use crate::gpu::{Gpu, WindowSurface};
 use crate::painter::{Painter, UiPaint};
 use crate::send_plugins::{LIST_EVERY, SendPluginInput};
-use crate::ui::{Surface, Ui};
+use crate::ui::{Request, Surface, Ui};
 
 pub fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
@@ -220,6 +220,7 @@ fn ui_view(scene: &Scene) -> Scene {
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
+        presets: scene.presets.clone(),
         listen_to: scene.listen_to,
         mode: scene.mode,
         send_plugins: scene.send_plugins.clone(),
@@ -490,7 +491,7 @@ impl Shell {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut actions = Vec::new();
+        let mut actions = crate::ui::Actions::new();
         let ui = self.core.scene().map(|scene| {
             let input = app.egui.take_egui_input(&app.window);
             let (mut output, done) = app.ui.run(input, scene, app.role.surface());
@@ -537,8 +538,20 @@ impl Shell {
                 }
             }
         }
+        let requests = std::mem::take(&mut actions.requests);
         for action in actions {
             self.core.handle(action, now);
+        }
+        for request in requests {
+            match request {
+                Request::RenamePreset { index, name } => {
+                    self.core
+                        .handle(Event::RenamePreset { index, name: &name }, now);
+                }
+                Request::ShowPresetInFolder { file_name } => {
+                    crate::preset_files::show_in_folder(&file_name);
+                }
+            }
         }
     }
 
@@ -573,6 +586,14 @@ impl Shell {
         self.theme_folder = signature;
         let files = crate::theme_files::read();
         self.core.handle(Event::ThemeFiles(&files), now);
+    }
+
+    /// Carries out the Preset writes, trashing and settings the core asked for.
+    fn save_presets(&mut self) {
+        let ops = self.core.take_preset_ops();
+        if !ops.is_empty() {
+            crate::preset_files::apply(ops);
+        }
     }
 
     /// Saves Theme edits the core made, and remembers the folder as written.
@@ -738,6 +759,15 @@ impl ApplicationHandler for Shell {
         }
         self.started = true;
         self.scan_themes(Duration::ZERO);
+        let (files, settings) = crate::preset_files::read();
+        self.core.handle(
+            Event::PresetFiles {
+                files: &files,
+                settings: settings.as_deref(),
+            },
+            Duration::ZERO,
+        );
+        self.save_presets();
         self.report_display();
         // A first scene, so the Bar opens where it belongs.
         let now = self.now();
@@ -749,6 +779,13 @@ impl ApplicationHandler for Shell {
             let wake = self.wake.clone();
             self.main_menu = Some(crate::main_menu::MainMenu::install(move || wake()));
         }
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // A change still waiting for its auto-save pause is saved now.
+        self.core.save_pending();
+        self.save_presets();
+        self.save_themes();
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _wake: ()) {
@@ -931,8 +968,12 @@ impl ApplicationHandler for Shell {
                 float_on_top,
                 clicked,
             );
+            if let Some(scene) = self.core.scene() {
+                menu.show_presets(&scene.presets, clicked);
+            }
         }
         self.save_themes();
+        self.save_presets();
         if now >= self.theme_scan_at {
             self.scan_themes(now);
         }

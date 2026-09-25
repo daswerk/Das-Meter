@@ -629,6 +629,11 @@ impl AppCore {
         }
     }
 
+    /// Saves a pending change now, as the app quits.
+    pub fn save_pending(&mut self) {
+        self.save_now();
+    }
+
     /// Saves the current state into the current Preset if it changed.
     fn save_now(&mut self) {
         if self.save_after.take().is_some() || self.touched {

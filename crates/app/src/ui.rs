@@ -22,7 +22,55 @@ use dasmeter_core::{
 use egui::{Color32, RichText, Slider};
 
 /// What the user did this frame, as app core events.
-pub type Actions = Vec<Event<'static>>;
+#[derive(Default)]
+pub struct Actions {
+    /// App core events.
+    pub events: Vec<Event<'static>>,
+    /// Things the shell does itself, or events that carry typed text.
+    pub requests: Vec<Request>,
+}
+
+/// What the egui layer asks of the shell besides core events.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    RenamePreset {
+        index: usize,
+        name: String,
+    },
+    /// Show a Preset file in Finder (Explorer on Windows).
+    ShowPresetInFolder {
+        file_name: String,
+    },
+}
+
+impl Actions {
+    pub fn new() -> Actions {
+        Actions::default()
+    }
+}
+
+impl std::ops::Deref for Actions {
+    type Target = Vec<Event<'static>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.events
+    }
+}
+
+impl std::ops::DerefMut for Actions {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.events
+    }
+}
+
+impl IntoIterator for Actions {
+    type Item = Event<'static>;
+    type IntoIter = std::vec::IntoIter<Event<'static>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.events.into_iter()
+    }
+}
 
 /// What a window's egui layer shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1127,8 +1175,123 @@ fn meter_colours(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: 
         });
 }
 
+/// The Presets: the list to switch and order, and what to do with the current one.
+fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    let presets = &scene.presets;
+    let count = presets.list.len();
+    for (i, preset) in presets.list.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let shortcut = if i < 9 {
+                format!("⌘{} ", i + 1)
+            } else {
+                "    ".to_owned()
+            };
+            ui.label(RichText::new(shortcut).weak().monospace());
+            let current = presets.current == Some(i);
+            let label = if preset.built_in {
+                format!("{} (built-in)", preset.name)
+            } else {
+                preset.name.clone()
+            };
+            let row = ui.add_enabled(!preset.broken, egui::Button::selectable(current, label));
+            if row.clicked() && !current {
+                actions.push(Event::SwitchPreset { index: i });
+            }
+            if preset.broken && ui.small_button("Show in Finder").clicked() {
+                actions.requests.push(Request::ShowPresetInFolder {
+                    file_name: preset.file_name.clone(),
+                });
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(i + 1 < count, egui::Button::new("↓").small())
+                    .clicked()
+                {
+                    actions.push(Event::MovePreset { from: i, to: i + 1 });
+                }
+                if ui
+                    .add_enabled(i > 0, egui::Button::new("↑").small())
+                    .clicked()
+                {
+                    actions.push(Event::MovePreset { from: i, to: i - 1 });
+                }
+            });
+        });
+    }
+    let Some(current) = presets.current else {
+        return;
+    };
+    let info = &presets.list[current];
+    ui.separator();
+    // Rename: the typed name is kept in egui's memory until it's applied.
+    let id = egui::Id::new(("preset name", &info.file_name));
+    let mut name = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| info.name.clone());
+    ui.horizontal(|ui| {
+        let field = ui.add_enabled(
+            !info.read_only,
+            egui::TextEdit::singleline(&mut name).desired_width(180.0),
+        );
+        let rename = ui.add_enabled(
+            !info.read_only && name.trim() != info.name,
+            egui::Button::new("Rename"),
+        );
+        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (rename.clicked() || entered) && name.trim() != info.name {
+            actions.requests.push(Request::RenamePreset {
+                index: current,
+                name: name.trim().to_owned(),
+            });
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(id, name));
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(presets.can_revert, egui::Button::new("Revert"))
+            .on_hover_text("Back to how this Preset was when you opened it")
+            .clicked()
+        {
+            actions.push(Event::RevertPreset);
+        }
+        if ui.button("Save as new").clicked() {
+            actions.push(Event::SavePresetAsNew);
+        }
+        if ui.button("Duplicate").clicked() {
+            actions.push(Event::DuplicatePreset { index: current });
+        }
+        if info.built_in && ui.button("Reset to built-in").clicked() {
+            actions.push(Event::ResetPreset { index: current });
+        }
+        let readable = presets.list.iter().filter(|p| !p.broken).count();
+        if ui
+            .add_enabled(readable > 1, egui::Button::new("Delete"))
+            .on_hover_text("Moves the file to the Trash")
+            .clicked()
+        {
+            actions.push(Event::DeletePreset { index: current });
+        }
+        if ui.button("Show in Finder").clicked() {
+            actions.requests.push(Request::ShowPresetInFolder {
+                file_name: info.file_name.clone(),
+            });
+        }
+    });
+    if info.read_only {
+        ui.label(
+            RichText::new(
+                "Made by a newer Das-Meter: changes aren't saved. Save as new to keep them.",
+            )
+            .weak(),
+        );
+    }
+}
+
 /// App settings, the Theme, the Bar, then every setting of every Meter.
 fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    egui::CollapsingHeader::new("Presets")
+        .default_open(true)
+        .show(ui, |ui| preset_settings(ui, scene, actions));
     egui::CollapsingHeader::new("App")
         .default_open(true)
         .show(ui, |ui| {

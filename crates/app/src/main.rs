@@ -12,6 +12,7 @@ mod macos;
 mod main_menu;
 mod meters;
 mod painter;
+mod preset_files;
 mod send_plugins;
 mod shell;
 mod snapshot;

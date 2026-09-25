@@ -5,7 +5,7 @@
 use std::sync::mpsc;
 
 use dasmeter_core::settings::HELP_URL;
-use dasmeter_core::{Event, LayoutMode, ListenTo};
+use dasmeter_core::{Event, LayoutMode, ListenTo, PresetScene};
 use muda::accelerator::{Accelerator, Code, Modifiers};
 use muda::{
     AboutMetadata, CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
@@ -28,6 +28,11 @@ pub struct MainMenu {
     float_on_top: CheckMenuItem,
     bar_mode: CheckMenuItem,
     window_mode: CheckMenuItem,
+    presets: Submenu,
+    preset_items: Vec<CheckMenuItem>,
+    revert: MenuItem,
+    save_as_new: MenuItem,
+    shown_presets: Option<PresetScene>,
     clicks: mpsc::Receiver<MenuId>,
     shown: Option<(ListenTo, LayoutMode, bool)>,
 }
@@ -85,8 +90,12 @@ impl MainMenu {
         )
         .expect("build the Window menu");
         let help_menu = Submenu::with_items("Help", true, &[&help]).expect("build the Help menu");
-        let menu =
-            Menu::with_items(&[&app, &listen_to, &window, &help_menu]).expect("build the menu bar");
+        // Filled from the Preset list; see `show_presets`.
+        let presets = Submenu::new("Presets", true);
+        let revert = MenuItem::new("Revert Preset", false, None);
+        let save_as_new = MenuItem::new("Save as New Preset", true, None);
+        let menu = Menu::with_items(&[&app, &listen_to, &presets, &window, &help_menu])
+            .expect("build the menu bar");
         menu.init_for_nsapp();
         window.set_as_windows_menu_for_nsapp();
         help_menu.set_as_help_menu_for_nsapp();
@@ -103,6 +112,11 @@ impl MainMenu {
             send_plugins,
             help: help.id().clone(),
             float_on_top,
+            presets,
+            preset_items: Vec::new(),
+            revert,
+            save_as_new,
+            shown_presets: None,
             bar_mode,
             window_mode,
             clicks,
@@ -129,6 +143,12 @@ impl MainMenu {
                     Some(Command::Core(Event::SetMode(LayoutMode::Bar)))
                 } else if id == *self.window_mode.id() {
                     Some(Command::Core(Event::SetMode(LayoutMode::Window)))
+                } else if id == *self.revert.id() {
+                    Some(Command::Core(Event::RevertPreset))
+                } else if id == *self.save_as_new.id() {
+                    Some(Command::Core(Event::SavePresetAsNew))
+                } else if let Some(index) = self.preset_items.iter().position(|i| *i.id() == id) {
+                    Some(Command::Core(Event::SwitchPreset { index }))
                 } else if id == self.help {
                     Some(Command::Open(HELP_URL))
                 } else {
@@ -136,6 +156,54 @@ impl MainMenu {
                 }
             })
             .collect()
+    }
+
+    /// Lists the Presets (⌘1–9 for the first nine), ticks the current one, and
+    /// offers Revert when there's something to revert.
+    pub fn show_presets(&mut self, presets: &PresetScene, force: bool) {
+        if self.shown_presets.as_ref() == Some(presets) && !force {
+            return;
+        }
+        let same_list = self
+            .shown_presets
+            .as_ref()
+            .is_some_and(|shown| shown.list == presets.list);
+        self.shown_presets = Some(presets.clone());
+        if !same_list {
+            while self.presets.remove_at(0).is_some() {}
+            const DIGITS: [Code; 9] = [
+                Code::Digit1,
+                Code::Digit2,
+                Code::Digit3,
+                Code::Digit4,
+                Code::Digit5,
+                Code::Digit6,
+                Code::Digit7,
+                Code::Digit8,
+                Code::Digit9,
+            ];
+            self.preset_items = presets
+                .list
+                .iter()
+                .enumerate()
+                .map(|(i, preset)| {
+                    let shortcut = DIGITS
+                        .get(i)
+                        .map(|&code| Accelerator::new(Modifiers::META, code));
+                    CheckMenuItem::new(&preset.name, !preset.broken, false, shortcut)
+                })
+                .collect();
+            for item in &self.preset_items {
+                let _ = self.presets.append(item);
+            }
+            let _ = self.presets.append(&PredefinedMenuItem::separator());
+            let _ = self.presets.append(&self.revert);
+            let _ = self.presets.append(&self.save_as_new);
+        }
+        for (i, item) in self.preset_items.iter().enumerate() {
+            item.set_checked(presets.current == Some(i));
+        }
+        self.revert.set_enabled(presets.can_revert);
     }
 
     /// Ticks the Listen to item the app core is on, and Float on Top when the
