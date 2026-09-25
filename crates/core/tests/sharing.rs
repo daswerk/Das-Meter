@@ -130,7 +130,7 @@ fn display_serials_are_stripped() {
         position: [1512.0, 0.0],
     };
     let mut data = PresetData::built_in(BuiltIn::Bar);
-    data.bar.display = Some(monitor(0x38_4b_31_32));
+    data.bar.display = Some(monitor(0x384b_3132));
     data.window.display = Some(monitor(0x0bad_cafe));
     let text = SharedPreset::new(data, Vec::new()).to_toml();
     let (read, _) = SharedPreset::from_toml(&text).unwrap();
