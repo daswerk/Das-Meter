@@ -34,6 +34,16 @@ jobs:
         run: cargo test --workspace --locked
       - name: Microbenchmarks
         run: cargo bench --workspace --locked
+      - name: Send Plugin bundles (CLAP and VST3, plus AU on macOS)
+        shell: bash
+        run: scripts/bundle-send-plugin.sh
+      - name: Validate the AU
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "target/plugins/Das-Meter Send.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aufx DmSd DsWk
 
   dependencies:
     name: Licences and dependencies

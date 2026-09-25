@@ -10,9 +10,10 @@ version = 2
 yanked = "deny"
 ignore = [
     # ttf-parser is unmaintained (no fix, no vulnerability). It comes in through
-    # glyphon's font database and winit's Linux decorations, with no maintained
-    # release of either that avoids it yet. Drop this when they move to skrifa.
-    { id = "RUSTSEC-2026-0192", reason = "unmaintained, no alternative in glyphon 0.12 / winit 0.30" },
+    # glyphon's font database, winit's Linux decorations and egui's font
+    # rendering (ab_glyph, in the Send Plugin window), with no maintained
+    # release of any that avoids it yet. Drop this when they move to skrifa.
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained, no alternative in glyphon 0.12 / winit 0.30 / egui 0.33" },
 ]
 
 [licenses]
@@ -44,3 +45,8 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# The Send Plugin's window: neither crate is published on crates.io.
+allow-git = [
+    "https://github.com/RustAudio/baseview.git",
+    "https://github.com/BillyDM/egui-baseview.git",
+]
