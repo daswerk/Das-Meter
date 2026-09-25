@@ -218,9 +218,11 @@ impl MeterRenderer {
                 }
             }
             MeterState::Live(view) => match view {
-                MeterView::Waveform { settings, traces } => {
-                    waveform::draw(&mut c, inner, settings, traces)
-                }
+                MeterView::Waveform {
+                    settings,
+                    traces,
+                    completed,
+                } => waveform::draw(&mut c, inner, settings, traces, *completed),
                 MeterView::Spectrum {
                     settings,
                     spectrum,

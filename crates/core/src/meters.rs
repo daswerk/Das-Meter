@@ -198,6 +198,8 @@ pub enum MeterView {
         settings: WaveformMeterSettings,
         /// Completed columns per trace, oldest first; the newest sits at the right edge.
         traces: Vec<Vec<WaveformColumn>>,
+        /// Columns completed since the start: the newest column's number plus one.
+        completed: u64,
     },
     Spectrum {
         settings: SpectrumMeterSettings,
@@ -387,6 +389,7 @@ fn build_view(
             traces: (0..a.traces())
                 .map(|trace| a.columns(trace).copied().collect())
                 .collect(),
+            completed: a.completed(),
         },
         (Analyser::Spectrum(a), MeterSettings::Spectrum(settings)) => {
             let nyquist = a.sample_rate() as f32 / 2.0;

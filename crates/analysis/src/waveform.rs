@@ -212,6 +212,8 @@ pub struct WaveformAnalyser {
     traces: [TraceState; 2],
     /// Completed columns per trace, oldest first.
     columns: [VecDeque<WaveformColumn>; 2],
+    /// Columns completed since the start: the newest column's number plus one.
+    completed: u64,
 }
 
 impl WaveformAnalyser {
@@ -230,6 +232,7 @@ impl WaveformAnalyser {
                 VecDeque::with_capacity(capacity),
                 VecDeque::with_capacity(capacity),
             ],
+            completed: 0,
         }
     }
 
@@ -287,6 +290,7 @@ impl WaveformAnalyser {
                 }
                 self.column_frames = 0;
                 self.column_end += self.frames_per_column;
+                self.completed += 1;
             }
         }
     }
@@ -294,6 +298,14 @@ impl WaveformAnalyser {
     /// Number of traces the Channel View draws.
     pub fn traces(&self) -> usize {
         self.settings.channel_view.traces()
+    }
+
+    /// Columns completed since the start (or the last restart). With the
+    /// columns' count it numbers each column in time, so a renderer can merge
+    /// them into pixels by time rather than by age, and merged pixels keep
+    /// their content as they scroll.
+    pub fn completed(&self) -> u64 {
+        self.completed
     }
 
     /// Completed columns of one trace, oldest first. At most [`WaveformSettings::columns`].

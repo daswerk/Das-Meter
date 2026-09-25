@@ -13,6 +13,7 @@ pub fn draw(
     area: Area,
     settings: &WaveformMeterSettings,
     traces: &[Vec<WaveformColumn>],
+    completed: u64,
 ) {
     let names: &[&str] = match settings.analysis.channel_view {
         ChannelView::Mono => &[""],
@@ -49,7 +50,7 @@ pub fn draw(
         // more to draw than the Meter is wide.
         let pixels = area.width.ceil().max(1.0) as usize;
         let per_pixel = (1.0 / column_width).max(1.0);
-        let merged = merge(columns, capacity, per_pixel, pixels);
+        let merged = merge(columns, completed, capacity, per_pixel, pixels);
         let width = column_width.max(1.0);
         for (right_edge, column) in merged {
             let x = area.right() - right_edge * column_width;
@@ -96,23 +97,34 @@ fn envelope(x: f32, width: f32, top: f32, bottom: f32) -> Area {
     }
 }
 
-/// Merges columns into groups of `per_pixel`, counted from the newest. Returns
-/// each group's distance from the right edge (in columns) and its merged column.
+/// Merges columns into groups of `per_pixel` by their number in time (not by
+/// age), so a group keeps the same columns, and so the same height, while it
+/// scrolls; grouping by age moved every boundary with each new column and made
+/// the whole Waveform shimmer. Groups move a whole group (a pixel) at a time.
+/// Returns each group's distance from the right edge (in columns) and its
+/// merged column. `completed` is the newest column's number plus one.
 fn merge(
     columns: &[WaveformColumn],
+    completed: u64,
     capacity: usize,
     per_pixel: f32,
     pixels: usize,
 ) -> Vec<(f32, WaveformColumn)> {
     let shown = columns.len().min(capacity);
-    let newest_first = columns.iter().rev().take(shown).enumerate();
+    if shown == 0 || completed == 0 {
+        return Vec::new();
+    }
+    let per_pixel = f64::from(per_pixel.max(1.0));
+    let group_of = |number: u64| (number as f64 / per_pixel).floor() as u64;
+    let newest_group = group_of(completed - 1);
     let mut merged: Vec<(f32, WaveformColumn)> = Vec::with_capacity(pixels.min(shown));
-    let mut group = usize::MAX;
-    for (age, column) in newest_first {
-        let this = (age as f32 / per_pixel) as usize;
+    let mut group = u64::MAX;
+    for (age, column) in columns.iter().rev().take(shown).enumerate() {
+        let number = completed - 1 - age as u64;
+        let this = group_of(number);
         if this != group {
             group = this;
-            let right_edge = (this as f32 * per_pixel) + per_pixel.max(1.0);
+            let right_edge = ((newest_group - this + 1) as f64 * per_pixel) as f32;
             merged.push((right_edge, *column));
         } else if let Some((_, m)) = merged.last_mut() {
             m.min = m.min.min(column.min);
@@ -151,4 +163,90 @@ fn mix(colours: [Colour; 3], energies: [f32; 3]) -> Colour {
         (g * scale).min(255.0) as u8,
         (b * scale).min(255.0) as u8,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn column(n: u64) -> WaveformColumn {
+        // Each column's height is its number, so merged content is easy to follow.
+        let x = (n % 97) as f32 / 97.0;
+        WaveformColumn {
+            min: -x,
+            max: x,
+            low: x,
+            mid: x,
+            high: x,
+        }
+    }
+
+    /// The last `capacity` columns when `completed` have been made.
+    fn history(completed: u64, capacity: usize) -> Vec<WaveformColumn> {
+        let first = completed.saturating_sub(capacity as u64);
+        (first..completed).map(column).collect()
+    }
+
+    /// The merged groups by their number in time, without the newest (still
+    /// filling) and the oldest (cut off at the left edge).
+    fn by_group(
+        completed: u64,
+        capacity: usize,
+        per_pixel: f32,
+    ) -> std::collections::BTreeMap<u64, (u32, u32)> {
+        let merged = merge(
+            &history(completed, capacity),
+            completed,
+            capacity,
+            per_pixel,
+            437,
+        );
+        let newest_group = ((completed - 1) as f64 / f64::from(per_pixel)).floor() as u64;
+        merged[1..merged.len() - 1]
+            .iter()
+            .map(|(right_edge, c)| {
+                let back = (f64::from(*right_edge) / f64::from(per_pixel)).round() as u64;
+                (newest_group + 1 - back, (c.max.to_bits(), c.min.to_bits()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn merged_pixels_keep_their_content_as_they_scroll() {
+        let (capacity, per_pixel) = (800, 800.0 / 437.0);
+        let before = by_group(5_000, capacity, per_pixel);
+        for step in 1..=5u64 {
+            let after = by_group(5_000 + step, capacity, per_pixel);
+            let shared: Vec<_> = before.keys().filter(|g| after.contains_key(g)).collect();
+            assert!(shared.len() > 400, "step {step}: {} shared", shared.len());
+            for g in shared {
+                assert_eq!(before[g], after[g], "step {step}: group {g} changed");
+            }
+        }
+    }
+
+    #[test]
+    fn groups_scroll_a_whole_group_at_a_time() {
+        let (capacity, per_pixel) = (800, 2.0);
+        for completed in [4_000u64, 4_001, 4_002] {
+            let merged = merge(
+                &history(completed, capacity),
+                completed,
+                capacity,
+                per_pixel,
+                400,
+            );
+            for (right_edge, _) in merged {
+                let groups = right_edge / per_pixel;
+                assert_eq!(groups, groups.round(), "{completed}: {right_edge}");
+            }
+        }
+    }
+
+    #[test]
+    fn one_column_per_pixel_or_wider_merges_nothing() {
+        let merged = merge(&history(300, 200), 300, 200, 1.0, 400);
+        assert_eq!(merged.len(), 200);
+        assert_eq!(merged[0].0, 1.0, "the newest touches the right edge");
+    }
 }

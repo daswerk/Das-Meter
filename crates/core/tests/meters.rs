@@ -194,7 +194,10 @@ fn changing_a_setting_changes_the_scene() {
     app.feed(&left_only);
     let views = app.draw();
 
-    let MeterView::Waveform { settings, traces } = &views[WAVEFORM] else {
+    let MeterView::Waveform {
+        settings, traces, ..
+    } = &views[WAVEFORM]
+    else {
         unreachable!()
     };
     assert_eq!(settings.analysis.channel_view, ChannelView::LeftRight);
