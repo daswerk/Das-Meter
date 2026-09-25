@@ -611,12 +611,12 @@ impl AppCore {
                 self.presets.rename(index, name);
                 None
             }
-            Event::DeletePreset { index } => self.presets.delete(index).ok().flatten(),
+            Event::DeletePreset { index } => self.presets.delete(index),
             Event::MovePreset { from, to } => {
                 self.presets.reorder(from, to);
                 None
             }
-            Event::ResetPreset { index } => self.presets.reset(index).ok().flatten(),
+            Event::ResetPreset { index } => self.presets.reset(index),
             _ => None,
         };
         if let Some(data) = open {

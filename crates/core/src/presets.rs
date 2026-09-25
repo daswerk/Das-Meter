@@ -357,7 +357,10 @@ pub struct PresetScene {
 }
 
 enum State {
-    Ok { data: PresetData, read_only: bool },
+    Ok {
+        data: Box<PresetData>,
+        read_only: bool,
+    },
     Broken,
 }
 
@@ -401,7 +404,7 @@ impl Presets {
             }
             let state = match read(&file.text) {
                 Read::Current(data) => State::Ok {
-                    data,
+                    data: Box::new(data),
                     read_only: false,
                 },
                 Read::Migrated(data) => {
@@ -414,12 +417,12 @@ impl Presets {
                         contents: data.to_toml(),
                     });
                     State::Ok {
-                        data,
+                        data: Box::new(data),
                         read_only: false,
                     }
                 }
                 Read::Newer(data) => State::Ok {
-                    data,
+                    data: Box::new(data),
                     read_only: true,
                 },
                 Read::Broken => State::Broken,
@@ -443,7 +446,7 @@ impl Presets {
                 self.entries.push(Entry {
                     file,
                     state: State::Ok {
-                        data,
+                        data: Box::new(data),
                         read_only: false,
                     },
                 });
@@ -523,10 +526,10 @@ impl Presets {
             built_in: saved.built_in,
             ..data
         };
-        if *saved == data {
+        if **saved == data {
             return false;
         }
-        *saved = data;
+        **saved = data;
         let contents = saved.to_toml();
         let file_name = entry.file.clone();
         self.ops
@@ -615,7 +618,7 @@ impl Presets {
             Entry {
                 file,
                 state: State::Ok {
-                    data,
+                    data: Box::new(data),
                     read_only: false,
                 },
             },
@@ -701,11 +704,11 @@ impl Presets {
     /// Deletes the Preset at `index` to the trash. Deleting the current one
     /// switches to the one above (returned to apply). The last readable Preset,
     /// and unreadable files, are never deleted.
-    pub fn delete(&mut self, index: usize) -> Result<Option<PresetData>, ()> {
+    pub fn delete(&mut self, index: usize) -> Option<PresetData> {
         let readable = self.entries.iter().filter(|e| e.data().is_some()).count();
         match self.entries.get(index) {
             Some(entry) if entry.data().is_some() && readable > 1 => {}
-            _ => return Err(()),
+            _ => return None,
         }
         let entry = self.entries.remove(index);
         self.ops.push(PresetOp::Trash {
@@ -719,31 +722,28 @@ impl Presets {
                     .rev()
                     .chain(index..self.entries.len())
                     .find(|&i| self.entries[i].data().is_some());
-                Ok(self.open(above))
+                self.open(above)
             }
             Some(current) if current > index => {
                 self.current = Some(current - 1);
                 self.save_settings();
-                Ok(None)
+                None
             }
             _ => {
                 self.save_settings();
-                Ok(None)
+                None
             }
         }
     }
 
     /// Reset to built-in: the Preset at `index` takes this version's built-in
     /// again. Returns the data to apply if it's the current Preset.
-    pub fn reset(&mut self, index: usize) -> Result<Option<PresetData>, ()> {
-        let Some(kind) = self
+    pub fn reset(&mut self, index: usize) -> Option<PresetData> {
+        let kind = self
             .entries
             .get(index)
             .and_then(Entry::data)
-            .and_then(|d| d.built_in)
-        else {
-            return Err(());
-        };
+            .and_then(|d| d.built_in)?;
         let data = PresetData::built_in(kind);
         let file_name = self.entries[index].file.clone();
         self.ops.push(PresetOp::Write {
@@ -751,14 +751,14 @@ impl Presets {
             contents: data.to_toml(),
         });
         self.entries[index].state = State::Ok {
-            data: data.clone(),
+            data: Box::new(data.clone()),
             read_only: false,
         };
         if Some(index) == self.current {
             self.opened = Some(data.clone());
-            Ok(Some(data))
+            Some(data)
         } else {
-            Ok(None)
+            None
         }
     }
 
