@@ -5,7 +5,9 @@
 
 use dasmeter_analysis::{ChannelLevels, LoudnessReadings};
 
-use crate::meters::MeterView;
+use crate::meters::{MeterSettings, MeterView};
+use crate::settings::AppSettings;
+use crate::sources::ListenTo;
 use crate::theme::{Colour, Palette};
 
 /// Everything on screen: the windows, the notes shown over them and the colours.
@@ -15,6 +17,35 @@ pub struct Scene {
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
     pub palette: Palette,
+    pub listen_to: ListenTo,
+    /// The Send Plugins a Meter menu's Source item lists: every one that isn't gone.
+    pub send_plugins: Vec<SendPluginItem>,
+    /// The open Meter menu, if any.
+    pub menu: Option<MeterMenu>,
+    /// Whether the settings panel is open.
+    pub settings_open: bool,
+    pub app: AppSettings,
+    /// The highest frame-rate cap the settings panel offers.
+    pub max_frame_rate_cap: u32,
+}
+
+/// An open Meter menu: whose it is and where it was opened.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeterMenu {
+    pub meter: usize,
+    /// The right-click's point, as fractions of the window.
+    pub at: [f32; 2],
+}
+
+/// A Send Plugin as a Meter menu's Source item lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SendPluginItem {
+    pub id: u64,
+    /// The name, or "<name> (outdated — restart your DAW)".
+    pub label: String,
+    pub colour: Colour,
+    /// False for an outdated Send Plugin: listed, but it can't be picked.
+    pub pickable: bool,
 }
 
 /// One window and the Meters in it.
@@ -31,6 +62,13 @@ pub struct MeterScene {
     pub state: MeterState,
     /// The small Source label, when the Meter shows it.
     pub source: Option<SourceLabel>,
+    /// The Meter's settings, which its menu and the settings panel show.
+    pub settings: MeterSettings,
+    /// The Send Plugin the Meter shows or would show, for its Source item:
+    /// its pick, the one it follows, or the only one there is.
+    pub picked: Option<u64>,
+    /// Whether the Source label is switched on.
+    pub show_source_label: bool,
 }
 
 /// The Source a Meter shows, as its small label says it.

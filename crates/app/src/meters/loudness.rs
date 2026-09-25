@@ -29,14 +29,17 @@ pub fn draw(
         "Peak"
     };
     let rows = [
-        ("M", display.momentary, "LUFS"),
-        ("S", display.short_term, "LUFS"),
-        ("I", display.integrated, "LUFS"),
-        ("LRA", display.range, "LU"),
-        (true_peak, display.true_peak_max, "dBTP"),
+        Some(("M", display.momentary, "LUFS")),
+        Some(("S", display.short_term, "LUFS")),
+        Some(("I", display.integrated, "LUFS")),
+        settings.show_range.then_some(("LRA", display.range, "LU")),
+        settings
+            .show_true_peak
+            .then_some((true_peak, display.true_peak_max, "dBTP")),
     ];
+    let rows: Vec<_> = rows.into_iter().flatten().collect();
     let value_right = area.x + c.px(96.0);
-    for (i, (name, level, unit)) in rows.into_iter().enumerate() {
+    for (i, &(name, level, unit)) in rows.iter().enumerate() {
         let y = area.y + line * i as f32;
         c.text(name, area.x, y, size, dim, Align::Left);
         c.bold(&number(level), value_right, y, size, text, Align::Right);

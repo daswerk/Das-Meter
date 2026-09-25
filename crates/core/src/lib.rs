@@ -10,6 +10,7 @@
 
 pub mod meters;
 pub mod scene;
+pub mod settings;
 pub mod sources;
 pub mod theme;
 
@@ -20,9 +21,10 @@ pub use meters::{
     StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use scene::{
-    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterScene, MeterState, Note, Scene, SourceItem,
-    SourceLabel, WindowScene,
+    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note, Scene,
+    SendPluginItem, SourceItem, SourceLabel, WindowScene,
 };
+pub use settings::AppSettings;
 pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState};
 pub use theme::{Colour, Palette, Role};
 
@@ -33,7 +35,8 @@ use sources::Resolved;
 pub const NOTE_DURATION: Duration = Duration::from_secs(3);
 
 /// The default frame-rate cap: 60 fps.
-pub const DEFAULT_FRAME_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 60);
+pub const DEFAULT_FRAME_INTERVAL: Duration =
+    Duration::from_nanos(1_000_000_000 / settings::DEFAULT_FRAME_RATE_CAP as u64);
 
 /// Something that happened, fed into the core by the shell.
 #[derive(Clone, Copy, Debug)]
@@ -70,7 +73,22 @@ pub enum Event<'a> {
     /// The Source label on a Meter was switched on or off.
     ShowSourceLabel { meter: usize, shown: bool },
     /// A click at this point of the window (fractions, 0–1 from the top-left).
+    /// It closes an open menu; otherwise it picks from a "Pick a Send Plugin"
+    /// list, or resets a Loudness Meter.
     Click([f32; 2]),
+    /// A right-click at this point: opens the menu of the Meter under it.
+    OpenMenu([f32; 2]),
+    /// The Meter menu was closed without a click on the Meters.
+    CloseMenu,
+    /// The settings panel was opened or closed.
+    ShowSettings(bool),
+    /// Reset a Loudness Meter's integrated LUFS, LRA and maxima.
+    ResetLoudness { meter: usize },
+    /// The app settings changed.
+    SetApp(AppSettings),
+    /// The display the window is on refreshes this many times a second: the
+    /// highest frame-rate cap.
+    DisplayRefreshRate(u32),
 }
 
 /// What the shell should do next.
@@ -122,7 +140,11 @@ pub struct AppCore {
     pointer: Option<[f32; 2]>,
     note_until: Option<Duration>,
     visible: bool,
-    frame_interval: Duration,
+    app: AppSettings,
+    /// The display's refresh rate, once the shell says it.
+    refresh_rate: Option<u32>,
+    menu: Option<MeterMenu>,
+    settings_open: bool,
     palette: Palette,
     /// Something happened since the last scene was built.
     changed: bool,
@@ -167,7 +189,10 @@ impl AppCore {
             pointer: None,
             note_until: None,
             visible: true,
-            frame_interval: DEFAULT_FRAME_INTERVAL,
+            app: AppSettings::default(),
+            refresh_rate: None,
+            menu: None,
+            settings_open: false,
             palette: Palette::dark(),
             changed: true,
             drawn: None,
@@ -175,9 +200,24 @@ impl AppCore {
         }
     }
 
-    /// Changes the frame-rate cap (the shortest time between two draws).
-    pub fn set_frame_interval(&mut self, interval: Duration) {
-        self.frame_interval = interval;
+    /// The app settings, with the frame-rate cap kept within the display's refresh rate.
+    pub fn app_settings(&self) -> AppSettings {
+        self.app
+    }
+
+    /// The highest frame-rate cap the settings offer: the display's refresh
+    /// rate, and never below the default.
+    pub fn max_frame_rate_cap(&self) -> u32 {
+        self.refresh_rate
+            .unwrap_or(settings::DEFAULT_FRAME_RATE_CAP)
+            .max(settings::DEFAULT_FRAME_RATE_CAP)
+    }
+
+    fn clamp_frame_rate_cap(&mut self) {
+        self.app.frame_rate_cap = self
+            .app
+            .frame_rate_cap
+            .clamp(settings::MIN_FRAME_RATE_CAP, self.max_frame_rate_cap());
     }
 
     /// The settings of the Meter at `meter`, if there is one.
@@ -250,7 +290,7 @@ impl AppCore {
                 }
             }
             Event::SetMeter { meter, settings } => match self.meters.get_mut(meter) {
-                Some(slot) => slot.meter.set_settings(settings),
+                Some(slot) => slot.meter.set_settings(settings.clamped()),
                 None => return,
             },
             Event::SetListenTo(listen_to) => {
@@ -309,11 +349,52 @@ impl AppCore {
                 None => return,
             },
             Event::Click(point) => {
-                let Some((meter, id)) = self.item_at(point) else {
+                if self.menu.take().is_some() {
+                    self.changed = true;
+                    return;
+                }
+                if let Some((meter, id)) = self.item_at(point) {
+                    self.handle(Event::PickSendPlugin { meter, id }, now);
+                } else if let Some(meter) = self.meter_at(point) {
+                    self.handle(Event::ResetLoudness { meter }, now);
+                }
+                return;
+            }
+            Event::OpenMenu(at) => {
+                let Some(meter) = self.meter_at(at) else {
                     return;
                 };
-                self.handle(Event::PickSendPlugin { meter, id }, now);
-                return;
+                self.menu = Some(MeterMenu { meter, at });
+            }
+            Event::CloseMenu => {
+                if self.menu.take().is_none() {
+                    return;
+                }
+            }
+            Event::ShowSettings(open) => {
+                if open == self.settings_open {
+                    return;
+                }
+                self.settings_open = open;
+                if open {
+                    self.menu = None;
+                }
+            }
+            Event::ResetLoudness { meter } => {
+                if !self.meters.get_mut(meter).is_some_and(|s| s.meter.reset()) {
+                    return;
+                }
+            }
+            Event::SetApp(app) => {
+                self.app = app;
+                self.clamp_frame_rate_cap();
+            }
+            Event::DisplayRefreshRate(rate) => {
+                if self.refresh_rate == Some(rate) {
+                    return;
+                }
+                self.refresh_rate = Some(rate);
+                self.clamp_frame_rate_cap();
             }
         }
         self.changed = true;
@@ -429,6 +510,15 @@ impl AppCore {
             })
     }
 
+    /// The Meter at `point` (window fractions) in the last scene drawn.
+    fn meter_at(&self, point: [f32; 2]) -> Option<usize> {
+        let window = self.drawn.as_ref()?.windows.first()?;
+        window
+            .meters
+            .iter()
+            .position(|meter| meter.frame.locate(point).is_some())
+    }
+
     /// Decides whether to draw now. On [`Decision::Draw`], the shell draws
     /// [`AppCore::scene`]; the core counts that as drawn at `now`.
     pub fn decide(&mut self, now: Duration) -> Decision {
@@ -442,7 +532,7 @@ impl AppCore {
         }
         // Wait for the next frame before building a scene at all.
         if let Some(drawn_at) = self.drawn_at {
-            let next_frame = drawn_at + self.frame_interval;
+            let next_frame = drawn_at + self.app.frame_interval();
             if now < next_frame {
                 return Decision::Sleep {
                     until: Some(next_frame),
@@ -511,13 +601,32 @@ impl AppCore {
                     Resolved::Nothing => (MeterState::NoSendPlugins, None),
                 },
             };
-            let source = source.filter(|_| self.meters[i].show_source_label);
+            let slot = &self.meters[i];
+            let source = source.filter(|_| slot.show_source_label);
+            let picked = match self.listen_to {
+                ListenTo::SendPlugins => self.shown_pick(i).map(|pick| pick.id),
+                ListenTo::SystemCapture => slot.pick.as_ref().map(|pick| pick.id),
+            };
             meters.push(MeterScene {
                 frame,
                 state,
                 source,
+                settings: slot.meter.settings(),
+                picked,
+                show_source_label: slot.show_source_label,
             });
         }
+        let send_plugins = self
+            .send_plugins
+            .iter()
+            .filter(|p| p.state != SendPluginState::Gone)
+            .map(|p| SendPluginItem {
+                id: p.id,
+                label: p.label(),
+                colour: colour(p.colour),
+                pickable: !p.outdated,
+            })
+            .collect();
         Scene {
             windows: vec![WindowScene {
                 title: "Das-Meter".to_owned(),
@@ -529,6 +638,12 @@ impl AppCore {
                 Vec::new()
             },
             palette: self.palette.clone(),
+            listen_to: self.listen_to,
+            send_plugins,
+            menu: self.menu,
+            settings_open: self.settings_open,
+            app: self.app,
+            max_frame_rate_cap: self.max_frame_rate_cap(),
         }
     }
 

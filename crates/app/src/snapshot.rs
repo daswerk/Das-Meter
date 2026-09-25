@@ -1,21 +1,24 @@
-//! Hidden `--render-snapshot PATH`: runs the app core on a generated signal and
-//! draws its scene offscreen into a PPM image. It checks the renderers without
-//! a window, an audio device or screen-recording permission.
+//! Hidden `--render-snapshot PATH [menu|settings]`: runs the app core on a
+//! generated signal and draws its scene offscreen into a PPM image, optionally
+//! with the Loudness Meter's menu or the settings panel open. It checks the
+//! renderers and the egui layer without a window, an audio device or
+//! screen-recording permission.
 
 use std::time::Duration;
 
 use dasmeter_analysis::signals::{frames, pink_noise, stereo};
 use dasmeter_core::{AppCore, Decision, Event};
 
-use crate::Painter;
 use crate::gpu::Gpu;
+use crate::ui::Ui;
+use crate::{Painter, UiPaint};
 
 const RATE: u32 = 48_000;
 const SCALE: f32 = 2.0;
 const WIDTH: u32 = 2400;
 const HEIGHT: u32 = 680;
 
-pub fn render(path: &str) -> Result<(), String> {
+pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // Six seconds of pink noise with an output change after four, so the
     // snapshot shows levels, loudness and the "Output changed" note.
     let mut core = AppCore::new();
@@ -39,6 +42,15 @@ pub fn render(path: &str) -> Result<(), String> {
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
+    match open {
+        None => {}
+        // Right-click the Loudness Meter, as a user would.
+        Some("menu") => core.handle(Event::OpenMenu([0.8, 0.1]), now),
+        Some("settings") => core.handle(Event::ShowSettings(true), now),
+        Some(other) => return Err(format!("unknown panel {other:?}: menu or settings")),
+    }
+    now += Duration::from_millis(100);
+    core.decide(now);
 
     let gpu = pollster::block_on(Gpu::offscreen(WIDTH, HEIGHT))?;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -56,10 +68,43 @@ pub fn render(path: &str) -> Result<(), String> {
         view_formats: &[],
     });
     let mut painter = Painter::new(gpu);
+
+    // egui lays windows out over a few frames; the last one is drawn.
+    let mut ui = Ui::new();
+    ui.use_fonts(painter.text.font_system.db());
+    let scene = core.scene().ok_or("no scene")?;
+    let mut output = None;
+    for frame in 0..4 {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(WIDTH as f32 / SCALE, HEIGHT as f32 / SCALE),
+            )),
+            time: Some(f64::from(frame) * 0.5),
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(SCALE);
+        let (mut out, _) = ui.run(input, scene);
+        // Textures made in earlier frames must reach the painter too.
+        if let Some(previous) = output.take() {
+            let previous: egui::FullOutput = previous;
+            let mut textures = previous.textures_delta;
+            textures.append(out.textures_delta);
+            out.textures_delta = textures;
+        }
+        output = Some(out);
+    }
+    let ui = output.map(|output| UiPaint::new(&ui.ctx, output));
+
     painter.paint(
         core.scene(),
         SCALE,
         &texture.create_view(&wgpu::TextureViewDescriptor::default()),
+        ui,
     );
 
     let gpu = &painter.gpu;

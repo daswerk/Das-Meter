@@ -3,7 +3,7 @@ name = "dasmeter-app"
 description = "The Das-Meter app: platform shell and Meter renderers"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+rust-version = "1.95" # egui 0.36
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -19,6 +19,9 @@ cpal = "0.18"
 dasmeter-analysis = { path = "../analysis" }
 dasmeter-core = { path = "../core" }
 dasmeter-transport = { path = "../transport" }
+egui = { version = "0.36", default-features = false }
+egui-wgpu = { version = "0.36", default-features = false }
+egui-winit = { version = "0.36", default-features = false, features = ["links"] }
 glyphon = "0.12"
 pollster = "1.0.1"
 rtrb = "0.4.0"
@@ -27,3 +30,6 @@ winit = "0.30.13"
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.20", default-features = false }

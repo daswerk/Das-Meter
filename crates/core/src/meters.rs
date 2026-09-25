@@ -60,6 +60,10 @@ pub struct LoudnessMeterSettings {
     pub lufs_bar: LufsBar,
     /// The bars' range in dB (dBFS for levels, LUFS for loudness). Default −60 to 0.
     pub bar_range: (f64, f64),
+    /// Whether the true-peak maximum is shown. Default on.
+    pub show_true_peak: bool,
+    /// Whether the loudness range (LRA) is shown. Default on.
+    pub show_range: bool,
 }
 
 impl Default for LoudnessMeterSettings {
@@ -69,6 +73,8 @@ impl Default for LoudnessMeterSettings {
             target: Some(-14.0),
             lufs_bar: LufsBar::ShortTerm,
             bar_range: (-60.0, 0.0),
+            show_true_peak: true,
+            show_range: true,
         }
     }
 }
@@ -199,6 +205,17 @@ impl Meter {
                 self.view = None;
             }
         }
+    }
+
+    /// Clears a Loudness Meter's integrated LUFS, LRA and maxima. Other Meters
+    /// have nothing to reset; returns whether this one did.
+    pub fn reset(&mut self) -> bool {
+        let Some(Analyser::Loudness(a)) = &mut self.analyser else {
+            return false;
+        };
+        a.reset();
+        self.view = None;
+        true
     }
 
     pub fn stop(&mut self) {

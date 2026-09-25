@@ -6,9 +6,12 @@
 
 mod capture;
 mod gpu;
+#[cfg(target_os = "macos")]
+mod main_menu;
 mod meters;
 mod send_plugins;
 mod snapshot;
+mod ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
@@ -28,6 +31,7 @@ use capture::{CaptureMessage, SystemCapture, Waker};
 use gpu::{Gpu, Text, WindowSurface, clear_colour};
 use meters::{Area, MeterRenderer};
 use send_plugins::{LIST_EVERY, SendPluginInput};
+use ui::Ui;
 
 fn version_line() -> String {
     format!("Das-Meter {}", env!("CARGO_PKG_VERSION"))
@@ -40,34 +44,17 @@ fn main() {
         Some("--print-readings") => print_readings(),
         // Hidden: two Loudness Meters on the first two Send Plugins, printed once a second.
         Some("--print-send-plugins") => print_send_plugins(),
-        // Hidden: a generated signal through the core, drawn offscreen to a PPM image.
+        // Hidden: a generated signal through the core, drawn offscreen to a PPM
+        // image, optionally with a Meter menu or the settings panel open.
         Some("--render-snapshot") => {
             let path = std::env::args().nth(2).unwrap_or("snapshot.ppm".into());
-            if let Err(error) = snapshot::render(&path) {
+            let open = std::env::args().nth(3);
+            if let Err(error) = snapshot::render(&path, open.as_deref()) {
                 eprintln!("snapshot: {error}");
                 std::process::exit(1);
             }
         }
-        _ => run(Options::from_args()),
-    }
-}
-
-/// Startup switches, until the menus (#35) can set these.
-#[derive(Default)]
-struct Options {
-    /// `--send-plugins`: start on Listen to Send Plugins.
-    send_plugins: bool,
-    /// `--source-labels`: show every Meter's Source label.
-    source_labels: bool,
-}
-
-impl Options {
-    fn from_args() -> Options {
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        Options {
-            send_plugins: args.iter().any(|a| a == "--send-plugins"),
-            source_labels: args.iter().any(|a| a == "--source-labels"),
-        }
+        _ => run(),
     }
 }
 
@@ -123,26 +110,14 @@ impl Audio {
     }
 }
 
-fn run(options: Options) {
+fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
         .expect("create the event loop");
     let proxy = event_loop.create_proxy();
-    let mut core = AppCore::new();
-    if options.send_plugins {
-        core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
-    }
-    if options.source_labels {
-        for meter in 0..4 {
-            core.handle(
-                Event::ShowSourceLabel { meter, shown: true },
-                Duration::ZERO,
-            );
-        }
-    }
     let mut shell = Shell {
         start: Instant::now(),
-        core,
+        core: AppCore::new(),
         audio: None,
         wake: Arc::new(move || {
             let _ = proxy.send_event(());
@@ -150,6 +125,10 @@ fn run(options: Options) {
         send_plugins: SendPluginInput::new(),
         pointer: None,
         window: None,
+        ui: Ui::new(),
+        ui_wake: None,
+        #[cfg(target_os = "macos")]
+        main_menu: None,
     };
     event_loop.run_app(&mut shell).expect("run the event loop");
 }
@@ -164,21 +143,47 @@ struct Shell {
     /// The pointer's last position in the window (fractions), for clicks.
     pointer: Option<[f32; 2]>,
     window: Option<AppWindow>,
+    /// The Meter menus and the settings panel.
+    ui: Ui,
+    /// When egui asked to be drawn again (an animation, a tooltip), if it did.
+    ui_wake: Option<Duration>,
+    #[cfg(target_os = "macos")]
+    main_menu: Option<main_menu::MainMenu>,
 }
 
 struct AppWindow {
+    egui: egui_winit::State,
     painter: Painter,
     surface: WindowSurface,
     // Dropped last: the surface must go before the window.
     window: Arc<Window>,
 }
 
-/// Draws a scene with the GPU: one renderer per Meter, one for the notes, and their shared text.
+/// Draws a scene with the GPU: one renderer per Meter, one for the notes, and
+/// their shared text, then the menus and panel on top.
 struct Painter {
     meters: Vec<MeterRenderer>,
     notes: MeterRenderer,
     text: Text,
+    egui: egui_wgpu::Renderer,
     gpu: Gpu,
+}
+
+/// The menus and panel of one frame, tessellated.
+struct UiPaint {
+    jobs: Vec<egui::ClippedPrimitive>,
+    textures: egui::TexturesDelta,
+    pixels_per_point: f32,
+}
+
+impl UiPaint {
+    fn new(ctx: &egui::Context, output: egui::FullOutput) -> UiPaint {
+        UiPaint {
+            jobs: ctx.tessellate(output.shapes, output.pixels_per_point),
+            textures: output.textures_delta,
+            pixels_per_point: output.pixels_per_point,
+        }
+    }
 }
 
 impl Painter {
@@ -188,12 +193,24 @@ impl Painter {
             meters: Vec::new(),
             notes: MeterRenderer::new(&gpu, &mut text),
             text,
+            egui: egui_wgpu::Renderer::new(
+                &gpu.device,
+                gpu.format,
+                egui_wgpu::RendererOptions::default(),
+            ),
             gpu,
         }
     }
 
-    /// Draws `scene` (or just the background, before the first) into `view`.
-    fn paint(&mut self, scene: Option<&Scene>, scale: f32, view: &wgpu::TextureView) {
+    /// Draws `scene` (or just the background, before the first) into `view`,
+    /// with the menus and panel over it.
+    fn paint(
+        &mut self,
+        scene: Option<&Scene>,
+        scale: f32,
+        view: &wgpu::TextureView,
+        ui: Option<UiPaint>,
+    ) {
         let (width, height) = self.gpu.size();
         let (width, height) = (width as f32, height as f32);
         let default_palette = Palette::dark();
@@ -238,6 +255,26 @@ impl Painter {
             .gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [width as u32, height as u32],
+            pixels_per_point: ui.as_ref().map_or(scale, |ui| ui.pixels_per_point),
+        };
+        let mut ui_buffers = Vec::new();
+        if let Some(ui) = &ui {
+            for (id, deltas) in &ui.textures.set {
+                for delta in deltas {
+                    self.egui
+                        .update_texture(&self.gpu.device, &self.gpu.queue, *id, delta);
+                }
+            }
+            ui_buffers = self.egui.update_buffers(
+                &self.gpu.device,
+                &self.gpu.queue,
+                &mut encoder,
+                &ui.jobs,
+                &screen,
+            );
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
@@ -262,8 +299,20 @@ impl Painter {
                 renderer.render(&self.text, &mut pass);
             }
             self.notes.render(&self.text, &mut pass);
+            if let Some(ui) = &ui {
+                self.egui
+                    .render(&mut pass.forget_lifetime(), &ui.jobs, &screen);
+            }
         }
-        self.gpu.queue.submit(Some(encoder.finish()));
+        self.gpu
+            .queue
+            .submit(ui_buffers.into_iter().chain(Some(encoder.finish())));
+        if let Some(mut ui) = ui {
+            for id in &ui.textures.free {
+                self.egui.free_texture(id);
+            }
+            ui.textures.clear();
+        }
         self.text.atlas.trim();
     }
 }
@@ -293,7 +342,7 @@ impl Shell {
                 self.send_plugins
                     .pump(&mut self.core, now, self.start + now);
                 let every = if self.send_plugins.listening() {
-                    dasmeter_core::DEFAULT_FRAME_INTERVAL
+                    self.core.app_settings().frame_interval()
                 } else {
                     LIST_EVERY
                 };
@@ -303,6 +352,7 @@ impl Shell {
     }
 
     fn draw(&mut self) {
+        let now = self.now();
         let Some(app) = &mut self.window else { return };
         let Some(frame) = app.surface.frame(&app.painter.gpu) else {
             app.window.request_redraw();
@@ -311,10 +361,50 @@ impl Shell {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        app.painter
-            .paint(self.core.scene(), app.window.scale_factor() as f32, &view);
+        let mut actions = Vec::new();
+        self.ui_wake = None;
+        let ui = self.core.scene().map(|scene| {
+            let input = app.egui.take_egui_input(&app.window);
+            let (mut output, done) = self.ui.run(input, scene);
+            actions = done;
+            let platform = std::mem::take(&mut output.platform_output);
+            app.egui.handle_platform_output(&app.window, platform);
+            let delay = output
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .map(|viewport| viewport.repaint_delay);
+            // egui asks for a repaint after a delay (an animation, a tooltip); a
+            // very long one means it has nothing to show.
+            if let Some(delay) = delay.filter(|d| *d < Duration::from_secs(60)) {
+                self.ui_wake = Some(now + delay);
+            }
+            UiPaint::new(&self.ui.ctx, output)
+        });
+        app.painter.paint(
+            self.core.scene(),
+            app.window.scale_factor() as f32,
+            &view,
+            ui,
+        );
         app.window.pre_present_notify();
         app.painter.gpu.queue.present(frame);
+        for action in actions {
+            self.core.handle(action, now);
+        }
+    }
+
+    /// The refresh rate of the display the window is on, for the frame-rate cap.
+    fn report_refresh_rate(&mut self) {
+        let Some(app) = &self.window else { return };
+        let rate = app
+            .window
+            .current_monitor()
+            .and_then(|monitor| monitor.refresh_rate_millihertz());
+        if let Some(millihertz) = rate {
+            let now = self.now();
+            self.core
+                .handle(Event::DisplayRefreshRate((millihertz + 500) / 1000), now);
+        }
     }
 }
 
@@ -340,11 +430,28 @@ impl ApplicationHandler for Shell {
                 return;
             }
         };
+        let egui = egui_winit::State::new(
+            self.ui.ctx.clone(),
+            egui::ViewportId::ROOT,
+            &window,
+            Some(window.scale_factor() as f32),
+            window.theme(),
+            Some(gpu.device.limits().max_texture_dimension_2d as usize),
+        );
+        let painter = Painter::new(gpu);
+        self.ui.use_fonts(painter.text.font_system.db());
         self.window = Some(AppWindow {
-            painter: Painter::new(gpu),
+            egui,
+            painter,
             surface,
             window,
         });
+        self.report_refresh_rate();
+        #[cfg(target_os = "macos")]
+        if self.main_menu.is_none() {
+            let wake = self.wake.clone();
+            self.main_menu = Some(main_menu::MainMenu::install(move || wake()));
+        }
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _wake: ()) {
@@ -352,6 +459,22 @@ impl ApplicationHandler for Shell {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // The menus and panel see every event first; a click on them stays theirs.
+        let mut on_ui = false;
+        let ui_shown = self
+            .core
+            .scene()
+            .is_some_and(|scene| scene.menu.is_some() || scene.settings_open);
+        if let Some(app) = &mut self.window {
+            let response = app.egui.on_window_event(&app.window, &event);
+            // egui asks for a repaint after nearly every event, a redraw
+            // included; only an open menu or panel needs one.
+            let redraw = matches!(event, WindowEvent::RedrawRequested);
+            if response.repaint && ui_shown && !redraw {
+                app.window.request_redraw();
+            }
+            on_ui = response.consumed;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -365,7 +488,9 @@ impl ApplicationHandler for Shell {
                 if let Some(app) = &self.window {
                     app.window.request_redraw();
                 }
+                self.report_refresh_rate();
             }
+            WindowEvent::Moved(_) => self.report_refresh_rate(),
             WindowEvent::Occluded(occluded) => {
                 let now = self.now();
                 self.core.handle(Event::Visible(!occluded), now);
@@ -389,12 +514,15 @@ impl ApplicationHandler for Shell {
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
-                button: MouseButton::Left,
+                button,
                 ..
-            } => {
-                if let Some(point) = self.pointer {
-                    let now = self.now();
-                    self.core.handle(Event::Click(point), now);
+            } if !on_ui => {
+                let Some(point) = self.pointer else { return };
+                let now = self.now();
+                match button {
+                    MouseButton::Left => self.core.handle(Event::Click(point), now),
+                    MouseButton::Right => self.core.handle(Event::OpenMenu(point), now),
+                    _ => {}
                 }
             }
             WindowEvent::RedrawRequested => self.draw(),
@@ -404,6 +532,23 @@ impl ApplicationHandler for Shell {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = self.now();
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.main_menu {
+            let commands = menu.commands();
+            let clicked = !commands.is_empty();
+            for command in commands {
+                match command {
+                    main_menu::Command::Core(event) => self.core.handle(event, now),
+                    main_menu::Command::Open(url) => {
+                        self.ui.ctx.open_url(egui::OpenUrl::new_tab(url));
+                        if let Some(app) = &self.window {
+                            app.window.request_redraw();
+                        }
+                    }
+                }
+            }
+            menu.show(self.core.listen_to(), clicked);
+        }
         let pump_at = self.pump(now);
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {
@@ -421,10 +566,13 @@ impl ApplicationHandler for Shell {
             }
             Decision::Sleep { until } => until,
         };
-        let wake_at = match (wake_at, pump_at) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        if self.ui_wake.is_some_and(|at| at <= now) {
+            self.ui_wake = None;
+            if let Some(app) = &self.window {
+                app.window.request_redraw();
+            }
+        }
+        let wake_at = [wake_at, pump_at, self.ui_wake].into_iter().flatten().min();
         match wake_at {
             Some(at) => event_loop.set_control_flow(ControlFlow::WaitUntil(self.start + at)),
             None => event_loop.set_control_flow(ControlFlow::Wait),
