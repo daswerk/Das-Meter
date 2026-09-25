@@ -10,6 +10,7 @@
 
 pub mod layout;
 pub mod meters;
+pub mod panes;
 pub mod scene;
 pub mod settings;
 pub mod sources;
@@ -17,11 +18,15 @@ pub mod theme;
 
 use std::time::Duration;
 
-pub use layout::{BarEnd, BarLayout, Display, Edge, Platform, PopOut, Rect, ScreenMode, WindowKey};
-pub use meters::{
-    CursorReadout, LoudnessMeterSettings, LufsBar, MeterSettings, MeterView, SpectrumMeterSettings,
-    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
+pub use layout::{
+    BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
 };
+pub use meters::{
+    CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView,
+    SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
+    WaveformMeterSettings,
+};
+pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
 pub use scene::{
     ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note, Scene,
     SendPluginItem, SourceItem, SourceLabel, WindowScene,
@@ -114,6 +119,22 @@ pub enum Event<'a> {
     CycleScreenMode,
     /// "Show over fullscreen apps" was switched.
     ShowOverFullscreen(bool),
+    /// Switch between Bar mode and Window mode. Each keeps its own layout.
+    SetMode(LayoutMode),
+    /// Split the pane showing this Meter; the new pane gets a copy of it.
+    SplitPane { meter: usize, direction: Direction },
+    /// Close the pane showing this Meter; its sibling takes the space.
+    ClosePane { meter: usize },
+    /// A split's divider was dragged to `at` (0–1 across the window, along the
+    /// split's direction).
+    MoveSplit { split: SplitId, at: f32 },
+    /// Show another kind of Meter in this Meter's pane, on default settings.
+    AssignMeter { meter: usize, kind: MeterKind },
+    /// Float on Top for whichever window the mode shows: the Bar's screen
+    /// button, or Window mode's Always on top.
+    ToggleOnTop,
+    /// The user moved or resized Window mode's window.
+    WindowMoved(Rect),
 }
 
 /// What the shell should do next.
@@ -164,7 +185,9 @@ pub struct AppCore {
     meters: Vec<MeterSlot>,
     pointer: Option<(WindowKey, [f32; 2])>,
     platform: Platform,
+    mode: LayoutMode,
     layout: BarLayout,
+    window: WindowLayout,
     display: Option<Display>,
     note_until: Option<Duration>,
     visible: bool,
@@ -204,6 +227,16 @@ impl AppCore {
         let platform = Platform::current();
         AppCore {
             platform,
+            mode: LayoutMode::Bar,
+            window: if meters.len() == 4 {
+                WindowLayout::mixing()
+            } else {
+                WindowLayout {
+                    frame: None,
+                    on_top: false,
+                    tree: Node::Pane(0),
+                }
+            },
             layout: BarLayout::new(meters.len(), platform),
             display: None,
             listen_to: ListenTo::SystemCapture,
@@ -242,6 +275,14 @@ impl AppCore {
     /// The display the Bar is on, once the shell has said.
     pub fn display(&self) -> Option<Display> {
         self.display
+    }
+
+    pub fn mode(&self) -> LayoutMode {
+        self.mode
+    }
+
+    pub fn window_layout(&self) -> &WindowLayout {
+        &self.window
     }
 
     pub fn layout(&self) -> &BarLayout {
@@ -373,8 +414,12 @@ impl AppCore {
                 if self.listen_to != ListenTo::SystemCapture {
                     return;
                 }
-                for slot in &mut self.meters {
-                    slot.meter.process(frames);
+                // Only the Meters the current layout shows are fed.
+                let shown = self.shown_meters();
+                for (i, slot) in self.meters.iter_mut().enumerate() {
+                    if shown.contains(&i) {
+                        slot.meter.process(frames);
+                    }
                 }
             }
             Event::Visible(visible) => self.visible = visible,
@@ -554,6 +599,64 @@ impl AppCore {
             Event::CycleScreenMode => {
                 self.layout.screen = self.layout.screen.next(self.platform);
             }
+            Event::SetMode(mode) => {
+                if mode == self.mode {
+                    return;
+                }
+                self.mode = mode;
+                self.menu = None;
+            }
+            Event::SplitPane { meter, direction } => {
+                if self.mode != LayoutMode::Window || meter >= self.meters.len() {
+                    return;
+                }
+                let new = self.spare_meter(meter);
+                if !self.window.tree.split_pane(meter, direction, new) {
+                    return;
+                }
+                self.menu = None;
+            }
+            Event::ClosePane { meter } => {
+                if self.mode != LayoutMode::Window || !self.window.tree.close_pane(meter) {
+                    return;
+                }
+                self.menu = None;
+            }
+            Event::MoveSplit { split, at } => {
+                let Some(divider) = self
+                    .drawn_window(WindowKey::Main)
+                    .and_then(|w| w.dividers.iter().find(|d| d.split == split).copied())
+                else {
+                    return;
+                };
+                let a = divider.area;
+                let ratio = match divider.direction {
+                    Direction::SideBySide => (at - a.x) / a.width,
+                    Direction::Stacked => (at - a.y) / a.height,
+                };
+                if !self.window.tree.set_ratio(split, ratio) {
+                    return;
+                }
+            }
+            Event::AssignMeter { meter, kind } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                if slot.meter.settings().kind() == kind {
+                    return;
+                }
+                slot.meter.set_settings(MeterSettings::default_of(kind));
+            }
+            Event::ToggleOnTop => match self.mode {
+                LayoutMode::Bar => self.layout.screen = self.layout.screen.next(self.platform),
+                LayoutMode::Window => self.window.on_top = !self.window.on_top,
+            },
+            Event::WindowMoved(frame) => {
+                if self.window.frame == Some(frame) {
+                    return;
+                }
+                self.window.frame = Some(frame);
+            }
             Event::ShowOverFullscreen(shown) => {
                 if shown == self.layout.show_over_fullscreen {
                     return;
@@ -688,6 +791,63 @@ impl AppCore {
         }
     }
 
+    /// The Meters the current layout shows.
+    fn shown_meters(&self) -> Vec<usize> {
+        match self.mode {
+            LayoutMode::Bar => self
+                .layout
+                .meters
+                .iter()
+                .map(|(m, _)| *m)
+                .chain(self.layout.pop_outs.iter().map(|p| p.meter))
+                .collect(),
+            LayoutMode::Window => self.window.tree.meters(),
+        }
+    }
+
+    /// A Meter for a new pane: one no layout shows, else a new one. Either
+    /// way it becomes a copy of `like` (settings, pick, Source label) and
+    /// starts at its rate.
+    fn spare_meter(&mut self, like: usize) -> usize {
+        let used: Vec<usize> = self
+            .window
+            .tree
+            .meters()
+            .into_iter()
+            .chain(self.layout.meters.iter().map(|(m, _)| *m))
+            .chain(self.layout.pop_outs.iter().map(|p| p.meter))
+            .collect();
+        let settings = self.meters[like].meter.settings();
+        let slot = MeterSlot {
+            meter: Meter::new(settings),
+            pick: self.meters[like].pick.clone(),
+            show_source_label: self.meters[like].show_source_label,
+            showing: None,
+        };
+        let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {
+            Some(i) => {
+                self.meters[i] = slot;
+                i
+            }
+            None => {
+                self.meters.push(slot);
+                self.meters.len() - 1
+            }
+        };
+        match self.listen_to {
+            ListenTo::SystemCapture => {
+                if let Some(rate) = self.meters[like].meter.sample_rate() {
+                    self.meters[index].meter.start(rate);
+                }
+            }
+            ListenTo::SendPlugins => {
+                let now = self.drawn_at.unwrap_or_default();
+                self.route(now);
+            }
+        }
+        index
+    }
+
     fn drawn_window(&self, key: WindowKey) -> Option<&WindowScene> {
         self.drawn.as_ref()?.windows.iter().find(|w| w.key == key)
     }
@@ -754,7 +914,8 @@ impl AppCore {
         self.drawn.as_ref()
     }
 
-    fn build_scene(&mut self, note: bool) -> Scene {
+    /// Bar mode's windows: the Bar and its Pop-outs, and where each Meter goes.
+    fn bar_windows(&self) -> (Vec<(WindowKey, usize, Frame)>, Vec<WindowScene>) {
         let bar = &self.layout;
         let mut placed: Vec<(WindowKey, usize, Frame)> = Vec::new();
         let mut start = 0.0;
@@ -778,13 +939,7 @@ impl AppCore {
             placed.push((WindowKey::Bar, meter, frame));
         }
         for pop_out in &bar.pop_outs {
-            let whole = Frame {
-                x: 0.0,
-                y: 0.0,
-                width: 1.0,
-                height: 1.0,
-            };
-            placed.push((WindowKey::PopOut(pop_out.meter), pop_out.meter, whole));
+            placed.push((WindowKey::PopOut(pop_out.meter), pop_out.meter, WHOLE));
         }
         let mut windows = vec![WindowScene {
             key: WindowKey::Bar,
@@ -796,6 +951,7 @@ impl AppCore {
             screen: Some(bar.screen),
             edge: Some(bar.edge),
             meters: Vec::new(),
+            dividers: Vec::new(),
         }];
         for pop_out in &bar.pop_outs {
             windows.push(WindowScene {
@@ -811,8 +967,39 @@ impl AppCore {
                 screen: None,
                 edge: None,
                 meters: Vec::new(),
+                dividers: Vec::new(),
             });
         }
+        (placed, windows)
+    }
+
+    /// Window mode's window, its panes and dividers.
+    fn pane_windows(&self) -> (Vec<(WindowKey, usize, Frame)>, Vec<WindowScene>) {
+        let (panes, dividers) = self.window.tree.place(WHOLE);
+        let placed = panes
+            .into_iter()
+            .map(|(meter, frame)| (WindowKey::Main, meter, frame))
+            .collect();
+        let window = WindowScene {
+            key: WindowKey::Main,
+            title: "Das-Meter".to_owned(),
+            frame: self.window.frame,
+            on_top: self.window.on_top,
+            reserve_space: false,
+            over_fullscreen: false,
+            screen: None,
+            edge: None,
+            meters: Vec::new(),
+            dividers,
+        };
+        (placed, vec![window])
+    }
+
+    fn build_scene(&mut self, note: bool) -> Scene {
+        let (placed, mut windows) = match self.mode {
+            LayoutMode::Bar => self.bar_windows(),
+            LayoutMode::Window => self.pane_windows(),
+        };
         for (key, i, frame) in placed {
             let pointer = self.pointer.filter(|(w, _)| *w == key).map(|(_, p)| p);
             let (state, source) = match self.listen_to {
@@ -887,6 +1074,7 @@ impl AppCore {
             },
             palette: self.palette.clone(),
             listen_to: self.listen_to,
+            mode: self.mode,
             send_plugins,
             menu: self.menu,
             settings_open: self.settings_open,
@@ -930,6 +1118,14 @@ impl AppCore {
             .collect()
     }
 }
+
+/// A whole window, as fractions of itself.
+const WHOLE: Frame = Frame {
+    x: 0.0,
+    y: 0.0,
+    width: 1.0,
+    height: 1.0,
+};
 
 /// The height of a row in the "Pick a Send Plugin" list, as a fraction of the Meter.
 const PICK_ROW: f32 = 0.14;

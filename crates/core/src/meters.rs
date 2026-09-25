@@ -126,7 +126,46 @@ pub enum MeterSettings {
     Stereometer(StereometerMeterSettings),
 }
 
+/// Which of the four Meters a pane shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeterKind {
+    Waveform,
+    Spectrum,
+    Loudness,
+    Stereometer,
+}
+
+impl MeterKind {
+    pub const ALL: [MeterKind; 4] = [
+        MeterKind::Waveform,
+        MeterKind::Spectrum,
+        MeterKind::Loudness,
+        MeterKind::Stereometer,
+    ];
+}
+
 impl MeterSettings {
+    /// A Meter of `kind` on default settings.
+    pub fn default_of(kind: MeterKind) -> MeterSettings {
+        match kind {
+            MeterKind::Waveform => MeterSettings::Waveform(WaveformMeterSettings::default()),
+            MeterKind::Spectrum => MeterSettings::Spectrum(SpectrumMeterSettings::default()),
+            MeterKind::Loudness => MeterSettings::Loudness(LoudnessMeterSettings::default()),
+            MeterKind::Stereometer => {
+                MeterSettings::Stereometer(StereometerMeterSettings::default())
+            }
+        }
+    }
+
+    pub fn kind(&self) -> MeterKind {
+        match self {
+            MeterSettings::Waveform(_) => MeterKind::Waveform,
+            MeterSettings::Spectrum(_) => MeterKind::Spectrum,
+            MeterSettings::Loudness(_) => MeterKind::Loudness,
+            MeterSettings::Stereometer(_) => MeterKind::Stereometer,
+        }
+    }
+
     /// The Meter's name, as menus show it.
     pub fn kind_name(&self) -> &'static str {
         match self {
@@ -265,7 +304,7 @@ impl Meter {
         }
     }
 
-    fn sample_rate(&self) -> Option<u32> {
+    pub fn sample_rate(&self) -> Option<u32> {
         Some(match self.analyser.as_ref()? {
             Analyser::Waveform(a) => a.sample_rate(),
             Analyser::Spectrum(a) => a.sample_rate(),

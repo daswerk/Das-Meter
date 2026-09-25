@@ -5,8 +5,9 @@
 
 use dasmeter_analysis::{ChannelLevels, LoudnessReadings};
 
-use crate::layout::{Edge, Rect, ScreenMode, WindowKey};
+use crate::layout::{Edge, LayoutMode, Rect, ScreenMode, WindowKey};
 use crate::meters::{MeterSettings, MeterView};
+use crate::panes::Divider;
 use crate::settings::AppSettings;
 use crate::sources::ListenTo;
 use crate::theme::{Colour, Palette};
@@ -19,6 +20,8 @@ pub struct Scene {
     pub notes: Vec<Note>,
     pub palette: Palette,
     pub listen_to: ListenTo,
+    /// Bar mode or Window mode.
+    pub mode: LayoutMode,
     /// The Send Plugins a Meter menu's Source item lists: every one that isn't gone.
     pub send_plugins: Vec<SendPluginItem>,
     /// The open Meter menu, if any.
@@ -69,6 +72,8 @@ pub struct WindowScene {
     /// The edge the Bar docks to; `None` for other windows.
     pub edge: Option<Edge>,
     pub meters: Vec<MeterScene>,
+    /// Window mode's split dividers, which the user drags; empty elsewhere.
+    pub dividers: Vec<Divider>,
 }
 
 /// One Meter: where it sits in its window and what it shows.

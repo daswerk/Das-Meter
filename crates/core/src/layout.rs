@@ -131,6 +131,18 @@ pub enum WindowKey {
     Bar,
     /// The Pop-out showing this Meter.
     PopOut(usize),
+    /// Window mode's window.
+    Main,
+}
+
+/// How the Meters are laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    /// A strip docked to a screen edge, with Pop-outs. The default.
+    #[default]
+    Bar,
+    /// One ordinary window split into panes.
+    Window,
 }
 
 /// One end of the Bar: left or top (`Start`), right or bottom (`End`).
