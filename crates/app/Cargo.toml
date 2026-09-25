@@ -25,6 +25,7 @@ egui-winit = { version = "0.36", default-features = false, features = ["links"] 
 glyphon = "0.12"
 pollster = "1.0.1"
 raw-window-handle = "0.6"
+rfd = { version = "0.17", default-features = false }
 rtrb = "0.4.0"
 wgpu = "30"
 winit = "0.30.13"

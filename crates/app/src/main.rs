@@ -14,6 +14,7 @@ mod meters;
 mod painter;
 mod preset_files;
 mod send_plugins;
+mod sharing;
 mod shell;
 mod snapshot;
 mod theme_files;

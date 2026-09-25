@@ -41,6 +41,10 @@ pub enum Request {
     ShowPresetInFolder {
         file_name: String,
     },
+    /// Ask where to save the current Preset as a `.dasmeter-preset` file.
+    ExportPreset,
+    /// Ask for a `.dasmeter-preset` file to import.
+    ImportPreset,
 }
 
 impl Actions {
@@ -1275,6 +1279,16 @@ fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
             actions.requests.push(Request::ShowPresetInFolder {
                 file_name: info.file_name.clone(),
             });
+        }
+        if ui
+            .button("Export…")
+            .on_hover_text("One file with the Preset and its own Themes, to share")
+            .clicked()
+        {
+            actions.requests.push(Request::ExportPreset);
+        }
+        if ui.button("Import…").clicked() {
+            actions.requests.push(Request::ImportPreset);
         }
     });
     if info.read_only {

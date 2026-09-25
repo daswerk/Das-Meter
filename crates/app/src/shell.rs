@@ -551,6 +551,8 @@ impl Shell {
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
                 }
+                Request::ExportPreset => crate::sharing::export(&self.core),
+                Request::ImportPreset => crate::sharing::import_chosen(&mut self.core, now),
             }
         }
     }
@@ -934,6 +936,10 @@ impl ApplicationHandler for Shell {
                     _ => {}
                 }
             }
+            // A .dasmeter-preset file dropped on a Bar, Pop-out or Window.
+            WindowEvent::DroppedFile(path) if crate::sharing::is_preset(&path) => {
+                crate::sharing::import(&mut self.core, &path, now);
+            }
             WindowEvent::RedrawRequested => self.draw(id),
             _ => {}
         }
@@ -948,6 +954,10 @@ impl ApplicationHandler for Shell {
             for command in commands {
                 match command {
                     crate::main_menu::Command::Core(event) => self.core.handle(event, now),
+                    crate::main_menu::Command::Export => crate::sharing::export(&self.core),
+                    crate::main_menu::Command::Import => {
+                        crate::sharing::import_chosen(&mut self.core, now);
+                    }
                     crate::main_menu::Command::Open(url) => {
                         if let Some(app) = self.windows.values().next() {
                             app.ui.ctx.open_url(egui::OpenUrl::new_tab(url));

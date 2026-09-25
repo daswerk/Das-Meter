@@ -17,6 +17,10 @@ pub enum Command {
     Core(Event<'static>),
     /// Open this page in the browser.
     Open(&'static str),
+    /// Export the current Preset to a file the user picks.
+    Export,
+    /// Import a Preset file the user picks.
+    Import,
 }
 
 pub struct MainMenu {
@@ -32,6 +36,8 @@ pub struct MainMenu {
     preset_items: Vec<CheckMenuItem>,
     revert: MenuItem,
     save_as_new: MenuItem,
+    export: MenuItem,
+    import: MenuItem,
     shown_presets: Option<PresetScene>,
     clicks: mpsc::Receiver<MenuId>,
     shown: Option<(ListenTo, LayoutMode, bool)>,
@@ -94,6 +100,12 @@ impl MainMenu {
         let presets = Submenu::new("Presets", true);
         let revert = MenuItem::new("Revert Preset", false, None);
         let save_as_new = MenuItem::new("Save as New Preset", true, None);
+        let export = MenuItem::new("Export Preset…", true, None);
+        let import = MenuItem::new(
+            "Import Preset…",
+            true,
+            Some(Accelerator::new(Modifiers::META, Code::KeyO)),
+        );
         let menu = Menu::with_items(&[&app, &listen_to, &presets, &window, &help_menu])
             .expect("build the menu bar");
         menu.init_for_nsapp();
@@ -116,6 +128,8 @@ impl MainMenu {
             preset_items: Vec::new(),
             revert,
             save_as_new,
+            export,
+            import,
             shown_presets: None,
             bar_mode,
             window_mode,
@@ -147,6 +161,10 @@ impl MainMenu {
                     Some(Command::Core(Event::RevertPreset))
                 } else if id == *self.save_as_new.id() {
                     Some(Command::Core(Event::SavePresetAsNew))
+                } else if id == *self.export.id() {
+                    Some(Command::Export)
+                } else if id == *self.import.id() {
+                    Some(Command::Import)
                 } else if let Some(index) = self.preset_items.iter().position(|i| *i.id() == id) {
                     Some(Command::Core(Event::SwitchPreset { index }))
                 } else if id == self.help {
@@ -199,6 +217,9 @@ impl MainMenu {
             let _ = self.presets.append(&PredefinedMenuItem::separator());
             let _ = self.presets.append(&self.revert);
             let _ = self.presets.append(&self.save_as_new);
+            let _ = self.presets.append(&PredefinedMenuItem::separator());
+            let _ = self.presets.append(&self.import);
+            let _ = self.presets.append(&self.export);
         }
         for (i, item) in self.preset_items.iter().enumerate() {
             item.set_checked(presets.current == Some(i));
