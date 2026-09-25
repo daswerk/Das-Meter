@@ -26,12 +26,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Linux build dependencies (ALSA, PipeWire, X11/Wayland)
+      - name: Linux build dependencies (ALSA, PipeWire, X11/Wayland; X11/XCB/GL for the Send Plugin's window)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libpipewire-0.3-dev libclang-dev pkg-config \
-            libxkbcommon-dev libwayland-dev
+            libxkbcommon-dev libwayland-dev libx11-dev libx11-xcb-dev libxcursor-dev \
+            libxcb1-dev libxcb-icccm4-dev libgl1-mesa-dev
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
