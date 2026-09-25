@@ -13,16 +13,21 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-clack-extensions = { version = "0.2", features = ["clack-plugin", "audio-ports", "state", "timer", "track-info"] }
+clack-extensions = { version = "0.2", features = ["clack-plugin", "audio-ports", "gui", "raw-window-handle_05", "state", "timer", "track-info"] }
 clack-plugin = "0.2"
 clap-wrapper = "0.3.1"
 dasmeter-transport = { path = "../transport" }
+# The plugin window. Neither is on crates.io; pinned to the baseview revision
+# egui-baseview builds against, so both use the same one.
+baseview = { git = "https://github.com/RustAudio/baseview.git", rev = "237d323c729f3aa99476ba3efa50129c5e86cad3" }
+egui-baseview = { git = "https://github.com/BillyDM/egui-baseview.git", rev = "11f487fe915d6208961064e619474b98f971594a", default-features = false, features = ["opengl", "keyboard_focus_workaround", "tracing"] }
+raw-window-handle = "0.5"
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-clack-extensions = { version = "0.2", features = ["clack-host", "state", "track-info", "timer", "audio-ports"] }
+clack-extensions = { version = "0.2", features = ["clack-host", "gui", "state", "track-info", "timer", "audio-ports"] }
 clack-host = { version = "0.2", features = ["clack-plugin"] }
 clack-plugin = "0.2"
 

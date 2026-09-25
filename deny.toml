@@ -8,6 +8,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # ttf-parser is unmaintained (no fix, no vulnerability). It comes in through
+    # egui's font rendering (ab_glyph) in the Send Plugin window, with no egui
+    # release that avoids it yet. Drop this when it moves to skrifa.
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained, no alternative in egui 0.33" },
+]
 
 [licenses]
 version = 2
@@ -38,3 +44,8 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# The Send Plugin's window: neither crate is published on crates.io.
+allow-git = [
+    "https://github.com/RustAudio/baseview.git",
+    "https://github.com/BillyDM/egui-baseview.git",
+]

@@ -7,12 +7,15 @@
 //! - [`link`]: the main thread's slot in the transport, heartbeat and status.
 //! - [`send`]: the audio thread's path into the transport.
 //! - [`plugin`]: the CLAP glue.
+//! - [`window`]: the plugin window.
 
 mod animals;
 pub mod identity;
 pub mod link;
 pub mod plugin;
+mod reaper;
 pub mod send;
+pub mod window;
 
 // VST3 (`GetPluginFactory`) and, on macOS, AUv2 (`GetPluginFactoryAUV2`) entry
 // points that wrap the CLAP entry above (ADR 0001).

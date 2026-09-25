@@ -131,3 +131,29 @@ fn without_a_host_timer_the_heartbeat_keeps_going() {
     drop(plugin);
     remove_table(&name);
 }
+
+#[test]
+fn offers_a_small_fixed_embedded_window() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let name = table("gui");
+    let mut plugin = Instance::new(&name, None, 512);
+
+    let gui = plugin.gui();
+    assert!(gui.embedded, "{gui:?}");
+    assert!(!gui.floating, "{gui:?}");
+    assert_eq!(gui.preferred, Some((true, false)));
+    assert!(!gui.can_resize);
+    let logical = (dasmeter_send::window::WIDTH, dasmeter_send::window::HEIGHT);
+    assert_eq!(gui.size, Some(logical));
+    if cfg!(target_os = "macos") {
+        // Cocoa sizes are in points; the window scales with the system.
+        assert!(!gui.takes_scale);
+        assert_eq!(plugin.gui().size, Some(logical));
+    } else {
+        assert!(gui.takes_scale);
+        assert_eq!(plugin.gui().size, Some((logical.0 * 2, logical.1 * 2)));
+    }
+
+    drop(plugin);
+    remove_table(&name);
+}

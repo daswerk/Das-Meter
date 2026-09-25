@@ -1,6 +1,6 @@
 //! The CLAP plugin: glue between the host and [`Link`] / [`AudioSend`].
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,9 @@ use std::time::Instant;
 use clack_extensions::audio_ports::{
     AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPorts,
     PluginAudioPortsImpl,
+};
+use clack_extensions::gui::{
+    GuiApiType, GuiConfiguration, GuiSize, PluginGui, PluginGuiImpl, Window as ParentWindow,
 };
 use clack_extensions::state::{PluginState, PluginStateImpl};
 use clack_extensions::timer::{HostTimer, PluginTimer, PluginTimerImpl, TimerId};
@@ -21,7 +24,9 @@ use dasmeter_transport::{HEARTBEAT_INTERVAL, TABLE_NAME};
 
 use crate::identity::{StdRandom, Track};
 use crate::link::{Link, Status};
+use crate::reaper::HostReaper;
 use crate::send::{AudioSend, Block, pass_through};
+use crate::window::{self, SharedLink, Window, lock};
 
 /// The plugin's CLAP ID.
 pub const PLUGIN_ID: &str = "com.daswerk.das-meter.send";
@@ -53,6 +58,7 @@ impl Plugin for SendPlugin {
     fn declare_extensions(builder: &mut PluginExtensions<Self>, _shared: Option<&Shared>) {
         builder
             .register::<PluginAudioPorts>()
+            .register::<PluginGui>()
             .register::<PluginState>()
             .register::<PluginTimer>()
             .register::<PluginTrackInfo>();
@@ -91,13 +97,13 @@ impl DefaultPluginFactory for SendPlugin {
             shared,
             timer: timer_ext.zip(timer),
             track_info: host.get_extension::<HostTrackInfo>(),
-            state: RefCell::new(State {
-                link: Link::with(&table_name(), StdRandom),
-                active: false,
-            }),
+            reaper: host.get_extension::<HostReaper>(),
+            link: Arc::new(Mutex::new(Link::with(&table_name(), StdRandom))),
+            active: Cell::new(false),
+            gui: RefCell::new(Gui::default()),
         };
         if main.timer.is_none() {
-            main.state.borrow_mut().link.use_own_heartbeat();
+            lock(&main.link).use_own_heartbeat();
         }
         main.read_track();
         Ok(main)
@@ -117,12 +123,19 @@ pub struct MainThread<'a> {
     shared: &'a Shared,
     timer: Option<(HostTimer, TimerId)>,
     track_info: Option<HostTrackInfo>,
-    state: RefCell<State>,
+    reaper: Option<HostReaper>,
+    /// Shared with the window, which runs on the main thread too.
+    link: SharedLink,
+    active: Cell<bool>,
+    gui: RefCell<Gui>,
 }
 
-struct State {
-    link: Link,
-    active: bool,
+/// The plugin window's host-side state.
+#[derive(Default)]
+struct Gui {
+    /// Set by the host on Windows and Linux; macOS scales on its own.
+    scale: Option<f64>,
+    window: Option<Window>,
 }
 
 impl MainThread<'_> {
@@ -136,7 +149,7 @@ impl MainThread<'_> {
         let Some(info) = track_info.get(&mut host, &mut buffer) else {
             return;
         };
-        let track = Track {
+        let mut track = Track {
             name: info
                 .name()
                 .map(|name| String::from_utf8_lossy(name).into_owned()),
@@ -145,22 +158,30 @@ impl MainThread<'_> {
                 .filter(|c| c.alpha != 0)
                 .map(|c| (u32::from(c.red) << 16) | (u32::from(c.green) << 8) | u32::from(c.blue)),
         };
+        if let Some(colour) = self
+            .reaper
+            .and_then(|reaper| reaper.track_colour(&self.host))
+        {
+            // REAPER's track-info colour is tinted by the theme; its own API isn't.
+            track.colour = colour;
+        }
         let mono = info.audio_channel_count() == Some(1);
-        let mut state = self.state.borrow_mut();
-        state.link.set_track(track);
+        let mut link = lock(&self.link);
+        link.set_track(track);
         if mono {
-            state.link.set_mono(true);
+            link.set_mono(true);
         }
     }
 
-    /// The connection status, for the window.
+    /// The connection status, as the window shows it.
     pub fn status(&self) -> Status {
-        self.state.borrow().link.status()
+        lock(&self.link).status()
     }
 }
 
 impl Drop for MainThread<'_> {
     fn drop(&mut self) {
+        self.gui.get_mut().window = None;
         if let Some((timer, id)) = self.timer {
             let _ = timer.unregister_timer(&self.host, id);
         }
@@ -171,9 +192,9 @@ impl<'a> PluginMainThread<'a, Shared> for MainThread<'a> {}
 
 impl PluginTimerImpl for MainThread<'_> {
     fn on_timer(&self, _timer_id: TimerId) {
-        let mut state = self.state.borrow_mut();
-        state.link.set_mono(self.shared.mono.load(Relaxed));
-        state.link.tick(Instant::now());
+        let mut link = lock(&self.link);
+        link.set_mono(self.shared.mono.load(Relaxed));
+        link.tick(Instant::now());
     }
 }
 
@@ -185,7 +206,7 @@ impl PluginTrackInfoImpl for MainThread<'_> {
 
 impl PluginStateImpl for MainThread<'_> {
     fn save(&self, output: &mut OutputStream) -> Result<(), PluginError> {
-        let bytes = self.state.borrow().link.save();
+        let bytes = lock(&self.link).save();
         output.write_all(&bytes)?;
         Ok(())
     }
@@ -193,12 +214,10 @@ impl PluginStateImpl for MainThread<'_> {
     fn load(&self, input: &mut InputStream) -> Result<(), PluginError> {
         let mut bytes = Vec::new();
         input.read_to_end(&mut bytes)?;
-        let mut state = self.state.borrow_mut();
-        let reclaimed = state
-            .link
+        let reclaimed = lock(&self.link)
             .load(&bytes)
             .map_err(|_| PluginError::Message("unreadable Das-Meter Send state"))?;
-        if reclaimed.is_some() && state.active {
+        if reclaimed.is_some() && self.active.get() {
             // The slot changed under the audio thread; reactivate to pick up the new one.
             self.host.shared().request_restart();
         }
@@ -226,6 +245,82 @@ impl PluginAudioPortsImpl for MainThread<'_> {
     }
 }
 
+impl PluginGuiImpl for MainThread<'_> {
+    fn is_api_supported(&self, configuration: GuiConfiguration) -> bool {
+        !configuration.is_floating
+            && GuiApiType::default_for_current_platform() == Some(configuration.api_type)
+    }
+
+    fn get_preferred_api(&self) -> Option<GuiConfiguration<'_>> {
+        Some(GuiConfiguration {
+            api_type: GuiApiType::default_for_current_platform()?,
+            is_floating: false,
+        })
+    }
+
+    fn create(&self, configuration: GuiConfiguration) -> Result<(), PluginError> {
+        if self.is_api_supported(configuration) {
+            Ok(())
+        } else {
+            Err(PluginError::Message(
+                "Das-Meter Send only has an embedded window",
+            ))
+        }
+    }
+
+    fn destroy(&self) {
+        self.gui.borrow_mut().window = None;
+    }
+
+    fn set_scale(&self, scale: f64) -> Result<(), PluginError> {
+        if GuiApiType::default_for_current_platform().is_some_and(|api| api.uses_logical_size()) {
+            // macOS sizes windows in points and scales on its own. REAPER calls
+            // this anyway; taking its factor would draw at the wrong size.
+            return Err(PluginError::Message("the window scales with the system"));
+        }
+        self.gui.borrow_mut().scale = Some(scale);
+        Ok(())
+    }
+
+    fn get_size(&self) -> Option<GuiSize> {
+        let scale = self.gui.borrow().scale.unwrap_or(1.0);
+        let physical = |logical: u32| (f64::from(logical) * scale).round() as u32;
+        Some(GuiSize {
+            width: physical(window::WIDTH),
+            height: physical(window::HEIGHT),
+        })
+    }
+
+    fn set_size(&self, _size: GuiSize) -> Result<(), PluginError> {
+        Err(PluginError::Message(
+            "the Das-Meter Send window has a fixed size",
+        ))
+    }
+
+    fn set_parent(&self, parent: ParentWindow) -> Result<(), PluginError> {
+        let mut gui = self.gui.borrow_mut();
+        gui.window = None;
+        let window = Window::open(&parent, self.link.clone(), gui.scale)
+            .map_err(|_| PluginError::Message("couldn't read the system font"))?;
+        gui.window = Some(window);
+        Ok(())
+    }
+
+    fn set_transient(&self, _window: ParentWindow) -> Result<(), PluginError> {
+        Err(PluginError::Message(
+            "Das-Meter Send has no floating window",
+        ))
+    }
+
+    fn show(&self) -> Result<(), PluginError> {
+        Ok(())
+    }
+
+    fn hide(&self) -> Result<(), PluginError> {
+        Ok(())
+    }
+}
+
 /// The audio thread's state.
 pub struct Processor {
     send: AudioSend,
@@ -238,9 +333,8 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
         shared: &'a Shared,
         audio_config: PluginAudioConfiguration,
     ) -> Result<Self, PluginError> {
-        let mut state = main_thread.state.borrow_mut();
-        let writer = state.link.activate(audio_config.sample_rate.round() as u32);
-        state.active = true;
+        let writer = lock(&main_thread.link).activate(audio_config.sample_rate.round() as u32);
+        main_thread.active.set(true);
         Ok(Processor {
             send: AudioSend::new(writer, shared.mono.clone()),
         })
@@ -257,7 +351,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
     }
 
     fn deactivate(self, main_thread: &MainThread<'a>) {
-        main_thread.state.borrow_mut().active = false;
+        main_thread.active.set(false);
     }
 }
 

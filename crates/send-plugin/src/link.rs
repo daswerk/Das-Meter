@@ -7,7 +7,9 @@
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use dasmeter_transport::{AudioWriter, Details, HEARTBEAT_INTERVAL, Reader, TABLE_NAME, Writer};
+use dasmeter_transport::{
+    AudioWriter, Details, HEARTBEAT_INTERVAL, Reader, SlotState, TABLE_NAME, Writer,
+};
 
 use crate::identity::{Identity, Other, Random, StdRandom, Track};
 
@@ -118,6 +120,11 @@ impl<R: Random> Link<R> {
         self.status
     }
 
+    /// The name the app shows for this Send Plugin, once it has a slot.
+    pub fn shown_name(&self) -> Option<&str> {
+        self.details.as_ref().map(|details| details.name.as_str())
+    }
+
     /// The details the app sees now, once connected.
     pub fn details(&self) -> Option<&Details> {
         self.details.as_ref()
@@ -217,7 +224,7 @@ impl<R: Random> Link<R> {
         Ok(None)
     }
 
-    /// The other live Send Plugins in the table, without this one.
+    /// The other live Send Plugins in the table, without this one and gone ones.
     fn others(&mut self, now: Instant) -> Vec<Other> {
         if self.reader.is_none() {
             self.reader = Reader::open_named(&self.table).ok();
@@ -229,7 +236,8 @@ impl<R: Random> Link<R> {
         reader
             .slots(now)
             .into_iter()
-            .filter(|slot| Some(slot.id) != own)
+            // A crashed host's Send Plugins stay listed as gone; their names are free.
+            .filter(|slot| Some(slot.id) != own && slot.state != SlotState::Gone)
             .map(|slot| Other {
                 id: slot.id,
                 name: slot.details.name,

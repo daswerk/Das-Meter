@@ -3,6 +3,7 @@
 
 #![allow(dead_code)] // each test binary uses a different part
 
+use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui};
 use clack_extensions::state::PluginState;
 use clack_host::prelude::*;
 use clack_plugin::entry::SinglePluginEntry;
@@ -116,6 +117,33 @@ impl Instance {
         bytes
     }
 
+    /// Asks the plugin's GUI extension what a host would before opening the
+    /// window. Doesn't open one: that needs a parent window.
+    pub fn gui(&mut self) -> Gui {
+        let handle = self.instance.plugin_handle();
+        let gui = handle.get_extension::<PluginGui>().expect("gui extension");
+        let platform = GuiApiType::default_for_current_platform().expect("a windowing API");
+        let embedded = GuiConfiguration {
+            api_type: platform,
+            is_floating: false,
+        };
+        let floating = GuiConfiguration {
+            api_type: platform,
+            is_floating: true,
+        };
+        let preferred = gui
+            .get_preferred_api(&handle)
+            .map(|c| (c.api_type == platform, c.is_floating));
+        Gui {
+            embedded: gui.is_api_supported(&handle, embedded),
+            floating: gui.is_api_supported(&handle, floating),
+            preferred,
+            size: gui.get_size(&handle).map(|s| (s.width, s.height)),
+            can_resize: gui.can_resize(&handle),
+            takes_scale: gui.set_scale(&handle, 2.0).is_ok(),
+        }
+    }
+
     fn load(&mut self, bytes: &[u8]) {
         let handle = self.instance.plugin_handle();
         let state = handle
@@ -123,6 +151,18 @@ impl Instance {
             .expect("state extension");
         state.load(&handle, &mut &bytes[..]).expect("load");
     }
+}
+
+/// What the plugin tells a host about its window.
+#[derive(Debug)]
+pub struct Gui {
+    pub embedded: bool,
+    pub floating: bool,
+    /// (the platform's API, floating)
+    pub preferred: Option<(bool, bool)>,
+    pub size: Option<(u32, u32)>,
+    pub can_resize: bool,
+    pub takes_scale: bool,
 }
 
 impl Drop for Instance {
