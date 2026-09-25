@@ -764,8 +764,10 @@ fn menu_contents(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut A
 fn menu_window(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) -> Option<egui::Vec2> {
     let menu = scene.menu?;
     let frame = egui::Frame::menu(&ctx.global_style());
+    // Measured whole, even while the window is still smaller than the menu.
     let response = egui::Area::new(egui::Id::new("meter menu"))
         .fixed_pos(egui::Pos2::ZERO)
+        .constrain(false)
         .show(ctx, |ui| {
             frame.show(ui, |ui| menu_contents(ui, scene, menu.meter, actions));
         });

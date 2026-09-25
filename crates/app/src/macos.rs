@@ -43,33 +43,41 @@ fn ns_window(window: &Window) -> Option<objc2::rc::Retained<NSWindow>> {
 }
 
 /// Lets `window` show over fullscreen apps (on every Space, as a fullscreen
-/// app's auxiliary window), or keeps it out of their Spaces.
+/// app's auxiliary window), or keeps it out of their Spaces. It only works
+/// while the app has no Dock icon: see [`set_dock_icon`].
 pub fn set_over_fullscreen(window: &Window, over: bool) {
-    let (Some(mtm), Some(ns_window)) = (MainThreadMarker::new(), ns_window(window)) else {
+    let Some(ns_window) = ns_window(window) else {
         return;
     };
-    if !over {
-        ns_window.setCollectionBehavior(NSWindowCollectionBehavior::Managed);
+    ns_window.setCollectionBehavior(if over {
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+    } else {
+        NSWindowCollectionBehavior::Managed
+    });
+}
+
+/// Shows or hides the app's Dock icon. Since macOS 10.14 an app with a Dock
+/// icon can't put windows over other apps' fullscreen windows, so the icon
+/// goes while a window should show over them (as Electron does for
+/// `visibleOnFullScreen`).
+pub fn set_dock_icon(shown: bool) {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let policy = if shown {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    if app.activationPolicy() == policy {
         return;
     }
-    // macOS only lets an ordinary (Dock) app's window into another app's
-    // fullscreen Space if the behaviour is set while the app is an accessory
-    // app, so the app turns into one for a moment (as Electron does for
-    // `visibleOnFullScreen`). The Dock icon stays.
-    let app = NSApplication::sharedApplication(mtm);
-    let regular = app.activationPolicy() == NSApplicationActivationPolicy::Regular;
-    if regular {
-        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-    }
-    ns_window.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary,
-    );
-    if regular {
-        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-        #[allow(deprecated)]
-        app.activateIgnoringOtherApps(true);
-    }
+    app.setActivationPolicy(policy);
+    // Changing the policy deactivates the app; stay in front.
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
 }
 
 /// Brings `window` in front of other apps' windows without giving it the

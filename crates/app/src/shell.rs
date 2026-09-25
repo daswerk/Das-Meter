@@ -84,7 +84,9 @@ enum Drag {
 /// How close to a divider or the Bar's inner edge the pointer grabs it, in logical px.
 const GRAB: f32 = 5.0;
 
-/// The menu window's size before its content is measured.
+/// The menu window's size for placing it before its content is measured.
+/// (It opens at 1 × 1 px and takes its content's size on its first frame, so
+/// nothing bigger flashes up.)
 const MENU_SIZE: (f32, f32) = (300.0, 420.0);
 const SETTINGS_SIZE: (f32, f32) = (460.0, 640.0);
 
@@ -367,6 +369,8 @@ impl Shell {
                 app.title.clone_from(&window_scene.title);
             }
         }
+        #[cfg(target_os = "macos")]
+        crate::macos::set_dock_icon(!scene.windows.iter().any(|w| w.over_fullscreen));
         let gone: Vec<WindowId> = self
             .windows
             .iter()
@@ -407,7 +411,7 @@ impl Shell {
                             .with_resizable(false)
                             .with_window_level(WindowLevel::AlwaysOnTop)
                             .with_position(at)
-                            .with_inner_size(LogicalSize::new(MENU_SIZE.0, MENU_SIZE.1));
+                            .with_inner_size(LogicalSize::new(1.0, 1.0));
                         self.open(event_loop, Role::Menu, attributes);
                     }
                 }
@@ -481,6 +485,7 @@ impl Shell {
         if let (Role::Menu, Some(size)) = (app.role, app.ui.content_size) {
             let [width, height] = app.logical_size();
             if (size.x - width).abs() > 1.0 || (size.y - height).abs() > 1.0 {
+                app.window.request_redraw();
                 let _ = app
                     .window
                     .request_inner_size(LogicalSize::new(size.x, size.y));
