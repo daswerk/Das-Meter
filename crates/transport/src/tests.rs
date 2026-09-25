@@ -325,6 +325,28 @@ fn a_heartbeat_timeout_means_gone() {
 }
 
 #[test]
+fn a_heartbeat_handle_beats_from_another_thread_until_released() {
+    let table = TestTable::new();
+    let mut reader = table.reader();
+    let claimed = table.claim(None);
+    let t0 = Instant::now();
+    let heartbeat = claimed.writer.heartbeat_handle();
+    only_slot(&mut reader, t0);
+
+    std::thread::spawn(move || heartbeat.beat()).join().unwrap();
+    only_slot(&mut reader, t0 + Duration::from_millis(1_900));
+    // 3 s after the claim, but only 1.1 s after the reader saw the beat.
+    assert_ne!(
+        only_slot(&mut reader, t0 + Duration::from_millis(3_000)).state,
+        SlotState::Gone
+    );
+
+    let heartbeat = claimed.writer.heartbeat_handle();
+    drop(claimed);
+    assert!(!heartbeat.beat(), "a released slot stops the heartbeat");
+}
+
+#[test]
 fn an_exited_host_process_means_gone() {
     let table = TestTable::new();
     let mut reader = table.reader();

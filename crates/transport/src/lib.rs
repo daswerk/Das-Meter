@@ -20,7 +20,7 @@ mod writer;
 pub use layout::{NAME_CAPACITY, RING_FRAMES, SLOT_COUNT};
 pub use reader::{Read, Reader, SlotInfo, SlotRef, SlotState};
 pub use table::Details;
-pub use writer::{AudioWriter, Claimed, Writer};
+pub use writer::{AudioWriter, Claimed, Heartbeat, Writer};
 
 /// Name of the shared-memory table on macOS. The layout version is part of the name.
 pub const TABLE_NAME: &str = "dasmeter.v1";

@@ -13,7 +13,19 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+clack-extensions = { version = "0.2", features = ["clack-plugin", "audio-ports", "state", "timer", "track-info"] }
+clack-plugin = "0.2"
+clap-wrapper = "0.3.1"
 dasmeter-transport = { path = "../transport" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+clack-extensions = { version = "0.2", features = ["clack-host", "state", "track-info", "timer", "audio-ports"] }
+clack-host = { version = "0.2", features = ["clack-plugin"] }
+clack-plugin = "0.2"
+
+[[bench]]
+name = "process"
+harness = false

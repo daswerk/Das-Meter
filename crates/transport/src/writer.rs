@@ -141,6 +141,16 @@ impl Writer {
         }
     }
 
+    /// A handle that bumps this slot's heartbeat from another thread, for hosts that
+    /// give the plugin no main-thread timer.
+    pub fn heartbeat_handle(&self) -> Heartbeat {
+        Heartbeat {
+            table: self.table.clone(),
+            index: self.index,
+            generation: self.generation,
+        }
+    }
+
     /// Whether the app has bumped its heartbeat within [`GONE_AFTER`]. Poll it from the same timer.
     pub fn app_running(&mut self, now: Instant) -> bool {
         let beat = self.table.header().app_heartbeat.load(Relaxed);
@@ -182,6 +192,27 @@ impl Drop for Writer {
                 .state
                 .compare_exchange(SLOT_LIVE, SLOT_FREE, AcqRel, Relaxed);
         }
+    }
+}
+
+/// Bumps a claimed slot's heartbeat from any thread. See [`Writer::heartbeat_handle`].
+pub struct Heartbeat {
+    table: Table,
+    index: usize,
+    generation: u32,
+}
+
+impl Heartbeat {
+    /// Bumps the heartbeat. Returns `false` once the slot has been released, so a
+    /// heartbeat thread knows to stop.
+    pub fn beat(&self) -> bool {
+        let slot = self.table.slot(self.index);
+        if slot.generation.load(Relaxed) != self.generation || slot.state.load(Relaxed) != SLOT_LIVE
+        {
+            return false;
+        }
+        slot.heartbeat.fetch_add(1, Relaxed);
+        true
     }
 }
 
