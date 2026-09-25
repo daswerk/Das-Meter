@@ -34,10 +34,18 @@ winit = "0.30.13"
 workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Self-update (ADR 0004): the release signature and GitHub's release JSON.
+minisign-verify = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 muda = { version = "0.20", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSScreen", "NSWindow", "NSView", "NSResponder", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSFileManager", "NSGeometry", "NSString", "NSURL"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Signs test data for the update's signature checks.
+minisign = "0.10"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"

@@ -1,6 +1,6 @@
 //! The macOS menu bar: the app menu with Settings…, Listen to and Help.
 //!
-//! A skeleton for now: the Presets, Bar and install tickets add their items.
+//! Also Check for Updates, Update and Uninstall (macOS packaging).
 
 use std::sync::mpsc;
 
@@ -21,6 +21,14 @@ pub enum Command {
     Export,
     /// Import a Preset file the user picks.
     Import,
+    /// Copy the Send Plugin into the per-user plug-in folders.
+    InstallSendPlugin,
+    /// Look for a new version now.
+    CheckForUpdates,
+    /// Install the new version the check found.
+    Update,
+    /// Remove the app and its Send Plugins, after asking.
+    Uninstall,
 }
 
 pub struct MainMenu {
@@ -40,6 +48,11 @@ pub struct MainMenu {
     export: MenuItem,
     import: MenuItem,
     shown_presets: Option<PresetScene>,
+    install_send_plugin: MenuItem,
+    check_for_updates: MenuItem,
+    update: MenuItem,
+    shown_update: Option<String>,
+    uninstall: MenuItem,
     clicks: mpsc::Receiver<MenuId>,
     shown: Option<(ListenTo, LayoutMode, bool)>,
 }
@@ -60,6 +73,11 @@ impl MainMenu {
         let keep_here = MenuItem::new("Keep Windows Here", false, None);
         let bar_mode = CheckMenuItem::new("Bar Mode", true, true, None);
         let window_mode = CheckMenuItem::new("Window Mode", true, false, None);
+        let install_send_plugin = MenuItem::new("Install Send Plugin…", true, None);
+        let check_for_updates = MenuItem::new("Check for Updates…", true, None);
+        // Enabled, and named for the version, once a check finds one.
+        let update = MenuItem::new("Update Das-Meter…", false, None);
+        let uninstall = MenuItem::new("Uninstall Das-Meter…", true, None);
         let about = AboutMetadata {
             name: Some("Das-Meter".into()),
             version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -70,8 +88,13 @@ impl MainMenu {
             true,
             &[
                 &PredefinedMenuItem::about(None, Some(about)),
+                &check_for_updates,
+                &update,
                 &PredefinedMenuItem::separator(),
                 &settings,
+                &install_send_plugin,
+                &PredefinedMenuItem::separator(),
+                &uninstall,
                 &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::hide(None),
                 &PredefinedMenuItem::hide_others(None),
@@ -135,6 +158,11 @@ impl MainMenu {
             export,
             import,
             shown_presets: None,
+            install_send_plugin,
+            check_for_updates,
+            update,
+            shown_update: None,
+            uninstall,
             bar_mode,
             window_mode,
             clicks,
@@ -173,6 +201,14 @@ impl MainMenu {
                     Some(Command::Import)
                 } else if let Some(index) = self.preset_items.iter().position(|i| *i.id() == id) {
                     Some(Command::Core(Event::SwitchPreset { index }))
+                } else if id == *self.install_send_plugin.id() {
+                    Some(Command::InstallSendPlugin)
+                } else if id == *self.check_for_updates.id() {
+                    Some(Command::CheckForUpdates)
+                } else if id == *self.update.id() {
+                    Some(Command::Update)
+                } else if id == *self.uninstall.id() {
+                    Some(Command::Uninstall)
                 } else if id == self.help {
                     Some(Command::Open(HELP_URL))
                 } else {
@@ -180,6 +216,25 @@ impl MainMenu {
                 }
             })
             .collect()
+    }
+
+    /// Offers the update the check found (or none).
+    pub fn show_update(&mut self, version: Option<&str>) {
+        if self.shown_update.as_deref() == version {
+            return;
+        }
+        self.shown_update = version.map(str::to_string);
+        match version {
+            Some(version) => {
+                self.update
+                    .set_text(format!("Update to Das-Meter {version}…"));
+                self.update.set_enabled(true);
+            }
+            None => {
+                self.update.set_text("Update Das-Meter…");
+                self.update.set_enabled(false);
+            }
+        }
     }
 
     /// Offers Keep Windows Here while a window's display is missing.

@@ -273,6 +273,13 @@ pub enum Event<'a> {
     /// Keep here: every window that's away from its missing display adopts
     /// where it is now.
     KeepHere,
+    /// Show a quiet note from the shell (an update, the Send Plugin refreshed).
+    ShowNote(Note),
+    /// The update check ran at this time (seconds since the Unix epoch). It's
+    /// kept in `settings.toml`, so a relaunch doesn't check again that day.
+    UpdateChecked {
+        at: u64,
+    },
 }
 
 /// What the shell should do next.
@@ -653,6 +660,11 @@ impl AppCore {
         self.app
     }
 
+    /// When the update check last ran (seconds since the Unix epoch; 0 for never).
+    pub fn last_update_check(&self) -> u64 {
+        self.presets.settings.last_update_check
+    }
+
     /// The highest frame-rate cap the settings offer: the display's refresh
     /// rate, and never below the default.
     pub fn max_frame_rate_cap(&self) -> u32 {
@@ -738,6 +750,8 @@ impl AppCore {
             | OpenMenu { .. }
             | CloseMenu
             | ShowSettings(_)
+            | ShowNote(_)
+            | UpdateChecked { .. }
             | ResetLoudness { .. } => {}
             // Auto-save a short pause after the last change (with a Preset open).
             _ if self.presets.current_index().is_some() => {
@@ -1306,6 +1320,11 @@ impl AppCore {
                 }
                 self.screens = screens.to_vec();
                 self.display = self.main_display();
+            }
+            Event::ShowNote(note) => self.show_note(note, now),
+            Event::UpdateChecked { at } => {
+                self.presets.settings.last_update_check = at;
+                self.presets.save_settings();
             }
             Event::KeepHere => {
                 if !self.keep_here() {

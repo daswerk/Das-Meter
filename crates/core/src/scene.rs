@@ -185,6 +185,12 @@ pub enum Note {
     OutputChanged,
     /// A file to import wasn't a Das-Meter Preset; nothing was changed.
     ImportFailed,
+    /// The installed Send Plugin was replaced by this version's.
+    SendPluginUpdated,
+    /// A newer Das-Meter is out.
+    UpdateAvailable,
+    /// Updating failed; the app is unchanged.
+    UpdateFailed,
 }
 
 impl Note {
@@ -192,6 +198,9 @@ impl Note {
         match self {
             Note::OutputChanged => "Output changed: reset",
             Note::ImportFailed => "That file isn't a Das-Meter Preset: nothing was imported",
+            Note::SendPluginUpdated => "Send Plugin updated: restart your DAW to use it",
+            Note::UpdateAvailable => "A new Das-Meter is out: Das-Meter ▸ Update",
+            Note::UpdateFailed => "The update didn't work: Das-Meter is unchanged",
         }
     }
 }

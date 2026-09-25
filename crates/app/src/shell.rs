@@ -27,6 +27,12 @@ use crate::painter::{Painter, UiPaint};
 use crate::send_plugins::{LIST_EVERY, SendPluginInput};
 use crate::ui::{Request, Surface, Ui};
 
+/// Opens a web page in the default browser.
+#[cfg(target_os = "macos")]
+fn open_in_browser(url: &str) {
+    let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
+}
+
 pub fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
@@ -49,6 +55,8 @@ pub fn run() {
         ui_wake: None,
         #[cfg(target_os = "macos")]
         main_menu: None,
+        #[cfg(target_os = "macos")]
+        maintenance: None,
     };
     event_loop.run_app(&mut shell).expect("run the event loop");
 }
@@ -175,6 +183,9 @@ struct Shell {
     ui_wake: Option<Duration>,
     #[cfg(target_os = "macos")]
     main_menu: Option<crate::main_menu::MainMenu>,
+    /// The Send Plugin refresh, updates and uninstall.
+    #[cfg(target_os = "macos")]
+    maintenance: Option<crate::maintenance::Maintenance>,
 }
 
 fn logical(rect: Rect) -> (LogicalPosition<f64>, LogicalSize<f64>) {
@@ -784,6 +795,9 @@ impl ApplicationHandler for Shell {
         if self.main_menu.is_none() {
             let wake = self.wake.clone();
             self.main_menu = Some(crate::main_menu::MainMenu::install(move || wake()));
+            let mut maintenance = crate::maintenance::Maintenance::new(self.wake.clone());
+            maintenance.at_launch(&mut self.core, now);
+            self.maintenance = Some(maintenance);
         }
     }
 
@@ -968,7 +982,35 @@ impl ApplicationHandler for Shell {
                             app.window.request_redraw();
                         }
                     }
+                    crate::main_menu::Command::InstallSendPlugin => {
+                        crate::maintenance::install_send_plugin();
+                    }
+                    crate::main_menu::Command::CheckForUpdates => {
+                        if let Some(maintenance) = &mut self.maintenance {
+                            maintenance.check_now(&mut self.core, now);
+                        }
+                    }
+                    crate::main_menu::Command::Update => {
+                        if let Some(maintenance) = &mut self.maintenance {
+                            maintenance.update(open_in_browser);
+                        }
+                    }
+                    crate::main_menu::Command::Uninstall => {
+                        if crate::maintenance::uninstall() {
+                            event_loop.exit();
+                            return;
+                        }
+                    }
                 }
+            }
+            if let Some(maintenance) = &mut self.maintenance {
+                if maintenance.poll(&mut self.core, now) {
+                    event_loop.exit();
+                    return;
+                }
+                maintenance.check_if_due(&mut self.core, now);
+                let version = maintenance.available().map(|r| r.version.to_string());
+                menu.show_update(version.as_deref());
             }
             let float_on_top = match self.core.mode() {
                 dasmeter_core::LayoutMode::Bar => {

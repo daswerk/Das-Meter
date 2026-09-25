@@ -304,6 +304,8 @@ pub struct StoredSettings {
     /// Off by default, and never prompted for.
     pub launch_at_login: bool,
     pub check_for_updates: bool,
+    /// When the update check last ran, in seconds since the Unix epoch.
+    pub last_update_check: u64,
     pub frame_rate_cap: u32,
     pub show_in_dock: bool,
     pub hotkeys: Vec<Hotkey>,
@@ -318,6 +320,7 @@ impl Default for StoredSettings {
             order: Vec::new(),
             launch_at_login: false,
             check_for_updates: true,
+            last_update_check: 0,
             frame_rate_cap: DEFAULT_FRAME_RATE_CAP,
             show_in_dock: true,
             hotkeys: Vec::new(),
