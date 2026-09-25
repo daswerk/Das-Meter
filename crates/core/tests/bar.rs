@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use dasmeter_core::{
-    AppCore, Decision, Display, Edge, Event, Platform, Rect, Scene, ScreenMode, WindowKey,
+    AppCore, BarEnd, Decision, Display, Edge, Event, Platform, Rect, Scene, ScreenMode, WindowKey,
     WindowScene,
 };
 
@@ -335,4 +335,32 @@ fn nothing_is_drawn_while_hidden() {
     app.send(Event::Visible(true));
     app.now += Duration::from_millis(40);
     assert_eq!(app.core.decide(app.now), Decision::Draw);
+}
+
+#[test]
+fn dragging_the_ends_shortens_the_bar_along_its_edge() {
+    let mut app = App::mac();
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::Start,
+        at: 200.0,
+    });
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::End,
+        at: 1100.0,
+    });
+    let frame = app.bar().frame.unwrap();
+    assert!(
+        near(frame.x, 200.0) && near(frame.width, 900.0),
+        "{frame:?}"
+    );
+    // It never gets shorter than 300 px.
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::End,
+        at: 250.0,
+    });
+    assert!(near(app.bar().frame.unwrap().width, 300.0));
+    // The span is kept as fractions, so a side edge takes the same share of its height.
+    app.send(Event::SetEdge(Edge::Left));
+    let frame = app.bar().frame.unwrap();
+    assert!(near(frame.y, 33.0 + 879.0 * 200.0 / 1512.0), "{frame:?}");
 }

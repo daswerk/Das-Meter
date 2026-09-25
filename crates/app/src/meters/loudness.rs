@@ -7,14 +7,13 @@ use super::labels::Align;
 use super::shapes::Area;
 use super::{Canvas, map};
 
-/// Below this height (logical px) under the numbers, the bars move beside
-/// them instead, as in a short, wide Bar.
-const MIN_BARS_BELOW: f32 = 120.0;
 /// The numbers' column in the side-by-side layout, and the least the bars keep.
 const NUMBERS_WIDTH: f32 = 170.0;
 const MIN_BARS_WIDTH: f32 = 90.0;
 /// The least room between two scale labels.
 const LABEL_SPACING: f32 = 11.0;
+/// The widest a bar gets.
+const MAX_BAR_WIDTH: f32 = 26.0;
 
 /// Scale marks on the bars, in dB, kept if inside the bar range.
 const MARKS: [f32; 10] = [
@@ -48,11 +47,11 @@ pub fn draw(
     let rows: Vec<_> = rows.into_iter().flatten().collect();
     let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
 
-    // Numbers above the bars; in a short, wide area, numbers on the left and
-    // the bars beside them at full height.
+    // Numbers above the bars; in an area wider than it is tall (a Bar along
+    // the top or bottom), numbers on the left and the bars beside them at
+    // full height.
     let numbers_height = c.px(18.0) * rows.len() as f32 + c.px(10.0);
-    let beside = area.height - numbers_height < c.px(MIN_BARS_BELOW)
-        && area.width >= c.px(NUMBERS_WIDTH + MIN_BARS_WIDTH);
+    let beside = area.width >= area.height && area.width >= c.px(NUMBERS_WIDTH + MIN_BARS_WIDTH);
     let (numbers, bars) = if beside {
         let width = c.px(NUMBERS_WIDTH);
         let numbers = Area { width, ..area };
@@ -88,7 +87,9 @@ pub fn draw(
     let y_of = |db: f64| map(db as f32, range, bars.bottom(), bars.y);
     let left = bars.x + c.px(28.0);
     let gap = c.px(6.0);
-    let width = ((bars.right() - left - 3.0 * gap) / 3.0).max(1.0);
+    let width = ((bars.right() - left - 3.0 * gap) / 3.0)
+        .min(c.px(MAX_BAR_WIDTH))
+        .max(1.0);
     let grid = c.colour(Role::Grid);
     let thin = c.px(1.0).max(1.0);
 
@@ -114,7 +115,7 @@ pub fn draw(
         let tick = Area {
             x: left - c.px(3.0),
             y,
-            width: bars.right() - left + c.px(3.0),
+            width: 3.0 * width + 3.0 * gap + c.px(3.0),
             height: thin,
         };
         c.shapes.rect(tick, grid.faded(0.6));

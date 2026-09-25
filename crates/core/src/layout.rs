@@ -133,6 +133,16 @@ pub enum WindowKey {
     PopOut(usize),
 }
 
+/// One end of the Bar: left or top (`Start`), right or bottom (`End`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarEnd {
+    Start,
+    End,
+}
+
+/// The shortest Bar, in logical px.
+pub const MIN_LENGTH: f32 = 300.0;
+
 /// The Bar's default thickness.
 pub const DEFAULT_THICKNESS: f32 = 180.0;
 /// The thinnest Bar.
@@ -158,6 +168,9 @@ pub struct BarLayout {
     pub edge: Edge,
     /// Logical pixels across the Bar, before the cap to a third of the display.
     pub thickness: f32,
+    /// Where the Bar starts and ends along its edge, as fractions of the
+    /// usable edge (0 to 1: left to right, or top to bottom). Default the whole edge.
+    pub span: (f32, f32),
     pub screen: ScreenMode,
     pub show_over_fullscreen: bool,
     /// The Meters in the Bar, in order, each with its share of the Bar's length.
@@ -173,6 +186,7 @@ impl BarLayout {
         BarLayout {
             edge: Edge::Bottom,
             thickness: DEFAULT_THICKNESS,
+            span: (0.0, 1.0),
             screen: ScreenMode::default_for(platform),
             show_over_fullscreen: false,
             meters: (0..count).map(|meter| (meter, share)).collect(),
@@ -195,6 +209,20 @@ impl BarLayout {
     /// Where the Bar sits on `display`: along its edge, inside the usable area.
     pub fn frame_on(&self, display: &Display) -> Rect {
         let u = display.usable;
+        let (start, end) = self.span;
+        let u = if self.edge.horizontal() {
+            Rect {
+                x: u.x + start * u.width,
+                width: (end - start) * u.width,
+                ..u
+            }
+        } else {
+            Rect {
+                y: u.y + start * u.height,
+                height: (end - start) * u.height,
+                ..u
+            }
+        };
         let t = self.thickness_on(display);
         match self.edge {
             Edge::Top => Rect { height: t, ..u },
@@ -210,6 +238,32 @@ impl BarLayout {
                 ..u
             },
         }
+    }
+
+    /// Moves one end of the Bar to `at` logical px along its edge (x for a top
+    /// or bottom Bar, y for a side one), keeping it at least [`MIN_LENGTH`] long.
+    pub fn move_end(&mut self, end: BarEnd, at: f32, display: &Display) -> bool {
+        let u = display.usable;
+        let (origin, length) = if self.edge.horizontal() {
+            (u.x, u.width)
+        } else {
+            (u.y, u.height)
+        };
+        if at.is_nan() || length <= 0.0 {
+            return false;
+        }
+        let fraction = ((at - origin) / length).clamp(0.0, 1.0);
+        let min = (MIN_LENGTH / length).min(1.0);
+        let (mut start, mut end_at) = self.span;
+        match end {
+            BarEnd::Start => start = fraction.min(end_at - min).max(0.0),
+            BarEnd::End => end_at = fraction.max(start + min).min(1.0),
+        }
+        if (start, end_at) == self.span {
+            return false;
+        }
+        self.span = (start, end_at);
+        true
     }
 
     /// Scales the shares to add up to 1.

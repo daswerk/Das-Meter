@@ -12,8 +12,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use dasmeter_core::{
-    AppCore, Decision, Edge, Event, ListenTo, MeterScene, MeterState, Rect, Scene, WindowKey,
-    WindowScene,
+    AppCore, BarEnd, Decision, Edge, Event, ListenTo, MeterScene, MeterState, Rect, Scene,
+    WindowKey, WindowScene,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -79,6 +79,8 @@ enum Drag {
     Divider(usize),
     /// The Bar's inner edge: its thickness.
     Thickness,
+    /// One end of the Bar: its length along the edge.
+    End(BarEnd),
 }
 
 /// How close to a divider or the Bar's inner edge the pointer grabs it, in logical px.
@@ -567,6 +569,12 @@ impl Shell {
         } else {
             (y, height)
         };
+        if along < GRAB {
+            return Some(Drag::End(BarEnd::Start));
+        }
+        if along > length - GRAB {
+            return Some(Drag::End(BarEnd::End));
+        }
         let n = bar.meters.len();
         bar.meters
             .iter()
@@ -605,6 +613,18 @@ impl Shell {
                     y / height
                 },
             },
+            Drag::End(end) => {
+                // Measured on screen: the window moves while it's dragged.
+                let Some(window) = app.frame() else { return };
+                Event::MoveBarEnd {
+                    end,
+                    at: if edge.horizontal() {
+                        window.x + x
+                    } else {
+                        window.y + y
+                    },
+                }
+            }
             Drag::Thickness => {
                 // Measured on screen: the window moves while it's dragged.
                 let Some(window) = app.frame() else { return };
@@ -739,7 +759,7 @@ impl ApplicationHandler for Shell {
                 if handle != app.handle {
                     // A divider moves along the Bar; the inner edge across it.
                     let along = match handle {
-                        Some(Drag::Divider(_)) => Some(horizontal),
+                        Some(Drag::Divider(_) | Drag::End(_)) => Some(horizontal),
                         Some(Drag::Thickness) => Some(!horizontal),
                         None => None,
                     };

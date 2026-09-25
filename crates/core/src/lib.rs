@@ -17,7 +17,7 @@ pub mod theme;
 
 use std::time::Duration;
 
-pub use layout::{BarLayout, Display, Edge, Platform, PopOut, Rect, ScreenMode, WindowKey};
+pub use layout::{BarEnd, BarLayout, Display, Edge, Platform, PopOut, Rect, ScreenMode, WindowKey};
 pub use meters::{
     CursorReadout, LoudnessMeterSettings, LufsBar, MeterSettings, MeterView, SpectrumMeterSettings,
     StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
@@ -100,6 +100,8 @@ pub enum Event<'a> {
     /// The divider after the Bar's `divider`-th Meter was dragged to `at`
     /// (0–1 along the Bar).
     MoveDivider { divider: usize, at: f32 },
+    /// One end of the Bar was dragged to `at` logical px along its edge.
+    MoveBarEnd { end: BarEnd, at: f32 },
     /// Take a Meter out of the Bar into its own window.
     PopOut { meter: usize },
     /// Put a Pop-out's Meter back into the Bar (also when its window is closed).
@@ -496,6 +498,12 @@ impl AppCore {
                     return;
                 }
                 self.layout.thickness = shown;
+            }
+            Event::MoveBarEnd { end, at } => {
+                let Some(display) = self.display else { return };
+                if !self.layout.move_end(end, at, &display) {
+                    return;
+                }
             }
             Event::MoveDivider { divider, at } => {
                 if !self.layout.move_divider(divider, at) {
