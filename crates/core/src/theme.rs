@@ -53,6 +53,35 @@ impl Colour {
     }
 }
 
+impl serde::Serialize for Colour {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Colour {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Colour, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Colour::from_hex(&text).ok_or_else(|| serde::de::Error::custom("not a #rrggbb colour"))
+    }
+}
+
+impl serde::Serialize for Role {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.key())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Role {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Role, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Role::ALL
+            .into_iter()
+            .find(|role| role.key() == text)
+            .ok_or_else(|| serde::de::Error::custom("not a colour role"))
+    }
+}
+
 /// A named colour a Theme provides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Role {

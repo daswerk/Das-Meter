@@ -8,6 +8,7 @@ use dasmeter_analysis::{ChannelLevels, LoudnessReadings};
 use crate::layout::{Edge, LayoutMode, Rect, ScreenMode, WindowKey};
 use crate::meters::{MeterSettings, MeterView};
 use crate::panes::Divider;
+use crate::presets::PresetScene;
 use crate::settings::AppSettings;
 use crate::sources::ListenTo;
 use crate::theme::{Colour, Palette, Role};
@@ -23,6 +24,8 @@ pub struct Scene {
     pub palette: Palette,
     /// The Theme in use, its styling, and the list to choose from.
     pub theme: ThemeScene,
+    /// The Presets, the current one, and whether Revert is offered.
+    pub presets: PresetScene,
     pub listen_to: ListenTo,
     /// Bar mode or Window mode.
     pub mode: LayoutMode,

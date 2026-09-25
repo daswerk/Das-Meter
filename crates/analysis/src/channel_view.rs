@@ -1,7 +1,7 @@
 //! Which channels a Meter shows: the Channel View of Waveform and Spectrum.
 
 /// How a stereo Source is split into the traces a Meter draws.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ChannelView {
     /// One trace: `(L + R) / 2`.
     #[default]

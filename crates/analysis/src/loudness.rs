@@ -18,7 +18,7 @@ const AES17_OFFSET_DB: f64 = 3.010_299_956_639_812;
 const NO_OVERSAMPLING_RATE: u32 = 192_000;
 
 /// How RMS is scaled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum RmsMode {
     /// A full-scale sine reads 0 dB (+3.01 dB over plain RMS). The default.
     #[default]
@@ -28,16 +28,18 @@ pub enum RmsMode {
 }
 
 /// How long the peak-hold value stays before it follows the signal down.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PeakHold {
-    For(Duration),
+    For(#[serde(with = "crate::seconds")] Duration),
     Infinite,
 }
 
 /// The Loudness Meter's advanced settings that affect analysis.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct LoudnessSettings {
     /// Length of the sliding rectangular RMS (and sample peak) window. Default 300 ms.
+    #[serde(with = "crate::seconds")]
     pub rms_window: Duration,
     pub rms_mode: RmsMode,
     /// Default 2 s.

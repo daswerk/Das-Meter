@@ -18,7 +18,7 @@ pub const MIN_SPAN: Duration = Duration::from_secs(1);
 pub const MAX_SPAN: Duration = Duration::from_secs(30);
 
 /// How amplitude maps to height.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum WaveformScale {
     #[default]
     Linear,
@@ -27,9 +27,11 @@ pub enum WaveformScale {
 }
 
 /// The Waveform's settings that affect analysis.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct WaveformSettings {
     /// 1 to 30 s. Default 4 s.
+    #[serde(with = "crate::seconds")]
     pub span: Duration,
     pub channel_view: ChannelView,
     pub scale: WaveformScale,

@@ -622,6 +622,7 @@ version = "0.1.0"
 dependencies = [
  "ebur128",
  "realfft",
+ "serde",
 ]
 
 [[package]]
@@ -653,6 +654,7 @@ name = "dasmeter-core"
 version = "0.1.0"
 dependencies = [
  "dasmeter-analysis",
+ "serde",
  "toml",
 ]
 

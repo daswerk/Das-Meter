@@ -191,6 +191,17 @@ impl Themes {
             .expect("some number is free")
     }
 
+    /// The chosen light and dark Themes' names (the same twice for one Theme).
+    pub fn choice(&self) -> (String, String) {
+        (self.light.clone(), self.dark.clone())
+    }
+
+    /// Chooses Themes by name; a name no Theme has yet is kept (missing).
+    pub fn choose_names(&mut self, light: &str, dark: &str) {
+        self.light = light.to_owned();
+        self.dark = dark.to_owned();
+    }
+
     /// Copies a Theme into an editable one in the themes folder and uses it.
     /// Returns the copy's index.
     pub fn duplicate(&mut self, index: usize) -> Option<usize> {

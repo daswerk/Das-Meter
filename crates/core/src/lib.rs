@@ -11,6 +11,7 @@
 pub mod layout;
 pub mod meters;
 pub mod panes;
+pub mod presets;
 pub mod scene;
 pub mod settings;
 pub mod sources;
@@ -28,6 +29,10 @@ pub use meters::{
     WaveformMeterSettings,
 };
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
+pub use presets::{
+    BuiltIn, MeterPreset, PresetData, PresetFile, PresetInfo, PresetOp, PresetScene, RoleColour,
+    StoredSettings, ThemeRef,
+};
 pub use scene::{
     ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note, Scene,
     SendPluginItem, SourceItem, SourceLabel, WindowScene,
@@ -38,6 +43,7 @@ pub use theme::{Colour, LineWeight, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 
 use meters::Meter;
+use presets::Presets;
 use sources::Resolved;
 
 /// How long a note such as "Output changed: reset" stays on screen.
@@ -52,7 +58,9 @@ pub const DEFAULT_FRAME_INTERVAL: Duration =
 pub enum Event<'a> {
     /// System Capture started delivering audio at this sample rate. When it was
     /// already running, the output device or its rate changed.
-    CaptureStarted { sample_rate: u32 },
+    CaptureStarted {
+        sample_rate: u32,
+    },
     /// System Capture couldn't start (or stopped); the reason is shown.
     CaptureFailed(&'a str),
     /// Interleaved stereo frames from the active Source, at its sample rate.
@@ -74,25 +82,44 @@ pub enum Event<'a> {
     /// sends this every few hundred milliseconds while listening to Send Plugins.
     SendPlugins(&'a [SendPlugin]),
     /// Interleaved stereo frames from one Send Plugin, at its sample rate.
-    SendPluginAudio { id: u64, frames: &'a [f32] },
+    SendPluginAudio {
+        id: u64,
+        frames: &'a [f32],
+    },
     /// The user picked a Send Plugin for a Meter (its Source item, or its list).
-    PickSendPlugin { meter: usize, id: u64 },
+    PickSendPlugin {
+        meter: usize,
+        id: u64,
+    },
     /// "Use for all Meters": every Meter takes the Send Plugin this one shows.
-    UseForAllMeters { meter: usize },
+    UseForAllMeters {
+        meter: usize,
+    },
     /// The Source label on a Meter was switched on or off.
-    ShowSourceLabel { meter: usize, shown: bool },
+    ShowSourceLabel {
+        meter: usize,
+        shown: bool,
+    },
     /// A click at this point of the window (fractions, 0–1 from the top-left).
     /// It closes an open menu; otherwise it picks from a "Pick a Send Plugin"
     /// list, or resets a Loudness Meter.
-    Click { window: WindowKey, at: [f32; 2] },
+    Click {
+        window: WindowKey,
+        at: [f32; 2],
+    },
     /// A right-click at this point: opens the menu of the Meter under it.
-    OpenMenu { window: WindowKey, at: [f32; 2] },
+    OpenMenu {
+        window: WindowKey,
+        at: [f32; 2],
+    },
     /// The Meter menu was closed without a click on the Meters.
     CloseMenu,
     /// The settings panel was opened or closed.
     ShowSettings(bool),
     /// Reset a Loudness Meter's integrated LUFS, LRA and maxima.
-    ResetLoudness { meter: usize },
+    ResetLoudness {
+        meter: usize,
+    },
     /// The app settings changed.
     SetApp(AppSettings),
     /// The display the window is on refreshes this many times a second: the
@@ -106,17 +133,33 @@ pub enum Event<'a> {
     SetBarThickness(f32),
     /// The divider after the Bar's `divider`-th Meter was dragged to `at`
     /// (0–1 along the Bar).
-    MoveDivider { divider: usize, at: f32 },
+    MoveDivider {
+        divider: usize,
+        at: f32,
+    },
     /// One end of the Bar was dragged to `at` logical px along its edge.
-    MoveBarEnd { end: BarEnd, at: f32 },
+    MoveBarEnd {
+        end: BarEnd,
+        at: f32,
+    },
     /// Take a Meter out of the Bar into its own window.
-    PopOut { meter: usize },
+    PopOut {
+        meter: usize,
+    },
     /// Put a Pop-out's Meter back into the Bar (also when its window is closed).
-    DockBack { meter: usize },
+    DockBack {
+        meter: usize,
+    },
     /// The user moved or resized a Pop-out.
-    PopOutMoved { meter: usize, frame: Rect },
+    PopOutMoved {
+        meter: usize,
+        frame: Rect,
+    },
     /// A Pop-out's Always on top was switched.
-    SetPopOutOnTop { meter: usize, on_top: bool },
+    SetPopOutOnTop {
+        meter: usize,
+        on_top: bool,
+    },
     /// The Bar's screen button was pressed.
     CycleScreenMode,
     /// "Show over fullscreen apps" was switched.
@@ -124,14 +167,25 @@ pub enum Event<'a> {
     /// Switch between Bar mode and Window mode. Each keeps its own layout.
     SetMode(LayoutMode),
     /// Split the pane showing this Meter; the new pane gets a copy of it.
-    SplitPane { meter: usize, direction: Direction },
+    SplitPane {
+        meter: usize,
+        direction: Direction,
+    },
     /// Close the pane showing this Meter; its sibling takes the space.
-    ClosePane { meter: usize },
+    ClosePane {
+        meter: usize,
+    },
     /// A split's divider was dragged to `at` (0–1 across the window, along the
     /// split's direction).
-    MoveSplit { split: SplitId, at: f32 },
+    MoveSplit {
+        split: SplitId,
+        at: f32,
+    },
     /// Show another kind of Meter in this Meter's pane, on default settings.
-    AssignMeter { meter: usize, kind: MeterKind },
+    AssignMeter {
+        meter: usize,
+        kind: MeterKind,
+    },
     /// Float on Top for whichever window the mode shows: the Bar's screen
     /// button, or Window mode's Always on top.
     ToggleOnTop,
@@ -144,9 +198,14 @@ pub enum Event<'a> {
     SystemAppearance(Appearance),
     /// Use these Themes (indexes into the scene's list): the same one twice,
     /// or a light/dark pair that follows the system.
-    ChooseTheme { light: usize, dark: usize },
+    ChooseTheme {
+        light: usize,
+        dark: usize,
+    },
     /// Copy a Theme into an editable one and use it.
-    DuplicateTheme { theme: usize },
+    DuplicateTheme {
+        theme: usize,
+    },
     /// Edit one colour role of a Theme from the themes folder.
     SetThemeColour {
         theme: usize,
@@ -154,12 +213,53 @@ pub enum Event<'a> {
         colour: Colour,
     },
     /// Edit a Theme's styling.
-    SetThemeStyling { theme: usize, styling: Styling },
+    SetThemeStyling {
+        theme: usize,
+        styling: Styling,
+    },
     /// Override one colour role on one Meter, or (`None`) go back to the Theme's.
     SetOverride {
         meter: usize,
         role: Role,
         colour: Option<Colour>,
+    },
+    /// The presets folder's files and `settings.toml` (`None` if there is
+    /// none: first launch), read at launch. Opens the last used Preset.
+    PresetFiles {
+        files: &'a [PresetFile],
+        settings: Option<&'a str>,
+    },
+    /// Switch to the Preset at this index in the list.
+    SwitchPreset {
+        index: usize,
+    },
+    /// Cmd/Ctrl+1–9: the n-th Preset in list order.
+    PresetShortcut {
+        number: usize,
+    },
+    /// Back to the current Preset as it was opened.
+    RevertPreset,
+    /// The current state as a new Preset, which becomes current.
+    SavePresetAsNew,
+    DuplicatePreset {
+        index: usize,
+    },
+    RenamePreset {
+        index: usize,
+        name: &'a str,
+    },
+    /// Move a Preset to the trash (the last readable one stays).
+    DeletePreset {
+        index: usize,
+    },
+    /// Move a Preset in the list.
+    MovePreset {
+        from: usize,
+        to: usize,
+    },
+    /// A built-in Preset's copy back to this version's built-in.
+    ResetPreset {
+        index: usize,
     },
 }
 
@@ -225,6 +325,12 @@ pub struct AppCore {
     menu: Option<MeterMenu>,
     settings_open: bool,
     themes: themes::Themes,
+    presets: Presets,
+    /// System Capture's rate, to start Meters a Preset brings.
+    capture_rate: Option<u32>,
+    /// Something a Preset saves changed; it's saved at `save_after`.
+    touched: bool,
+    save_after: Option<Duration>,
     /// Something happened since the last scene was built.
     changed: bool,
     /// The scene last handed to the shell, and when.
@@ -288,6 +394,10 @@ impl AppCore {
             menu: None,
             settings_open: false,
             themes: themes::Themes::new(),
+            presets: Presets::default(),
+            capture_rate: None,
+            touched: false,
+            save_after: None,
             changed: true,
             drawn: None,
             drawn_at: None,
@@ -421,6 +531,206 @@ impl AppCore {
     }
 
     pub fn handle(&mut self, event: Event, now: Duration) {
+        use Event::*;
+        match event {
+            PresetFiles { files, settings } => {
+                let open = self.presets.load(files, settings);
+                let stored = &self.presets.settings;
+                self.app.frame_rate_cap = stored.frame_rate_cap;
+                self.app.check_for_updates = stored.check_for_updates;
+                self.clamp_frame_rate_cap();
+                if let Some(data) = open {
+                    self.apply(data, now);
+                }
+                self.changed = true;
+                return;
+            }
+            SwitchPreset { .. }
+            | PresetShortcut { .. }
+            | RevertPreset
+            | SavePresetAsNew
+            | DuplicatePreset { .. }
+            | RenamePreset { .. }
+            | DeletePreset { .. }
+            | MovePreset { .. }
+            | ResetPreset { .. } => {
+                self.handle_preset(event, now);
+                self.changed = true;
+                return;
+            }
+            // What doesn't change what a Preset saves.
+            Audio(_)
+            | SendPluginAudio { .. }
+            | Pointer(_)
+            | Visible(_)
+            | CaptureStarted { .. }
+            | CaptureFailed(_)
+            | DisplayRefreshRate(_)
+            | Display(_)
+            | ThemeFiles(_)
+            | SystemAppearance(_)
+            | OpenMenu { .. }
+            | CloseMenu
+            | ShowSettings(_)
+            | ResetLoudness { .. } => {}
+            // Auto-save a short pause after the last change (with a Preset open).
+            _ if self.presets.current_index().is_some() => {
+                self.save_after = Some(now + AUTOSAVE_DELAY);
+                self.touched = true;
+            }
+            _ => {}
+        }
+        if let CaptureStarted { sample_rate } = event {
+            self.capture_rate = Some(sample_rate);
+        }
+        if let SetApp(app) = event {
+            let stored = &mut self.presets.settings;
+            stored.frame_rate_cap = app.frame_rate_cap;
+            stored.check_for_updates = app.check_for_updates;
+            self.presets.save_settings();
+        }
+        self.handle_event(event, now);
+    }
+
+    fn handle_preset(&mut self, event: Event, now: Duration) {
+        // Whatever is pending goes into the current Preset first.
+        self.save_now();
+        let open = match event {
+            Event::SwitchPreset { index } => self.presets.switch(index),
+            Event::PresetShortcut { number } => self.presets.shortcut(number),
+            Event::RevertPreset => self.presets.opened().cloned(),
+            Event::SavePresetAsNew => {
+                let data = self.current_data();
+                self.presets.save_as_new(data)
+            }
+            Event::DuplicatePreset { index } => {
+                self.presets.duplicate(index);
+                None
+            }
+            Event::RenamePreset { index, name } => {
+                self.presets.rename(index, name);
+                None
+            }
+            Event::DeletePreset { index } => self.presets.delete(index).ok().flatten(),
+            Event::MovePreset { from, to } => {
+                self.presets.reorder(from, to);
+                None
+            }
+            Event::ResetPreset { index } => self.presets.reset(index).ok().flatten(),
+            _ => None,
+        };
+        if let Some(data) = open {
+            self.apply(data, now);
+            // Reverting saves the opened state back.
+            if matches!(event, Event::RevertPreset) {
+                self.touched = true;
+                self.save_after = Some(now);
+            }
+        }
+    }
+
+    /// Saves the current state into the current Preset if it changed.
+    fn save_now(&mut self) {
+        if self.save_after.take().is_some() || self.touched {
+            let data = self.current_data();
+            self.presets.save_current(data);
+        }
+        self.touched = false;
+    }
+
+    /// The app's state as a Preset holds it.
+    pub fn current_data(&self) -> PresetData {
+        let (light, dark) = self.themes.choice();
+        PresetData {
+            version: presets::PRESET_VERSION,
+            name: String::new(),
+            built_in: None,
+            mode: self.mode,
+            listen_to: self.listen_to,
+            theme: ThemeRef { light, dark },
+            bar: self.layout.clone(),
+            window: self.window.clone(),
+            bar_display: None,
+            window_display: None,
+            meters: self
+                .meters
+                .iter()
+                .map(|slot| MeterPreset {
+                    settings: slot.meter.settings(),
+                    send_plugin: slot.pick.clone(),
+                    show_source_label: slot.show_source_label,
+                    overrides: slot
+                        .overrides
+                        .iter()
+                        .map(|&(role, colour)| RoleColour { role, colour })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether the state differs from the current Preset as it was opened.
+    fn changed_since_opened(&self) -> bool {
+        let Some(opened) = self.presets.opened() else {
+            return false;
+        };
+        let current = PresetData {
+            name: opened.name.clone(),
+            built_in: opened.built_in,
+            ..self.current_data()
+        };
+        current != *opened
+    }
+
+    /// Puts a Preset's layout, Meters, Listen to and Theme into effect.
+    fn apply(&mut self, data: PresetData, now: Duration) {
+        let data = data.sanitised();
+        self.meters = data
+            .meters
+            .iter()
+            .map(|m| MeterSlot {
+                meter: Meter::new(m.settings.clamped()),
+                pick: m.send_plugin.clone(),
+                show_source_label: m.show_source_label,
+                overrides: m.overrides.iter().map(|o| (o.role, o.colour)).collect(),
+                showing: None,
+            })
+            .collect();
+        self.layout = data.bar;
+        // A file from Windows can't reserve screen space on macOS.
+        if self.layout.screen == ScreenMode::ReserveSpace && self.platform == Platform::MacOs {
+            self.layout.screen = ScreenMode::FloatOnTop;
+        }
+        self.window = data.window;
+        self.mode = data.mode;
+        self.menu = None;
+        self.themes
+            .choose_names(&data.theme.light, &data.theme.dark);
+        if data.listen_to != self.listen_to {
+            self.listen_to = data.listen_to;
+            self.capture = Capture::Starting;
+        }
+        match self.listen_to {
+            ListenTo::SystemCapture => {
+                if let (Capture::Live, Some(rate)) = (&self.capture, self.capture_rate) {
+                    for slot in &mut self.meters {
+                        slot.meter.start(rate);
+                    }
+                }
+            }
+            ListenTo::SendPlugins => self.route(now),
+        }
+        self.touched = false;
+        self.save_after = None;
+        self.changed = true;
+    }
+
+    /// The disk work Presets need since the last call.
+    pub fn take_preset_ops(&mut self) -> Vec<PresetOp> {
+        self.presets.take_ops()
+    }
+
+    fn handle_event(&mut self, event: Event, now: Duration) {
         match event {
             Event::CaptureStarted { sample_rate } => {
                 let restarted = matches!(self.capture, Capture::Live);
@@ -738,6 +1048,17 @@ impl AppCore {
                     return;
                 }
             }
+            // Handled in `handle`.
+            Event::PresetFiles { .. }
+            | Event::SwitchPreset { .. }
+            | Event::PresetShortcut { .. }
+            | Event::RevertPreset
+            | Event::SavePresetAsNew
+            | Event::DuplicatePreset { .. }
+            | Event::RenamePreset { .. }
+            | Event::DeletePreset { .. }
+            | Event::MovePreset { .. }
+            | Event::ResetPreset { .. } => return,
             Event::ShowOverFullscreen(shown) => {
                 if shown == self.layout.show_over_fullscreen {
                     return;
@@ -960,13 +1281,22 @@ impl AppCore {
     /// Decides whether to draw now. On [`Decision::Draw`], the shell draws
     /// [`AppCore::scene`]; the core counts that as drawn at `now`.
     pub fn decide(&mut self, now: Duration) -> Decision {
+        if self.save_after.is_some_and(|at| now >= at) {
+            self.save_now();
+            // Revert's offer follows the saved state.
+            self.changed = true;
+        }
         if !self.visible {
-            return Decision::Sleep { until: None };
+            return Decision::Sleep {
+                until: self.save_after,
+            };
         }
         let note_until = self.note_until.filter(|&until| until > now);
         let note_expired = self.note_until.is_some() && note_until.is_none();
         if !self.changed && !note_expired && self.drawn.is_some() {
-            return Decision::Sleep { until: note_until };
+            return Decision::Sleep {
+                until: earliest(note_until, self.save_after),
+            };
         }
         // Wait for the next frame before building a scene at all.
         if let Some(drawn_at) = self.drawn_at {
@@ -983,7 +1313,9 @@ impl AppCore {
         self.changed = false;
         let scene = self.build_scene(note_until.is_some());
         if self.drawn.as_ref() == Some(&scene) {
-            return Decision::Sleep { until: note_until };
+            return Decision::Sleep {
+                until: earliest(note_until, self.save_after),
+            };
         }
         self.drawn = Some(scene);
         self.drawn_at = Some(now);
@@ -1157,6 +1489,7 @@ impl AppCore {
             },
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),
+            presets: self.presets.scene(self.changed_since_opened()),
             listen_to: self.listen_to,
             mode: self.mode,
             send_plugins,
@@ -1200,6 +1533,17 @@ impl AppCore {
                 },
             })
             .collect()
+    }
+}
+
+/// How long after the last change a Preset is saved.
+pub const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);
+
+/// The earlier of two optional times.
+fn earliest(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }
 

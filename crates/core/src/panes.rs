@@ -5,7 +5,7 @@ use crate::layout::Rect;
 use crate::scene::Frame;
 
 /// How a split divides its area.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Direction {
     /// Two panes next to each other, a vertical divider between them.
     SideBySide,
@@ -39,7 +39,7 @@ const MAX_DEPTH: u8 = 31;
 pub const MIN_RATIO: f32 = 0.05;
 
 /// A split tree: a pane showing a Meter, or two subtrees.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Node {
     Pane(usize),
     Split {
@@ -232,7 +232,7 @@ impl Node {
 }
 
 /// Window mode's layout.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowLayout {
     /// Where the window is, once placed or moved.
     pub frame: Option<Rect>,

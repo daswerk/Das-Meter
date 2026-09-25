@@ -24,7 +24,7 @@ impl Platform {
 }
 
 /// A rectangle in logical pixels.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
@@ -63,7 +63,7 @@ pub struct Display {
 }
 
 /// The screen edge the Bar docks to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Edge {
     Top,
     #[default]
@@ -82,7 +82,7 @@ impl Edge {
 }
 
 /// How the Bar sits with other windows: the Bar's screen button.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ScreenMode {
     /// Windows only: an AppBar, so maximised windows make room.
     ReserveSpace,
@@ -136,7 +136,7 @@ pub enum WindowKey {
 }
 
 /// How the Meters are laid out.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum LayoutMode {
     /// A strip docked to a screen edge, with Pop-outs. The default.
     #[default]
@@ -167,7 +167,7 @@ pub const POP_OUT_SIZE: (f32, f32) = (480.0, 320.0);
 pub const MIN_POP_OUT: (f32, f32) = (160.0, 120.0);
 
 /// A Meter in its own window.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PopOut {
     pub meter: usize,
     pub frame: Rect,
@@ -175,7 +175,7 @@ pub struct PopOut {
 }
 
 /// Bar mode's layout.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BarLayout {
     pub edge: Edge,
     /// Logical pixels across the Bar, before the cap to a third of the display.

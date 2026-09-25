@@ -28,7 +28,8 @@ pub const DEFAULT_FRAME_RATE_CAP: u32 = 60;
 pub const MIN_FRAME_RATE_CAP: u32 = 30;
 
 /// Settings that belong to the app, not to a Meter or a Preset.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     /// Most frames drawn per second. Default 60, at most the display's refresh rate.
     pub frame_rate_cap: u32,

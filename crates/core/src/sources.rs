@@ -5,7 +5,7 @@
 //! other Meters, takes the only one there is, or asks.
 
 /// Where the app's audio comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ListenTo {
     /// Everything the computer plays through its default output.
     #[default]
@@ -57,7 +57,7 @@ impl SendPlugin {
 
 /// A Meter's pick: the Send Plugin's ID, and its name for finding it again
 /// (a Preset loaded later) and for "Waiting for <name>".
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Pick {
     pub id: u64,
     pub name: String,

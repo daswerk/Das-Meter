@@ -17,7 +17,7 @@ const MAX_AUTO_GAIN: f32 = 1_000.0;
 const AUTO_GAIN_RELEASE: Duration = Duration::from_secs(1);
 
 /// How the point buffer is scaled for display.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum StereoScaling {
     /// Follows the recent peak, so quiet material fills the scope. The default.
     #[default]
@@ -27,7 +27,7 @@ pub enum StereoScaling {
 }
 
 /// How the points are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum StereoView {
     /// A half circle: mono points straight up, out-of-phase ones along the base line. The default.
     #[default]
@@ -37,9 +37,11 @@ pub enum StereoView {
 }
 
 /// The Stereometer's settings that affect analysis.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct StereometerSettings {
     /// Correlation averaging time constant. Default 300 ms.
+    #[serde(with = "crate::seconds")]
     pub correlation_time: Duration,
     pub scaling: StereoScaling,
     /// How many of the newest frames the point buffer keeps. Default 2048.

@@ -6,6 +6,7 @@
 
 mod channel_view;
 pub mod loudness;
+pub mod seconds;
 pub mod signals;
 pub mod spectrum;
 pub mod stereometer;

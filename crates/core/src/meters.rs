@@ -11,7 +11,7 @@ use dasmeter_analysis::{
 use crate::scene::LoudnessDisplay;
 
 /// How the Waveform is coloured.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum WaveformColouring {
     /// One envelope, its colour mixed from the low, mid and high band energies. The default.
     #[default]
@@ -22,13 +22,15 @@ pub enum WaveformColouring {
     Solid,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct WaveformMeterSettings {
     pub analysis: WaveformSettings,
     pub colouring: WaveformColouring,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SpectrumMeterSettings {
     pub analysis: SpectrumSettings,
     /// Whether the peak-hold curve is drawn. Default on.
@@ -45,14 +47,15 @@ impl Default for SpectrumMeterSettings {
 }
 
 /// Which loudness the Loudness Meter's LUFS bar shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum LufsBar {
     #[default]
     ShortTerm,
     Momentary,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct LoudnessMeterSettings {
     pub analysis: LoudnessSettings,
     /// The target line in LUFS, or `None` for no target. Default −14.
@@ -80,20 +83,22 @@ impl Default for LoudnessMeterSettings {
 }
 
 /// How the Stereometer's points are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum StereoDrawing {
     #[default]
     Dots,
     Lines,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct StereometerMeterSettings {
     /// Analysis settings. `points` is derived from `persistence` and the sample rate.
     pub analysis: StereometerSettings,
     pub view: StereoView,
     pub drawing: StereoDrawing,
     /// How long a point stays visible, fading as it ages. Default 50 ms.
+    #[serde(with = "dasmeter_analysis::seconds")]
     pub persistence: Duration,
     /// Whether the balance bar is shown. Default off.
     pub show_balance: bool,
@@ -118,7 +123,7 @@ impl Default for StereometerMeterSettings {
 const MAX_STEREO_POINTS: usize = 16_384;
 
 /// One Meter's settings, which also says which Meter it is.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MeterSettings {
     Waveform(WaveformMeterSettings),
     Spectrum(SpectrumMeterSettings),
@@ -127,7 +132,7 @@ pub enum MeterSettings {
 }
 
 /// Which of the four Meters a pane shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MeterKind {
     Waveform,
     Spectrum,

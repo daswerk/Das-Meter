@@ -16,6 +16,7 @@ workspace = true
 # Pinned exactly (ADR 0005): expected values only move when we choose to update.
 ebur128 = "=0.1.10"
 realfft = "3.5"
+serde = { version = "1", features = ["derive"] }
 
 [[bench]]
 name = "loudness"

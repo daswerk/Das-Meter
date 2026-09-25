@@ -25,7 +25,7 @@ pub const MIN_FFT_SIZE: usize = 1_024;
 pub const MAX_FFT_SIZE: usize = 16_384;
 
 /// The window applied before the FFT.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum WindowFunction {
     /// The default: good all-round resolution and leakage.
     #[default]
@@ -58,7 +58,7 @@ impl WindowFunction {
 }
 
 /// How the Spectrum is drawn, which decides the draw buffer's points.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SpectrumStyle {
     /// A line (with soft fill) through this many log-spaced points.
     Line { points: usize },
@@ -67,7 +67,8 @@ pub enum SpectrumStyle {
 }
 
 /// The Spectrum's settings that affect analysis.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SpectrumSettings {
     pub channel_view: ChannelView,
     /// dB per octave, tilting around 1 kHz: 0, 3, 4.5 (default) or 6.
@@ -80,8 +81,10 @@ pub struct SpectrumSettings {
     /// Shown level range in dB, for the renderer. Default −90 to 0.
     pub db_range: (f32, f32),
     /// How fast a rising level is followed. Zero follows instantly.
+    #[serde(with = "crate::seconds")]
     pub attack: Duration,
     /// How fast a falling level is followed.
+    #[serde(with = "crate::seconds")]
     pub release: Duration,
     /// Frequency smoothing width in octaves (0 for none, up to 1/3).
     pub smoothing_octaves: f32,
