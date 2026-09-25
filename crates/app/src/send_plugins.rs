@@ -48,6 +48,11 @@ impl SendPluginInput {
         }
     }
 
+    /// The Send Plugins as last listed.
+    pub fn listed(&self) -> Vec<SendPlugin> {
+        self.slots.iter().map(send_plugin).collect()
+    }
+
     /// Whether audio is being read: the shell then pumps every frame.
     pub fn listening(&self) -> bool {
         !self.listened.is_empty()

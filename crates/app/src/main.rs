@@ -38,6 +38,8 @@ fn main() {
         Some("--version") => println!("{}", version_line()),
         // Hidden: System Capture into the app core, readings printed once a second.
         Some("--print-readings") => print_readings(),
+        // Hidden: two Loudness Meters on the first two Send Plugins, printed once a second.
+        Some("--print-send-plugins") => print_send_plugins(),
         // Hidden: a generated signal through the core, drawn offscreen to a PPM image.
         Some("--render-snapshot") => {
             let path = std::env::args().nth(2).unwrap_or("snapshot.ppm".into());
@@ -478,6 +480,81 @@ fn print_readings() {
             }
             other => println!("{:>6.1}s {other:?} {}", now.as_secs_f64(), notes.join(", ")),
         }
+    }
+}
+
+/// Listens to Send Plugins without a window: two Loudness Meters, the first
+/// picking the first Send Plugin listed (by name) and the second the second,
+/// printed once a second. For checking two DAW tracks against each other.
+fn print_send_plugins() {
+    use dasmeter_core::{LoudnessMeterSettings, MeterSettings, SendPlugin};
+
+    let start = Instant::now();
+    let mut core = AppCore::with_meters(vec![
+        MeterSettings::Loudness(LoudnessMeterSettings::default()),
+        MeterSettings::Loudness(LoudnessMeterSettings::default()),
+    ]);
+    core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
+    for meter in 0..2 {
+        core.handle(
+            Event::ShowSourceLabel { meter, shown: true },
+            Duration::ZERO,
+        );
+    }
+    let mut input = SendPluginInput::new();
+    let mut picked = false;
+    let mut printed = Duration::ZERO;
+    loop {
+        std::thread::sleep(dasmeter_core::DEFAULT_FRAME_INTERVAL);
+        let now = start.elapsed();
+        input.pump(&mut core, now, start + now);
+        if !picked {
+            let mut listed: Vec<SendPlugin> = input.listed();
+            listed.retain(|p| p.state != dasmeter_core::SendPluginState::Gone);
+            listed.sort_by(|a, b| a.name.cmp(&b.name));
+            if listed.len() >= 2 {
+                for (meter, plugin) in listed.iter().take(2).enumerate() {
+                    core.handle(
+                        Event::PickSendPlugin {
+                            meter,
+                            id: plugin.id,
+                        },
+                        now,
+                    );
+                }
+                picked = true;
+            }
+        }
+        core.decide(now);
+        if now < printed + Duration::from_secs(1) {
+            continue;
+        }
+        printed = now;
+        let Some(scene) = core.scene() else { continue };
+        let line: Vec<String> = scene.windows[0]
+            .meters
+            .iter()
+            .map(|meter| {
+                let source = meter.source.as_ref().map_or("-", |s| s.name.as_str());
+                match &meter.state {
+                    MeterState::Live(MeterView::Loudness { display, .. }) => format!(
+                        "{source}: M {} LUFS, peak {} dBFS, {} Hz",
+                        display
+                            .momentary
+                            .db()
+                            .map_or("-inf".into(), |db| format!("{db:.1}")),
+                        display
+                            .left
+                            .peak
+                            .db()
+                            .map_or("-inf".into(), |db| format!("{db:.1}")),
+                        display.sample_rate
+                    ),
+                    other => format!("{source}: {other:?}"),
+                }
+            })
+            .collect();
+        println!("{:>6.1}s  {}", now.as_secs_f64(), line.join("   |   "));
     }
 }
 

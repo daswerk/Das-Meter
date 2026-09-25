@@ -304,6 +304,23 @@ fn a_pick_is_found_again_by_name_when_its_id_is_new() {
 }
 
 #[test]
+fn a_crashed_daw_that_comes_back_is_found_by_name() {
+    // The crashed DAW's slot stays listed as gone, and the reopened track
+    // comes back under a new ID.
+    let mut app = Harness::on_send_plugins(vec![plugin(1, "Kick"), plugin(2, "Bass")]);
+    app.send(Event::PickSendPlugin { meter: 1, id: 1 });
+    app.change(1, |p| p.state = SendPluginState::Gone);
+    assert_eq!(app.states()[1], MeterState::WaitingFor("Kick".to_owned()));
+
+    let mut listed = app.listed.clone();
+    listed.push(plugin(7, "Kick"));
+    app.list(listed);
+    assert_eq!(app.core.pick(1).map(|p| p.id), Some(7));
+    assert!(is_live(&app.states()[1]));
+    assert_eq!(app.core.listened(), vec![7]);
+}
+
+#[test]
 fn a_renamed_send_plugin_keeps_its_meters() {
     let mut app = Harness::on_send_plugins(vec![plugin(1, "Kick"), plugin(2, "Bass")]);
     app.send(Event::PickSendPlugin { meter: 1, id: 1 });

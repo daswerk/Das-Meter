@@ -85,17 +85,16 @@ pub(crate) enum Resolved<'a> {
     Nothing,
 }
 
-/// Finds a pick among the listed Send Plugins: by ID, else by name among the
-/// usable ones (a Preset whose Send Plugin got a new ID). `None` if neither.
+/// Finds a pick among the listed Send Plugins: a usable one by ID, else a
+/// usable one by name (a Preset whose Send Plugin got a new ID, or a DAW that
+/// crashed and came back while its old slot is still listed as gone), else
+/// the gone one by ID. `None` if none of these.
 pub(crate) fn find<'a>(pick: &Pick, listed: &'a [SendPlugin]) -> Option<&'a SendPlugin> {
-    listed
-        .iter()
+    let usable = || listed.iter().filter(|plugin| plugin.usable());
+    usable()
         .find(|plugin| plugin.id == pick.id)
-        .or_else(|| {
-            listed
-                .iter()
-                .find(|plugin| plugin.usable() && plugin.name == pick.name)
-        })
+        .or_else(|| usable().find(|plugin| plugin.name == pick.name))
+        .or_else(|| listed.iter().find(|plugin| plugin.id == pick.id))
 }
 
 /// What a Meter shows: its own pick, else the pick it follows (the first
