@@ -5,6 +5,8 @@
 //! the main display, as winit gives them. The layout isn't saved yet; the
 //! Presets ticket saves it.
 
+use crate::displays::DisplayRef;
+
 /// The operating system, for what the screen button offers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
@@ -167,11 +169,15 @@ pub const POP_OUT_SIZE: (f32, f32) = (480.0, 320.0);
 pub const MIN_POP_OUT: (f32, f32) = (160.0, 120.0);
 
 /// A Meter in its own window.
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PopOut {
     pub meter: usize,
+    /// Relative to its display's top-left corner.
     pub frame: Rect,
     pub on_top: bool,
+    /// The display it was placed on; `None` for the main display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplayRef>,
 }
 
 /// Bar mode's layout.
@@ -189,6 +195,9 @@ pub struct BarLayout {
     /// Shares add up to 1.
     pub meters: Vec<(usize, f32)>,
     pub pop_outs: Vec<PopOut>,
+    /// The display the Bar docks on; `None` for the main display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplayRef>,
 }
 
 impl BarLayout {
@@ -203,6 +212,7 @@ impl BarLayout {
             show_over_fullscreen: false,
             meters: (0..count).map(|meter| (meter, share)).collect(),
             pop_outs: Vec::new(),
+            display: None,
         }
     }
 
@@ -320,6 +330,7 @@ impl BarLayout {
             meter,
             frame,
             on_top: false,
+            display: None,
         });
         true
     }

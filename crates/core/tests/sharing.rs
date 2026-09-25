@@ -3,10 +3,10 @@
 
 use std::time::Duration;
 
-use dasmeter_core::sharing::{SharedPreset, without_serial};
+use dasmeter_core::sharing::SharedPreset;
 use dasmeter_core::{
-    AppCore, BuiltIn, Colour, Edge, Event, Note, PresetData, PresetOp, Role, Scene, Theme,
-    ThemeFile,
+    AppCore, BuiltIn, Colour, DisplayRef, Edge, Event, Fingerprint, Note, PresetData, PresetOp,
+    Role, Scene, Theme, ThemeFile,
 };
 
 struct App {
@@ -120,20 +120,24 @@ fn export_holds_the_preset_and_its_custom_themes_only() {
 
 #[test]
 fn display_serials_are_stripped() {
-    assert_eq!(without_serial("DEL:U2720Q:8XK1234"), "DEL:U2720Q");
-    assert_eq!(without_serial("APP:A050"), "APP:A050");
-    let data = PresetData {
-        bar_display: Some("DEL:U2720Q:8XK1234".into()),
-        window_display: Some("APP:A050:SERIAL".into()),
-        ..PresetData::built_in(BuiltIn::Bar)
+    let monitor = |serial| DisplayRef {
+        fingerprint: Fingerprint {
+            vendor: 0x10ac,
+            model: 0xa0c4,
+            serial,
+        },
+        name: "DELL U2720Q".into(),
+        position: [1512.0, 0.0],
     };
+    let mut data = PresetData::built_in(BuiltIn::Bar);
+    data.bar.display = Some(monitor(0x38_4b_31_32));
+    data.window.display = Some(monitor(0x0bad_cafe));
     let text = SharedPreset::new(data, Vec::new()).to_toml();
-    assert!(
-        !text.contains("8XK1234") && !text.contains("SERIAL"),
-        "{text}"
-    );
     let (read, _) = SharedPreset::from_toml(&text).unwrap();
-    assert_eq!(read.bar_display.as_deref(), Some("DEL:U2720Q"));
+    assert_eq!(read.bar.display, Some(monitor(0)));
+    assert_eq!(read.window.display, Some(monitor(0)));
+    // The rest of the monitor's identity stays, so it's still recognised.
+    assert!(text.contains("vendor") && !text.contains(&0x0bad_cafe_u32.to_string()));
 }
 
 #[test]

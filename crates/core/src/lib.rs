@@ -8,6 +8,7 @@
 //! Time comes in with every call as the time since the app started, so tests
 //! drive the core with a fake clock.
 
+pub mod displays;
 pub mod layout;
 pub mod meters;
 pub mod panes;
@@ -21,6 +22,7 @@ pub mod themes;
 
 use std::time::Duration;
 
+pub use displays::{DisplayRef, Fingerprint, Screen};
 pub use layout::{
     BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
 };
@@ -265,6 +267,12 @@ pub enum Event<'a> {
     /// A `.dasmeter-preset` file's contents to import: from the menu, a drop
     /// or the OS opening one. The app switches to it; a bad file changes nothing.
     ImportPreset(&'a str),
+    /// The displays, whenever they change: their areas, which monitor each
+    /// is, and which is the main one.
+    Screens(&'a [Screen]),
+    /// Keep here: every window that's away from its missing display adopts
+    /// where it is now.
+    KeepHere,
 }
 
 /// What the shell should do next.
@@ -320,7 +328,10 @@ pub struct AppCore {
     mode: LayoutMode,
     layout: BarLayout,
     window: WindowLayout,
+    /// The main display, for the Bar's default place.
     display: Option<Display>,
+    /// Every display, as the shell last reported them.
+    screens: Vec<Screen>,
     note_until: Option<Duration>,
     note: Note,
     visible: bool,
@@ -372,12 +383,14 @@ impl AppCore {
             } else {
                 WindowLayout {
                     frame: None,
+                    display: None,
                     on_top: false,
                     tree: Node::Pane(0),
                 }
             },
             layout: BarLayout::new(meters.len(), platform),
             display: None,
+            screens: Vec::new(),
             listen_to: ListenTo::SystemCapture,
             capture: Capture::Starting,
             send_plugins: Vec::new(),
@@ -422,6 +435,133 @@ impl AppCore {
         self.themes.take_writes()
     }
 
+    fn main_screen(&self) -> Option<&Screen> {
+        self.screens
+            .iter()
+            .find(|s| s.main)
+            .or(self.screens.first())
+    }
+
+    fn main_display(&self) -> Option<Display> {
+        self.main_screen().map(|s| s.display)
+    }
+
+    /// The screen a saved display means, if it's connected.
+    fn found(&self, reference: Option<&DisplayRef>) -> Option<&Screen> {
+        displays::find(reference?, &self.screens).map(|i| &self.screens[i])
+    }
+
+    /// Whether a window's saved display is missing (`None` means main: never missing).
+    fn missing(&self, reference: Option<&DisplayRef>) -> bool {
+        reference.is_some() && self.found(reference).is_none()
+    }
+
+    /// The display the Bar docks on: its own if connected, else the main one.
+    fn bar_display(&self) -> Option<Display> {
+        self.found(self.layout.display.as_ref())
+            .map(|s| s.display)
+            .or_else(|| self.main_display())
+    }
+
+    /// An on-screen frame as a window saves it: relative to the display it's
+    /// on, and that display (`None` for the main one or an unidentified one).
+    fn anchor(&self, frame: Rect) -> (Rect, Option<DisplayRef>) {
+        let Some(i) = displays::screen_at(frame, &self.screens) else {
+            return (frame, None);
+        };
+        let screen = &self.screens[i];
+        let reference = self
+            .main_screen()
+            .filter(|main| !screen.main && !std::ptr::eq(*main, screen))
+            .and_then(|main| DisplayRef::of(screen, main));
+        (displays::relative(frame, &screen.display), reference)
+    }
+
+    /// Where a Pop-out shows: on its display, or at the same offset on the
+    /// Bar's while it's missing.
+    fn pop_out_on_screen(&self, pop_out: &PopOut) -> Rect {
+        let display = self
+            .found(pop_out.display.as_ref())
+            .map(|s| s.display)
+            .or_else(|| self.bar_display());
+        match display {
+            Some(display) => displays::place(pop_out.frame, &display),
+            None => pop_out.frame,
+        }
+    }
+
+    /// Where the Window shows: on its display, or the main one while it's missing.
+    fn window_on_screen(&self) -> Option<Rect> {
+        let frame = self.window.frame?;
+        let display = self
+            .found(self.window.display.as_ref())
+            .map(|s| s.display)
+            .or_else(|| self.main_display());
+        Some(match display {
+            Some(display) => displays::place(frame, &display),
+            None => frame,
+        })
+    }
+
+    /// The names of the saved displays the current layout misses.
+    fn missing_displays(&self) -> Vec<String> {
+        let mut refs: Vec<&DisplayRef> = Vec::new();
+        match self.mode {
+            LayoutMode::Bar => {
+                refs.extend(self.layout.display.as_ref());
+                refs.extend(
+                    self.layout
+                        .pop_outs
+                        .iter()
+                        .filter_map(|p| p.display.as_ref()),
+                );
+            }
+            LayoutMode::Window => refs.extend(self.window.display.as_ref()),
+        }
+        let mut names: Vec<String> = Vec::new();
+        for reference in refs {
+            if self.found(Some(reference)).is_none() && !names.contains(&reference.name) {
+                names.push(reference.name.clone());
+            }
+        }
+        names
+    }
+
+    /// Keep here: windows away from their missing display adopt where they are.
+    fn keep_here(&mut self) -> bool {
+        let mut changed = false;
+        if self.missing(self.layout.display.as_ref()) {
+            self.layout.display = None;
+            changed = true;
+        }
+        let moved: Vec<(usize, Rect)> = self
+            .layout
+            .pop_outs
+            .iter()
+            .filter(|p| self.missing(p.display.as_ref()))
+            .map(|p| (p.meter, self.pop_out_on_screen(p)))
+            .collect();
+        for (meter, on_screen) in moved {
+            let (frame, display) = self.anchor(on_screen);
+            if let Some(pop_out) = self.layout.pop_out_mut(meter) {
+                pop_out.frame = frame;
+                pop_out.display = display;
+                changed = true;
+            }
+        }
+        if self.missing(self.window.display.as_ref()) {
+            if let Some(on_screen) = self.window_on_screen() {
+                let (frame, display) = self.anchor(on_screen);
+                self.window.frame = Some(frame);
+                self.window.display = display;
+            } else {
+                self.window.display = None;
+            }
+            changed = true;
+        }
+        changed
+    }
+
     /// The display the Bar is on, once the shell has said.
     pub fn display(&self) -> Option<Display> {
         self.display
@@ -442,7 +582,7 @@ impl AppCore {
     /// Where a new Pop-out for `meter` goes: next to its place in the Bar, inside the display.
     fn pop_out_frame(&self, meter: usize) -> Rect {
         let (width, height) = layout::POP_OUT_SIZE;
-        let Some(display) = self.display else {
+        let Some(display) = self.bar_display() else {
             return Rect {
                 x: 100.0,
                 y: 100.0,
@@ -717,8 +857,6 @@ impl AppCore {
             theme: ThemeRef { light, dark },
             bar: self.layout.clone(),
             window: self.window.clone(),
-            bar_display: None,
-            window_display: None,
             meters: self
                 .meters
                 .iter()
@@ -921,13 +1059,17 @@ impl AppCore {
                 self.menu = Some(MeterMenu { meter, window, at });
             }
             Event::Display(display) => {
-                if self.display == Some(display) {
+                let screen = Screen {
+                    display,
+                    fingerprint: None,
+                    name: String::new(),
+                    main: true,
+                };
+                if self.screens == [screen.clone()] {
                     return;
                 }
+                self.screens = vec![screen];
                 self.display = Some(display);
-                for pop_out in &mut self.layout.pop_outs {
-                    pop_out.frame = pop_out.frame.clamped_to(display.usable);
-                }
             }
             Event::SetEdge(edge) => {
                 if edge == self.layout.edge {
@@ -942,7 +1084,7 @@ impl AppCore {
                 let thickness = thickness.clamp(layout::MIN_THICKNESS, 4_000.0);
                 // What the user sees is capped; storing more than that would
                 // make the next drag jump.
-                let shown = match self.display {
+                let shown = match self.bar_display() {
                     Some(display) => {
                         let mut capped = self.layout.clone();
                         capped.thickness = thickness;
@@ -956,7 +1098,9 @@ impl AppCore {
                 self.layout.thickness = shown;
             }
             Event::MoveBarEnd { end, at } => {
-                let Some(display) = self.display else { return };
+                let Some(display) = self.bar_display() else {
+                    return;
+                };
                 if !self.layout.move_end(end, at, &display) {
                     return;
                 }
@@ -967,9 +1111,12 @@ impl AppCore {
                 }
             }
             Event::PopOut { meter } => {
-                let frame = self.pop_out_frame(meter);
+                let (frame, display) = self.anchor(self.pop_out_frame(meter));
                 if !self.layout.pop_out(meter, frame) {
                     return;
+                }
+                if let Some(pop_out) = self.layout.pop_out_mut(meter) {
+                    pop_out.display = display;
                 }
                 self.menu = None;
             }
@@ -985,23 +1132,22 @@ impl AppCore {
                 }
             }
             Event::PopOutMoved { meter, frame } => {
-                let display = self.display;
-                let Some(pop_out) = self.layout.pop_out_mut(meter) else {
-                    return;
-                };
                 let (min_w, min_h) = layout::MIN_POP_OUT;
-                let mut frame = Rect {
+                let frame = Rect {
                     width: frame.width.max(min_w),
                     height: frame.height.max(min_h),
                     ..frame
                 };
-                if let Some(display) = display {
-                    frame = frame.clamped_to(display.frame);
-                }
-                if pop_out.frame == frame {
+                // Last touch wins: wherever the user puts it is its place now.
+                let (frame, display) = self.anchor(frame);
+                let Some(pop_out) = self.layout.pop_out_mut(meter) else {
+                    return;
+                };
+                if pop_out.frame == frame && pop_out.display == display {
                     return;
                 }
                 pop_out.frame = frame;
+                pop_out.display = display;
             }
             Event::SetPopOutOnTop { meter, on_top } => match self.layout.pop_out_mut(meter) {
                 Some(pop_out) if pop_out.on_top != on_top => pop_out.on_top = on_top,
@@ -1063,10 +1209,12 @@ impl AppCore {
                 LayoutMode::Window => self.window.on_top = !self.window.on_top,
             },
             Event::WindowMoved(frame) => {
-                if self.window.frame == Some(frame) {
+                let (frame, display) = self.anchor(frame);
+                if self.window.frame == Some(frame) && self.window.display == display {
                     return;
                 }
                 self.window.frame = Some(frame);
+                self.window.display = display;
             }
             Event::ThemeFiles(files) => self.themes.load(files),
             Event::SystemAppearance(appearance) => {
@@ -1127,6 +1275,18 @@ impl AppCore {
             | Event::MovePreset { .. }
             | Event::ResetPreset { .. }
             | Event::ImportPreset(_) => return,
+            Event::Screens(screens) => {
+                if self.screens == screens {
+                    return;
+                }
+                self.screens = screens.to_vec();
+                self.display = self.main_display();
+            }
+            Event::KeepHere => {
+                if !self.keep_here() {
+                    return;
+                }
+            }
             Event::ShowOverFullscreen(shown) => {
                 if shown == self.layout.show_over_fullscreen {
                     return;
@@ -1427,7 +1587,7 @@ impl AppCore {
         let mut windows = vec![WindowScene {
             key: WindowKey::Bar,
             title: "Das-Meter".to_owned(),
-            frame: self.display.map(|display| bar.frame_on(&display)),
+            frame: self.bar_display().map(|display| bar.frame_on(&display)),
             on_top: bar.screen != ScreenMode::NormalWindow,
             reserve_space: bar.screen == ScreenMode::ReserveSpace,
             over_fullscreen: bar.show_over_fullscreen,
@@ -1443,7 +1603,7 @@ impl AppCore {
                     "Das-Meter · {}",
                     self.meters[pop_out.meter].meter.kind_name()
                 ),
-                frame: Some(pop_out.frame),
+                frame: Some(self.pop_out_on_screen(pop_out)),
                 on_top: pop_out.on_top,
                 reserve_space: false,
                 over_fullscreen: false,
@@ -1466,7 +1626,7 @@ impl AppCore {
         let window = WindowScene {
             key: WindowKey::Main,
             title: "Das-Meter".to_owned(),
-            frame: self.window.frame,
+            frame: self.window_on_screen(),
             on_top: self.window.on_top,
             reserve_space: false,
             over_fullscreen: false,
@@ -1555,6 +1715,7 @@ impl AppCore {
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),
             presets: self.presets.scene(self.changed_since_opened()),
+            missing_displays: self.missing_displays(),
             listen_to: self.listen_to,
             mode: self.mode,
             send_plugins,

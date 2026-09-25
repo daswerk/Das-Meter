@@ -26,6 +26,9 @@ pub struct Scene {
     pub theme: ThemeScene,
     /// The Presets, the current one, and whether Revert is offered.
     pub presets: PresetScene,
+    /// Displays the layout's windows were placed on that aren't connected:
+    /// a quiet note names them and offers Keep here.
+    pub missing_displays: Vec<String>,
     pub listen_to: ListenTo,
     /// Bar mode or Window mode.
     pub mode: LayoutMode,

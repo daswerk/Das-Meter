@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::displays::DisplayRef;
 use crate::presets::PresetData;
 use crate::theme::Theme;
 
@@ -31,16 +32,16 @@ pub struct SharedPreset {
     pub themes: Vec<EmbeddedTheme>,
 }
 
-/// A display fingerprint without its serial number: "vendor:model:serial"
-/// becomes "vendor:model", so a shared file doesn't identify the monitor.
-pub fn without_serial(fingerprint: &str) -> String {
-    fingerprint.split(':').take(2).collect::<Vec<_>>().join(":")
-}
-
 impl SharedPreset {
     pub fn new(mut preset: PresetData, themes: Vec<Theme>) -> SharedPreset {
-        preset.bar_display = preset.bar_display.as_deref().map(without_serial);
-        preset.window_display = preset.window_display.as_deref().map(without_serial);
+        // Display fingerprints without serial numbers, so a shared file doesn't
+        // identify anyone's monitors.
+        let strip = |d: &mut Option<DisplayRef>| *d = d.as_ref().map(DisplayRef::without_serial);
+        strip(&mut preset.bar.display);
+        strip(&mut preset.window.display);
+        for pop_out in &mut preset.bar.pop_outs {
+            strip(&mut pop_out.display);
+        }
         preset.built_in = None;
         SharedPreset {
             format: FORMAT.to_owned(),

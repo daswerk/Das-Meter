@@ -234,8 +234,12 @@ impl Node {
 /// Window mode's layout.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowLayout {
-    /// Where the window is, once placed or moved.
+    /// Where the window is, once placed or moved: relative to its display's
+    /// top-left corner.
     pub frame: Option<Rect>,
+    /// The display it was placed on; `None` for the main display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::displays::DisplayRef>,
     pub on_top: bool,
     pub tree: Node,
 }
@@ -253,6 +257,7 @@ impl WindowLayout {
         );
         WindowLayout {
             frame: None,
+            display: None,
             on_top: false,
             tree: Node::split(Direction::Stacked, 0.5, Node::Pane(1), below),
         }

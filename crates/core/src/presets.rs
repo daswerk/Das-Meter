@@ -101,12 +101,6 @@ pub struct PresetData {
     pub theme: ThemeRef,
     pub bar: BarLayout,
     pub window: WindowLayout,
-    /// The display each layout was placed on. Placeholders until the
-    /// multi-display ticket fills them in.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bar_display: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub window_display: Option<String>,
     pub meters: Vec<MeterPreset>,
 }
 
@@ -142,6 +136,7 @@ impl PresetData {
             BuiltIn::Bar | BuiltIn::Mixing => WindowLayout::mixing(),
             BuiltIn::Mastering => WindowLayout {
                 frame: None,
+                display: None,
                 on_top: false,
                 tree: Node::Split {
                     direction: Direction::SideBySide,
@@ -168,8 +163,6 @@ impl PresetData {
             theme: ThemeRef::default(),
             bar: BarLayout::new(4, Platform::current()),
             window,
-            bar_display: None,
-            window_display: None,
             meters: default_meters(),
         }
     }
