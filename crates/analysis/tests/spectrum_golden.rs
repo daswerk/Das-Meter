@@ -273,3 +273,43 @@ fn frequencies_are_named_as_notes() {
     assert!((a.cents - 38.9).abs() < 0.1, "{}", a.cents);
     assert!(note_name(0.0).is_none());
 }
+
+#[test]
+fn the_peak_is_found_between_bins() {
+    for rate in RATES {
+        let bin = rate as f64 / FFT as f64;
+        // Half a bin off, the worst case for a bin-only answer.
+        let frequency = on_bin(rate, 1_000.0) + bin / 2.0;
+        let audio = both(&sine(rate, frequency, -12.0, 0.0, FFT * 2));
+        let mut analyser = analyse(rate, flat(), &audio);
+        analyser.update();
+        let (found, level) = analyser.peak(-100.0).expect("a peak");
+        let error = (f64::from(found) - frequency).abs();
+        assert!(
+            error < bin * 0.1,
+            "{rate} Hz: {found} for {frequency} (bin {bin})"
+        );
+        // The parabola also takes back most of the scalloping loss.
+        assert!((level + 12.0).abs() < 0.5, "{rate} Hz: {level} dB");
+    }
+}
+
+#[test]
+fn the_louder_of_two_tones_is_the_peak() {
+    let rate = 48_000;
+    let quiet = sine(rate, 440.0, -30.0, 0.0, FFT * 2);
+    let loud = sine(rate, 3_000.0, -12.0, 0.0, FFT * 2);
+    let mixed: Vec<f32> = quiet.iter().zip(&loud).map(|(a, b)| a + b).collect();
+    let mut analyser = analyse(rate, flat(), &both(&mixed));
+    analyser.update();
+    let (found, _) = analyser.peak(-100.0).unwrap();
+    assert!((found - 3_000.0).abs() < 2.0, "{found}");
+}
+
+#[test]
+fn silence_has_no_peak() {
+    let rate = 48_000;
+    let mut analyser = analyse(rate, flat(), &both(&silence(FFT * 2)));
+    analyser.update();
+    assert_eq!(analyser.peak(-100.0), None);
+}

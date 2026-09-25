@@ -1,8 +1,9 @@
 //! The Spectrum: a log-frequency axis, each trace as a line with soft fill or
-//! as bars, the peak-hold curve, and the frequency and note under the cursor.
+//! as bars, the peak-hold curve, the peak line on the loudest peak, and the
+//! frequency and note under the cursor.
 
 use dasmeter_analysis::{Spectrum, SpectrumStyle};
-use dasmeter_core::{CursorReadout, Role, SpectrumMeterSettings};
+use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings};
 
 use super::labels::Align;
 use super::shapes::Area;
@@ -36,6 +37,7 @@ pub fn draw(
     spectrum: &Spectrum,
     range: (f32, f32),
     cursor: Option<&CursorReadout>,
+    peak: Option<&CursorReadout>,
 ) {
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
     let thin = c.px(1.0).max(1.0);
@@ -155,43 +157,55 @@ pub fn draw(
         }
     }
 
+    // The peak line on the top row, the cursor's readout under it.
+    if let Some(peak) = peak {
+        let accent = c.colour(Role::Accent);
+        marker(c, area, peak, accent, 0);
+    }
     if let Some(cursor) = cursor {
-        let x = area.x + cursor.x * area.width;
         let text = c.colour(Role::Text);
-        let line = Area {
-            x: x - thin / 2.0,
-            width: thin,
-            ..area
-        };
-        c.shapes.rect(line, text.faded(0.5));
-        let mut readout = if cursor.frequency < 1_000.0 {
-            format!("{:.0} Hz", cursor.frequency)
-        } else {
-            format!("{:.2} kHz", cursor.frequency / 1_000.0)
-        };
-        if let Some(note) = cursor.note {
-            readout += &format!("  {note} {:+.0}¢", note.cents);
-        }
-        // Keep the readout inside the Meter: right of the line, else left of
-        // it, else against whichever edge it would cross.
-        let width = text_width(c, &readout, 11.0);
-        let right = x + c.px(4.0);
-        let left = x - c.px(4.0) - width;
-        let start = if right + width <= area.right() {
-            right
-        } else if left >= area.x {
-            left
-        } else {
-            (area.right() - width).max(area.x)
-        };
-        // Below the top dB label.
-        c.text(
-            &readout,
-            start,
-            area.y + c.px(12.0),
-            11.0,
-            text,
-            Align::Left,
+        marker(
+            c,
+            area,
+            cursor,
+            text.faded(0.5),
+            usize::from(peak.is_some()),
         );
     }
+}
+
+/// A vertical line at a frequency, with its frequency and note on text row
+/// `row` from the top, kept inside the Meter.
+fn marker(c: &mut Canvas, area: Area, at: &CursorReadout, line_colour: Colour, row: usize) {
+    let thin = c.px(1.0).max(1.0);
+    let x = area.x + at.x * area.width;
+    let line = Area {
+        x: x - thin / 2.0,
+        width: thin,
+        ..area
+    };
+    c.shapes.rect(line, line_colour);
+    let mut readout = if at.frequency < 1_000.0 {
+        format!("{:.0} Hz", at.frequency)
+    } else {
+        format!("{:.2} kHz", at.frequency / 1_000.0)
+    };
+    if let Some(note) = at.note {
+        readout += &format!("  {note} {:+.0}¢", note.cents);
+    }
+    // Right of the line, else left of it, else against whichever edge it would cross.
+    let width = text_width(c, &readout, 11.0);
+    let right = x + c.px(4.0);
+    let left = x - c.px(4.0) - width;
+    let start = if right + width <= area.right() {
+        right
+    } else if left >= area.x {
+        left
+    } else {
+        (area.right() - width).max(area.x)
+    };
+    // Below the top dB label.
+    let text = c.colour(Role::Text);
+    let y = area.y + c.px(12.0) + row as f32 * c.px(16.0);
+    c.text(&readout, start, y, 11.0, text, Align::Left);
 }

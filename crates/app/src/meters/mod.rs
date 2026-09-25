@@ -228,7 +228,16 @@ impl MeterRenderer {
                     spectrum,
                     range,
                     cursor,
-                } => spectrum::draw(&mut c, inner, settings, spectrum, *range, cursor.as_ref()),
+                    peak,
+                } => spectrum::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    spectrum,
+                    *range,
+                    cursor.as_ref(),
+                    peak.as_ref(),
+                ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)
                 }

@@ -386,3 +386,31 @@ fn the_graph_span_is_kept_within_its_limits() {
     };
     assert_eq!(s.history_span, Duration::from_secs(120));
 }
+
+#[test]
+fn the_peak_line_follows_the_loudest_peak_and_can_be_turned_off() {
+    let mut app = App::playing();
+    let views = app.draw();
+    let MeterView::Spectrum { peak, range, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    let peak = peak.expect("on by default, and the sine is loud");
+    assert!((peak.frequency - 1_000.0).abs() < 1.0, "{}", peak.frequency);
+    let note = peak.note.expect("a note");
+    assert_eq!(note.to_string(), "B5");
+    // Where 1 kHz sits between the edges, on the log axis.
+    let x = (1_000.0f32 / range.0).ln() / (range.1 / range.0).ln();
+    assert!((peak.x - x).abs() < 0.001);
+
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Spectrum(s) = s {
+            s.show_peak_line = false;
+        }
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 0.2))));
+    let views = app.draw();
+    let MeterView::Spectrum { peak, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    assert_eq!(*peak, None);
+}

@@ -35,6 +35,8 @@ pub struct SpectrumMeterSettings {
     pub analysis: SpectrumSettings,
     /// Whether the peak-hold curve is drawn. Default on.
     pub show_peak_hold: bool,
+    /// Whether a line marks the loudest peak, with its frequency and note. Default on.
+    pub show_peak_line: bool,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -42,6 +44,7 @@ impl Default for SpectrumMeterSettings {
         SpectrumMeterSettings {
             analysis: SpectrumSettings::default(),
             show_peak_hold: true,
+            show_peak_line: true,
         }
     }
 }
@@ -219,6 +222,8 @@ pub enum MeterView {
         /// Frequencies at the left and right edges (the top is capped at Nyquist).
         range: (f32, f32),
         cursor: Option<CursorReadout>,
+        /// The loudest peak, when the peak line is on and there's sound.
+        peak: Option<CursorReadout>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
@@ -431,11 +436,22 @@ fn build_view(
                     note: note_name(frequency),
                 }
             });
+            let peak = settings
+                .show_peak_line
+                .then(|| a.peak(floor))
+                .flatten()
+                .map(|(frequency, _)| CursorReadout {
+                    x: ((frequency / range.0).ln() / (range.1 / range.0).ln()).clamp(0.0, 1.0),
+                    // To 0.1 Hz: finer would only redraw for nothing.
+                    frequency: round_to(frequency, 0.1),
+                    note: note_name(frequency),
+                });
             MeterView::Spectrum {
                 settings,
                 spectrum,
                 range,
                 cursor,
+                peak,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {

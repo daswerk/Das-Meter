@@ -300,6 +300,40 @@ impl SpectrumAnalyser {
         self.bin_frequency(best)
     }
 
+    /// The loudest peak of any trace within the shown range, as of the last
+    /// [`update`](Self::update): its frequency, refined between bins by a
+    /// parabola through the loudest bin and its neighbours (in dB), and its
+    /// level. `None` when nothing rises above `floor` dB.
+    pub fn peak(&self, floor: f32) -> Option<(f32, f32)> {
+        let (low, high) = self.shown_range();
+        let bin_hz = self.bin_frequency(1);
+        let mut best: Option<(f32, f32)> = None;
+        for bins in &self.bins[..self.spectrum.traces.len()] {
+            let Some(k) = (1..bins.len().saturating_sub(1))
+                .filter(|&k| (low..=high).contains(&self.bin_frequency(k)))
+                .max_by(|&a, &b| bins[a].total_cmp(&bins[b]))
+            else {
+                continue;
+            };
+            let (left, centre, right) = (bins[k - 1], bins[k], bins[k + 1]);
+            if centre <= floor {
+                continue;
+            }
+            let curve = left - 2.0 * centre + right;
+            let offset = if curve < 0.0 {
+                (0.5 * (left - right) / curve).clamp(-0.5, 0.5)
+            } else {
+                0.0
+            };
+            let level = centre - 0.25 * (left - right) * offset;
+            let frequency = (k as f32 + offset) * bin_hz;
+            if best.is_none_or(|(_, db)| level > db) {
+                best = Some((frequency, level));
+            }
+        }
+        best
+    }
+
     fn shown_range(&self) -> (f32, f32) {
         shown_range(self.sample_rate, &self.settings)
     }
