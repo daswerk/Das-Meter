@@ -8,4 +8,4 @@ The layout version is part of the name. A new layout means a new name (`v2`), an
 
 **Open risk:** Logic Pro runs AUs in `AUHostingService`, whose sandbox isn't documented. If shared memory is blocked there, the AU declares `mach-lookup.global-name` in its `resourceUsage`, and the app offers a Mach service that hands over the same memory. The table and the audio path stay the same. This is tested in [Test the Send Plugin's shared memory inside Logic Pro](https://github.com/daswerk/Das-Meter/issues/16).
 
-Decided in [Choose the Send Plugin transport](https://github.com/daswerk/Das-Meter/issues/12). Research: `docs/research/send-plugin-transport.md` on branch `research/send-plugin-transport`.
+Decided in [Choose the Send Plugin transport](https://github.com/daswerk/Das-Meter/issues/12). Research: [`docs/research/send-plugin-transport.md`](../research/send-plugin-transport.md).

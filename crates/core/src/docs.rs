@@ -22,7 +22,7 @@ pub enum Topic {
     /// Send Plugins: install, naming, Waiting for.
     SendPlugins,
     InstallSendPlugin,
-    /// The four Meters and their settings.
+    /// The five Meters and their settings.
     Meters,
     /// Bar, Pop-outs, Window mode, Reserve space, fullscreen.
     Layout,

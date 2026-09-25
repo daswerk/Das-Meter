@@ -12,4 +12,4 @@ We rejected an unsigned `.pkg` installing system-wide (as MiniMeters and Surge X
 - **Reversible later**: the release pipeline has a Developer ID signing and notarization step that switches on once the secrets exist. The same DMG then becomes notarized, and the in-app plug-in install stays.
 - **To test per DAW**: that app-copied, unnotarized plug-ins in the per-user folders load without a prompt.
 
-Decided in [Choose how Das-Meter is packaged, installed and updated](https://github.com/daswerk/Das-Meter/issues/22). Research: `docs/research/packaging-and-updates.md` on branch `research/packaging-and-updates`.
+Decided in [Choose how Das-Meter is packaged, installed and updated](https://github.com/daswerk/Das-Meter/issues/22). Research: [`docs/research/packaging-and-updates.md`](../research/packaging-and-updates.md).

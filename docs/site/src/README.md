@@ -1,9 +1,9 @@
 # Das-Meter
 
 Das-Meter shows live Meters for what your computer plays: a **Waveform**, a
-**Spectrum**, a **Loudness Meter** and a **Stereometer**. It runs on its own,
-next to any app or DAW, on macOS and Windows. It's free and open source (MIT
-OR Apache-2.0).
+**Spectrum**, a **Loudness Meter**, a **Stereometer** and a **Cepstrum**. It
+runs on its own, next to any app or DAW, on macOS and Linux, with Windows to
+come. It's free and open source (MIT OR Apache-2.0).
 
 - New here? Start with [Getting started](getting-started.md).
 - Using a DAW? See [Send Plugins](send-plugins.md).

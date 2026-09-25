@@ -7,4 +7,4 @@ Das-Meter is written in Rust as one Cargo workspace, with the transport between 
 - **App**: winit + wgpu directly. Each Meter is its own GPU renderer (a shader fed a small buffer), and the app redraws only when audio arrives; egui draws only menus and the settings panel onto the same surface. eframe was rejected because it relayouts every frame and hides the window handle that the Windows AppBar API needs; iced because it calls itself experimental.
 - **Maths**: `rustfft`/`realfft` for the Spectrum and `ebur128` for LUFS, rather than hand-written maths.
 
-Research behind this: `docs/research/rust-vs-juce.md` on branch `research/rust-vs-juce`.
+Research behind this: [`docs/research/rust-vs-juce.md`](../research/rust-vs-juce.md).

@@ -4,4 +4,4 @@ On macOS, System Capture uses a Core Audio process tap on an aggregate device (t
 
 The costs: Macs older than 14.6 aren't supported at all, not even for Send Plugins, so the app has one OS floor. There's also no public API to check whether permission was granted. A denied tap just delivers silence, so the app shows a hint that points to System Settings after a stretch of silence.
 
-Decided in [Choose the System Capture approach and minimum OS versions](https://github.com/daswerk/Das-Meter/issues/11). Research: `docs/research/system-capture.md` on branch `research/system-capture`.
+Decided in [Choose the System Capture approach and minimum OS versions](https://github.com/daswerk/Das-Meter/issues/11). Research: [`docs/research/system-capture.md`](../research/system-capture.md).
