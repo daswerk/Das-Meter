@@ -14,6 +14,7 @@ pub mod panes;
 pub mod presets;
 pub mod scene;
 pub mod settings;
+pub mod sharing;
 pub mod sources;
 pub mod theme;
 pub mod themes;
@@ -261,6 +262,9 @@ pub enum Event<'a> {
     ResetPreset {
         index: usize,
     },
+    /// A `.dasmeter-preset` file's contents to import: from the menu, a drop
+    /// or the OS opening one. The app switches to it; a bad file changes nothing.
+    ImportPreset(&'a str),
 }
 
 /// What the shell should do next.
@@ -318,6 +322,7 @@ pub struct AppCore {
     window: WindowLayout,
     display: Option<Display>,
     note_until: Option<Duration>,
+    note: Note,
     visible: bool,
     app: AppSettings,
     /// The display's refresh rate, once the shell says it.
@@ -388,6 +393,7 @@ impl AppCore {
                 .collect(),
             pointer: None,
             note_until: None,
+            note: Note::OutputChanged,
             visible: true,
             app: AppSettings::default(),
             refresh_rate: None,
@@ -553,7 +559,8 @@ impl AppCore {
             | RenamePreset { .. }
             | DeletePreset { .. }
             | MovePreset { .. }
-            | ResetPreset { .. } => {
+            | ResetPreset { .. }
+            | ImportPreset(_) => {
                 self.handle_preset(event, now);
                 self.changed = true;
                 return;
@@ -617,6 +624,7 @@ impl AppCore {
                 None
             }
             Event::ResetPreset { index } => self.presets.reset(index),
+            Event::ImportPreset(text) => self.import(text, now),
             _ => None,
         };
         if let Some(data) = open {
@@ -627,6 +635,60 @@ impl AppCore {
                 self.save_after = Some(now);
             }
         }
+    }
+
+    /// The current Preset as a `.dasmeter-preset` file: its name (for the
+    /// file) and contents, with the custom Themes it uses.
+    pub fn export(&self) -> Option<(String, String)> {
+        let name = self.presets.current_name()?;
+        let data = PresetData {
+            name: name.clone(),
+            ..self.current_data()
+        };
+        let mut themes: Vec<Theme> = Vec::new();
+        for theme_name in [&data.theme.light, &data.theme.dark] {
+            if let Some((theme, false)) = self.themes.get(theme_name)
+                && !themes.iter().any(|t| t.name == theme.name)
+            {
+                themes.push(theme.clone());
+            }
+        }
+        let file = sharing::SharedPreset::new(data, themes);
+        Some((name, file.to_toml()))
+    }
+
+    /// Imports a shared Preset: its Themes first (reused if identical,
+    /// "(2)" if they differ, installed if new), then the Preset under a free
+    /// name. Returns it to open; a bad file changes nothing.
+    fn import(&mut self, text: &str, now: Duration) -> Option<PresetData> {
+        let (mut data, themes) = match sharing::SharedPreset::from_toml(text) {
+            Ok(file) => file,
+            Err(_) => {
+                self.show_note(Note::ImportFailed, now);
+                return None;
+            }
+        };
+        for theme in themes {
+            if let Some((existing, _)) = self.themes.get(&theme.name)
+                && existing.palette == theme.palette
+                && existing.styling == theme.styling
+            {
+                continue;
+            }
+            let original = theme.name.clone();
+            let installed = self.themes.install(theme);
+            for reference in [&mut data.theme.light, &mut data.theme.dark] {
+                if *reference == original {
+                    reference.clone_from(&installed);
+                }
+            }
+        }
+        self.presets.import(data)
+    }
+
+    fn show_note(&mut self, note: Note, now: Duration) {
+        self.note = note;
+        self.note_until = Some(now + NOTE_DURATION);
     }
 
     /// Saves a pending change now, as the app quits.
@@ -744,7 +806,7 @@ impl AppCore {
                     return;
                 }
                 if restarted {
-                    self.note_until = Some(now + NOTE_DURATION);
+                    self.show_note(Note::OutputChanged, now);
                 }
                 for slot in &mut self.meters {
                     slot.meter.start(sample_rate);
@@ -1063,7 +1125,8 @@ impl AppCore {
             | Event::RenamePreset { .. }
             | Event::DeletePreset { .. }
             | Event::MovePreset { .. }
-            | Event::ResetPreset { .. } => return,
+            | Event::ResetPreset { .. }
+            | Event::ImportPreset(_) => return,
             Event::ShowOverFullscreen(shown) => {
                 if shown == self.layout.show_over_fullscreen {
                     return;
@@ -1171,6 +1234,7 @@ impl AppCore {
                 previous => {
                     // Same Send Plugin at a new rate: reset like an output change.
                     if previous.is_some_and(|p| p.id == id) {
+                        self.note = Note::OutputChanged;
                         self.note_until = Some(now + NOTE_DURATION);
                     }
                     slot.meter.start(sample_rate);
@@ -1487,11 +1551,7 @@ impl AppCore {
             .collect();
         Scene {
             windows,
-            notes: if note {
-                vec![Note::OutputChanged]
-            } else {
-                Vec::new()
-            },
+            notes: if note { vec![self.note] } else { Vec::new() },
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),
             presets: self.presets.scene(self.changed_since_opened()),

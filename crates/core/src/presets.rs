@@ -587,8 +587,13 @@ impl Presets {
                 }
             })
             .collect();
-        let slug = slug.trim_matches('-');
-        let slug = if slug.is_empty() { "preset" } else { slug };
+        // One dash between words, however many other characters stood there.
+        let slug = slug
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        let slug = if slug.is_empty() { "preset" } else { &slug };
         let first = format!("{slug}.toml");
         if self.position(&first).is_none() {
             return first;
@@ -639,6 +644,18 @@ impl Presets {
             .map_or_else(|| "Preset".to_owned(), |d| d.name.clone());
         let at = self.add(PresetData { name: base, ..data }, self.current);
         self.open(Some(at))
+    }
+
+    /// An imported Preset: added at the end under a free name, and opened.
+    pub fn import(&mut self, data: PresetData) -> Option<PresetData> {
+        let at = self.add(data, None);
+        self.open(Some(at))
+    }
+
+    /// The current Preset's name.
+    pub fn current_name(&self) -> Option<String> {
+        let i = self.current?;
+        self.entries[i].data().map(|d| d.name.clone())
     }
 
     /// A copy of the Preset at `index`, listed after it.

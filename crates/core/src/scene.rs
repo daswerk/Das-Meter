@@ -180,12 +180,15 @@ impl MeterState {
 pub enum Note {
     /// The output device or its rate changed, so the readings started over.
     OutputChanged,
+    /// A file to import wasn't a Das-Meter Preset; nothing was changed.
+    ImportFailed,
 }
 
 impl Note {
     pub fn text(self) -> &'static str {
         match self {
             Note::OutputChanged => "Output changed: reset",
+            Note::ImportFailed => "That file isn't a Das-Meter Preset: nothing was imported",
         }
     }
 }

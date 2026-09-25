@@ -178,8 +178,13 @@ impl Themes {
                 }
             })
             .collect();
-        let slug = slug.trim_matches('-');
-        let slug = if slug.is_empty() { "theme" } else { slug };
+        // One dash between words, however many other characters stood there.
+        let slug = slug
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        let slug = if slug.is_empty() { "theme" } else { &slug };
         let taken = |f: &str| self.entries.iter().any(|e| e.file.as_deref() == Some(f));
         let first = format!("{slug}.toml");
         if !taken(&first) {
@@ -200,6 +205,40 @@ impl Themes {
     pub fn choose_names(&mut self, light: &str, dark: &str) {
         self.light = light.to_owned();
         self.dark = dark.to_owned();
+    }
+
+    /// The Theme called `name`, and whether it's a built-in.
+    pub fn get(&self, name: &str) -> Option<(&Theme, bool)> {
+        self.find(name)
+            .map(|i| (&self.entries[i].theme, self.entries[i].built_in))
+    }
+
+    /// Adds a Theme from elsewhere (an imported Preset) to the folder, under
+    /// " (2)" if its name is taken. Returns the name it got.
+    pub fn install(&mut self, theme: Theme) -> String {
+        let name = if self.find(&theme.name).is_none() {
+            theme.name.clone()
+        } else {
+            (2..)
+                .map(|n| format!("{} ({n})", theme.name))
+                .find(|name| self.find(name).is_none())
+                .expect("some number is free")
+        };
+        let file = self.file_name_for(&name);
+        let theme = Theme {
+            name: name.clone(),
+            ..theme
+        };
+        self.writes.push(FileWrite {
+            file_name: file.clone(),
+            contents: theme.to_toml(),
+        });
+        self.entries.push(Entry {
+            theme,
+            built_in: false,
+            file: Some(file),
+        });
+        name
     }
 
     /// Copies a Theme into an editable one in the themes folder and uses it.
