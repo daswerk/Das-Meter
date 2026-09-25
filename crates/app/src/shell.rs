@@ -12,8 +12,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use dasmeter_core::{
-    AppCore, BarEnd, Decision, Edge, Event, ListenTo, MeterScene, MeterState, Rect, Scene,
-    WindowKey, WindowScene,
+    AppCore, BarEnd, Decision, Direction, Edge, Event, ListenTo, MeterScene, MeterState, Rect,
+    Scene, SplitId, WindowKey, WindowScene,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -81,6 +81,8 @@ enum Drag {
     Thickness,
     /// One end of the Bar: its length along the edge.
     End(BarEnd),
+    /// A divider between Window mode's panes.
+    Split(SplitId, Direction),
 }
 
 /// How close to a divider or the Bar's inner edge the pointer grabs it, in logical px.
@@ -200,6 +202,7 @@ fn ui_view(scene: &Scene) -> Scene {
             over_fullscreen: window.over_fullscreen,
             screen: window.screen,
             edge: window.edge,
+            dividers: window.dividers.clone(),
         })
         .collect();
     Scene {
@@ -207,6 +210,7 @@ fn ui_view(scene: &Scene) -> Scene {
         notes: Vec::new(),
         palette: scene.palette.clone(),
         listen_to: scene.listen_to,
+        mode: scene.mode,
         send_plugins: scene.send_plugins.clone(),
         menu: scene.menu,
         settings_open: scene.settings_open,
@@ -328,6 +332,16 @@ impl Shell {
             WindowKey::PopOut(_) => attributes
                 .with_min_inner_size(LogicalSize::new(160.0, 120.0))
                 .with_resizable(true),
+            WindowKey::Main => {
+                let attributes = attributes
+                    .with_min_inner_size(LogicalSize::new(400.0, 250.0))
+                    .with_resizable(true);
+                if scene.frame.is_none() {
+                    attributes.with_inner_size(LogicalSize::new(1200.0, 720.0))
+                } else {
+                    attributes
+                }
+            }
         }
     }
 
@@ -552,6 +566,26 @@ impl Shell {
 
     /// The Bar's handle under `cursor` (logical px in the Bar window).
     fn handle_at(&self, scene: &Scene, app: &AppWindow, [x, y]: [f32; 2]) -> Option<Drag> {
+        if app.role == Role::Meters(WindowKey::Main) {
+            let main = scene.windows.iter().find(|w| w.key == WindowKey::Main)?;
+            let [width, height] = app.logical_size();
+            return main.dividers.iter().find_map(|d| {
+                let a = d.area;
+                let (left, top) = (a.x * width, a.y * height);
+                let (right, bottom) = ((a.x + a.width) * width, (a.y + a.height) * height);
+                let near = match d.direction {
+                    Direction::SideBySide => {
+                        let at = left + d.ratio * a.width * width;
+                        (x - at).abs() < GRAB && (top..bottom).contains(&y)
+                    }
+                    Direction::Stacked => {
+                        let at = top + d.ratio * a.height * height;
+                        (y - at).abs() < GRAB && (left..right).contains(&x)
+                    }
+                };
+                near.then_some(Drag::Split(d.split, d.direction))
+            });
+        }
         let bar = scene.windows.iter().find(|w| w.key == WindowKey::Bar)?;
         let edge = bar.edge?;
         let [width, height] = app.logical_size();
@@ -595,6 +629,14 @@ impl Shell {
         let now = self.now();
         let app = &self.windows[&id];
         let [width, height] = app.logical_size();
+        if let Drag::Split(split, direction) = drag {
+            let at = match direction {
+                Direction::SideBySide => x / width,
+                Direction::Stacked => y / height,
+            };
+            self.core.handle(Event::MoveSplit { split, at }, now);
+            return;
+        }
         let Some(scene) = self.core.scene() else {
             return;
         };
@@ -613,6 +655,7 @@ impl Shell {
                     y / height
                 },
             },
+            Drag::Split(..) => return,
             Drag::End(end) => {
                 // Measured on screen: the window moves while it's dragged.
                 let Some(window) = app.frame() else { return };
@@ -693,7 +736,7 @@ impl ApplicationHandler for Shell {
 
         match event {
             WindowEvent::CloseRequested => match role {
-                Role::Meters(WindowKey::Bar) => event_loop.exit(),
+                Role::Meters(WindowKey::Bar | WindowKey::Main) => event_loop.exit(),
                 Role::Meters(WindowKey::PopOut(meter)) => {
                     self.core.handle(Event::DockBack { meter }, now)
                 }
@@ -746,7 +789,7 @@ impl ApplicationHandler for Shell {
                 let point = app.fraction(cursor);
                 let scene = self.core.scene();
                 let handle = match (key, scene) {
-                    (WindowKey::Bar, Some(scene)) => {
+                    (WindowKey::Bar | WindowKey::Main, Some(scene)) => {
                         self.handle_at(scene, &self.windows[&id], cursor)
                     }
                     _ => None,
@@ -761,6 +804,7 @@ impl ApplicationHandler for Shell {
                     let along = match handle {
                         Some(Drag::Divider(_) | Drag::End(_)) => Some(horizontal),
                         Some(Drag::Thickness) => Some(!horizontal),
+                        Some(Drag::Split(_, direction)) => Some(direction == Direction::SideBySide),
                         None => None,
                     };
                     app.window.set_cursor(match along {
@@ -823,8 +867,18 @@ impl ApplicationHandler for Shell {
                     }
                 }
             }
-            let float_on_top = self.core.layout().screen == dasmeter_core::ScreenMode::FloatOnTop;
-            menu.show(self.core.listen_to(), float_on_top, clicked);
+            let float_on_top = match self.core.mode() {
+                dasmeter_core::LayoutMode::Bar => {
+                    self.core.layout().screen == dasmeter_core::ScreenMode::FloatOnTop
+                }
+                dasmeter_core::LayoutMode::Window => self.core.window_layout().on_top,
+            };
+            menu.show(
+                self.core.listen_to(),
+                self.core.mode(),
+                float_on_top,
+                clicked,
+            );
         }
         let pump_at = self.pump(now);
         let decision = self.core.decide(now);
@@ -862,14 +916,16 @@ impl Shell {
         let Some(app) = self.windows.get(&id) else {
             return;
         };
-        let Role::Meters(WindowKey::PopOut(meter)) = app.role else {
-            return;
-        };
         let Some(frame) = app.frame() else { return };
         if app.placed.is_some_and(|placed| close(placed, frame)) {
             return;
         }
+        let event = match app.role {
+            Role::Meters(WindowKey::PopOut(meter)) => Event::PopOutMoved { meter, frame },
+            Role::Meters(WindowKey::Main) => Event::WindowMoved(frame),
+            _ => return,
+        };
         let now = self.now();
-        self.core.handle(Event::PopOutMoved { meter, frame }, now);
+        self.core.handle(event, now);
     }
 }

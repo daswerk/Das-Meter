@@ -14,9 +14,10 @@ use dasmeter_analysis::{
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    Colour, Edge, Event, ListenTo, LoudnessMeterSettings, LufsBar, MeterScene, MeterSettings,
-    Palette, Platform, Role, Scene, ScreenMode, SpectrumMeterSettings, StereoDrawing,
-    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
+    Colour, Direction, Edge, Event, LayoutMode, ListenTo, LoudnessMeterSettings, LufsBar,
+    MeterKind, MeterScene, MeterSettings, Palette, Platform, Role, Scene, ScreenMode,
+    SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
+    WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -712,8 +713,55 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
     }
 }
 
+/// A pane's items in Window mode: which Meter it shows, split and close.
+fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+    let Some(meter_scene) = meter_scene(scene, meter) else {
+        return;
+    };
+    let mut kind = meter_scene.settings.kind();
+    let kinds = MeterKind::ALL.map(|k| {
+        (
+            k,
+            match k {
+                MeterKind::Waveform => "Waveform",
+                MeterKind::Spectrum => "Spectrum",
+                MeterKind::Loudness => "Loudness",
+                MeterKind::Stereometer => "Stereo",
+            },
+        )
+    });
+    if choice(ui, "Show", &mut kind, &kinds) {
+        actions.push(Event::AssignMeter { meter, kind });
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Split side by side").clicked() {
+            actions.push(Event::SplitPane {
+                meter,
+                direction: Direction::SideBySide,
+            });
+        }
+        if ui.button("Split stacked").clicked() {
+            actions.push(Event::SplitPane {
+                meter,
+                direction: Direction::Stacked,
+            });
+        }
+    });
+    let panes = scene.windows.first().map_or(0, |w| w.meters.len());
+    if ui
+        .add_enabled(panes > 1, egui::Button::new("Close pane"))
+        .clicked()
+    {
+        actions.push(Event::ClosePane { meter });
+    }
+}
+
 /// Where a Meter sits: Pop out or Dock back, and a Pop-out's Always on top.
 fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+    if scene.mode == LayoutMode::Window {
+        pane_item(ui, scene, meter, actions);
+        return;
+    }
     let pop_out = scene
         .windows
         .iter()
@@ -854,6 +902,11 @@ fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         .default_open(true)
         .show(ui, |ui| {
             listen_to(ui, scene, actions);
+            let mut mode = scene.mode;
+            let modes = [(LayoutMode::Bar, "Bar"), (LayoutMode::Window, "Window")];
+            if choice(ui, "Layout", &mut mode, &modes) {
+                actions.push(Event::SetMode(mode));
+            }
             let mut app = scene.app;
             let mut changed = ui
                 .add(

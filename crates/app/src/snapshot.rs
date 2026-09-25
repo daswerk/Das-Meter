@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|WxH]`: runs the app core on a
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|WxH]`: runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
 //! size of a Bar on a laptop display. It checks the
@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use dasmeter_analysis::signals::{frames, pink_noise, stereo};
-use dasmeter_core::{AppCore, Decision, Event, WindowKey};
+use dasmeter_core::{AppCore, Decision, Event, LayoutMode, WindowKey};
 
 use crate::gpu::Gpu;
 use crate::painter::{Painter, UiPaint};
@@ -53,10 +53,15 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     let (width, height) = match (open, custom) {
         (_, Some(size)) => size,
         (Some("bar"), _) => BAR,
+        (Some("window"), _) => (2400, 1440),
         _ => (WIDTH, HEIGHT),
     };
     match open {
         None | Some("bar") => {}
+        Some("window") => {
+            core.handle(Event::SetMode(LayoutMode::Window), now);
+            core.handle(Event::Pointer(Some((WindowKey::Main, [0.4, 0.25]))), now);
+        }
         Some(_) if custom.is_some() => {}
         // Right-click the Loudness Meter, as a user would.
         Some("menu") => core.handle(
@@ -122,7 +127,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
 
     painter.paint(
         core.scene(),
-        Some(WindowKey::Bar),
+        core.scene()
+            .and_then(|scene| scene.windows.first())
+            .map(|w| w.key),
         SCALE,
         &texture.create_view(&wgpu::TextureViewDescriptor::default()),
         ui,
