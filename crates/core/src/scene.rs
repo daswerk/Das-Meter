@@ -10,7 +10,8 @@ use crate::meters::{MeterSettings, MeterView};
 use crate::panes::Divider;
 use crate::settings::AppSettings;
 use crate::sources::ListenTo;
-use crate::theme::{Colour, Palette};
+use crate::theme::{Colour, Palette, Role};
+use crate::themes::ThemeScene;
 
 /// Everything on screen: the windows, the notes shown over them and the colours.
 #[derive(Clone, Debug, PartialEq)]
@@ -18,7 +19,10 @@ pub struct Scene {
     pub windows: Vec<WindowScene>,
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
+    /// The Theme in use's colours; a Meter's own overrides go over them.
     pub palette: Palette,
+    /// The Theme in use, its styling, and the list to choose from.
+    pub theme: ThemeScene,
     pub listen_to: ListenTo,
     /// Bar mode or Window mode.
     pub mode: LayoutMode,
@@ -92,6 +96,8 @@ pub struct MeterScene {
     pub picked: Option<u64>,
     /// Whether the Source label is switched on.
     pub show_source_label: bool,
+    /// The Meter's own colours for single roles, over the Theme's.
+    pub overrides: Vec<(Role, Colour)>,
 }
 
 /// The Source a Meter shows, as its small label says it.

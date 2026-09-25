@@ -11,6 +11,7 @@ publish.workspace = true
 
 [dependencies]
 dasmeter-analysis = { path = "../analysis" }
+toml = { version = "0.9", default-features = false, features = ["parse", "display", "serde", "std"] }
 
 [lints]
 workspace = true

@@ -15,6 +15,7 @@ pub mod scene;
 pub mod settings;
 pub mod sources;
 pub mod theme;
+pub mod themes;
 
 use std::time::Duration;
 
@@ -33,7 +34,8 @@ pub use scene::{
 };
 pub use settings::AppSettings;
 pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState};
-pub use theme::{Colour, Palette, Role};
+pub use theme::{Colour, LineWeight, Palette, Role, Styling, Theme};
+pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 
 use meters::Meter;
 use sources::Resolved;
@@ -135,6 +137,30 @@ pub enum Event<'a> {
     ToggleOnTop,
     /// The user moved or resized Window mode's window.
     WindowMoved(Rect),
+    /// The Theme files in the themes folder, read at launch and whenever the
+    /// folder changes.
+    ThemeFiles(&'a [ThemeFile]),
+    /// The OS switched between light and dark.
+    SystemAppearance(Appearance),
+    /// Use these Themes (indexes into the scene's list): the same one twice,
+    /// or a light/dark pair that follows the system.
+    ChooseTheme { light: usize, dark: usize },
+    /// Copy a Theme into an editable one and use it.
+    DuplicateTheme { theme: usize },
+    /// Edit one colour role of a Theme from the themes folder.
+    SetThemeColour {
+        theme: usize,
+        role: Role,
+        colour: Colour,
+    },
+    /// Edit a Theme's styling.
+    SetThemeStyling { theme: usize, styling: Styling },
+    /// Override one colour role on one Meter, or (`None`) go back to the Theme's.
+    SetOverride {
+        meter: usize,
+        role: Role,
+        colour: Option<Colour>,
+    },
 }
 
 /// What the shell should do next.
@@ -160,6 +186,8 @@ struct MeterSlot {
     /// The Send Plugin the user picked. Kept while on System Capture.
     pick: Option<Pick>,
     show_source_label: bool,
+    /// This Meter's own colours for single roles, over the Theme's.
+    overrides: Vec<(Role, Colour)>,
     /// On Send Plugins: the ID and sample rate of the Send Plugin whose audio
     /// the analyser has, and when it was last fed (audio or idle silence).
     showing: Option<Showing>,
@@ -196,7 +224,7 @@ pub struct AppCore {
     refresh_rate: Option<u32>,
     menu: Option<MeterMenu>,
     settings_open: bool,
-    palette: Palette,
+    themes: themes::Themes,
     /// Something happened since the last scene was built.
     changed: bool,
     /// The scene last handed to the shell, and when.
@@ -248,6 +276,7 @@ impl AppCore {
                     meter: Meter::new(settings),
                     pick: None,
                     show_source_label: false,
+                    overrides: Vec::new(),
                     showing: None,
                 })
                 .collect(),
@@ -258,7 +287,7 @@ impl AppCore {
             refresh_rate: None,
             menu: None,
             settings_open: false,
-            palette: Palette::dark(),
+            themes: themes::Themes::new(),
             changed: true,
             drawn: None,
             drawn_at: None,
@@ -270,6 +299,11 @@ impl AppCore {
         self.platform = platform;
         self.layout.screen = ScreenMode::default_for(platform);
         self
+    }
+
+    /// Theme files to write into the themes folder since the last call.
+    pub fn take_writes(&mut self) -> Vec<FileWrite> {
+        self.themes.take_writes()
     }
 
     /// The display the Bar is on, once the shell has said.
@@ -657,6 +691,53 @@ impl AppCore {
                 }
                 self.window.frame = Some(frame);
             }
+            Event::ThemeFiles(files) => self.themes.load(files),
+            Event::SystemAppearance(appearance) => {
+                if !self.themes.set_appearance(appearance) {
+                    return;
+                }
+            }
+            Event::ChooseTheme { light, dark } => {
+                if !self.themes.choose(light, dark) {
+                    return;
+                }
+            }
+            Event::DuplicateTheme { theme } => {
+                if self.themes.duplicate(theme).is_none() {
+                    return;
+                }
+            }
+            Event::SetThemeColour {
+                theme,
+                role,
+                colour,
+            } => {
+                if !self.themes.set_colour(theme, role, colour) {
+                    return;
+                }
+            }
+            Event::SetThemeStyling { theme, styling } => {
+                if !self.themes.set_styling(theme, styling) {
+                    return;
+                }
+            }
+            Event::SetOverride {
+                meter,
+                role,
+                colour,
+            } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let before = slot.overrides.clone();
+                slot.overrides.retain(|(r, _)| *r != role);
+                if let Some(colour) = colour {
+                    slot.overrides.push((role, colour));
+                }
+                if slot.overrides == before {
+                    return;
+                }
+            }
             Event::ShowOverFullscreen(shown) => {
                 if shown == self.layout.show_over_fullscreen {
                     return;
@@ -822,6 +903,7 @@ impl AppCore {
             meter: Meter::new(settings),
             pick: self.meters[like].pick.clone(),
             show_source_label: self.meters[like].show_source_label,
+            overrides: self.meters[like].overrides.clone(),
             showing: None,
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {
@@ -1052,6 +1134,7 @@ impl AppCore {
                 settings: slot.meter.settings(),
                 picked,
                 show_source_label: slot.show_source_label,
+                overrides: slot.overrides.clone(),
             });
         }
         let send_plugins = self
@@ -1072,7 +1155,8 @@ impl AppCore {
             } else {
                 Vec::new()
             },
-            palette: self.palette.clone(),
+            palette: self.themes.current().palette.clone(),
+            theme: self.themes.scene(),
             listen_to: self.listen_to,
             mode: self.mode,
             send_plugins,
