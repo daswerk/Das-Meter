@@ -51,11 +51,11 @@ _Avoid_: Skin, style, colour scheme
 ### Layout
 
 **Bar**:
-A strip of Meters docked to one screen edge. On Windows it can reserve its strip so other windows make room; on macOS it floats.
+A strip of Meters docked to one screen edge. Where the system allows it (Windows, and some Linux desktops) it can reserve its strip so other windows make room; elsewhere it floats. Moving it (Shift-drag) docks it to another edge or display; it never floats free.
 _Avoid_: Dock, strip, toolbar
 
 **Pop-out**:
-A single Meter taken out of the Bar into its own window; it can be docked back.
+A single Meter taken out of the Bar into its own window; it can be docked back. Unlike the Bar, it can be moved (Shift-drag) anywhere.
 _Avoid_: Detached Meter, floating window
 
 **Window mode**:
