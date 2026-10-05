@@ -23,6 +23,14 @@ const TINY_HEIGHT: f32 = 64.0;
 /// The rate line under the tiles.
 const RATE_HEIGHT: f32 = 16.0;
 const TILE_MIN_WIDTH: f32 = 150.0;
+/// A reading's row in the numbers-only layout: name, value and unit.
+const ROW_WIDTH: f32 = 160.0;
+/// The least width the big numbers keep beside the rows.
+const MIN_HEROES_WIDTH: f32 = 150.0;
+/// A big number's height with its caption, in multiples of its size.
+const BIG_BLOCK: f32 = 1.55;
+/// The tallest the loudness graph gets in the numbers-only layout.
+const MAX_GRAPH_HEIGHT: f32 = 160.0;
 /// The least room between two scale labels.
 const LABEL_SPACING: f32 = 11.0;
 /// The widest a bar gets.
@@ -374,9 +382,11 @@ fn big_reading(
     }
 }
 
-/// Numbers only: the big loudness reading and the sample peak side by side
-/// or one over the other, the other readings as plain rows beside them (a
-/// wide area) or under them, and the loudness graph in the room left.
+/// Numbers only: the big loudness reading and the sample peak, the other
+/// readings as compact rows and, where there's room, the loudness graph.
+/// Wider than tall, the big numbers sit left of the rows; otherwise above
+/// them. The big numbers grow to fill the room the rest leaves, and the
+/// whole group is centred in the Meter.
 fn draw_numbers(
     c: &mut Canvas,
     area: Area,
@@ -384,7 +394,7 @@ fn draw_numbers(
     display: &LoudnessDisplay,
     rows: &[(&'static str, Level, &'static str)],
 ) {
-    let gap = c.px(6.0);
+    let gap = c.px(10.0);
     let true_peak = if display.true_peak_oversampled {
         "TP"
     } else {
@@ -396,79 +406,188 @@ fn draw_numbers(
         .copied()
         .filter(|(name, ..)| *name != big_name)
         .collect();
+    let row_height = c.px(TILE_HEIGHT);
+    let row_width = c.px(ROW_WIDTH);
+    let column_gap = c.px(24.0);
+    let area = area.inset(c.px(6.0));
 
-    // Wider than tall: the big numbers on the left, the readings on the
-    // right. Otherwise the big numbers on top.
-    let wide = area.width >= 1.4 * area.height;
-    // Too narrow for the readings: the big numbers take it all.
-    let (heroes, rest) = if area.width < c.px(TILE_MIN_WIDTH) {
-        (
-            area,
+    let wide =
+        area.width >= 1.4 * area.height && area.width >= row_width + gap + c.px(MIN_HEROES_WIDTH);
+    let (heroes, readings, graph) = if area.width < c.px(TILE_MIN_WIDTH) {
+        // Too narrow for the rows: the big numbers alone.
+        (fit_pair(c, settings, area), None, None)
+    } else if wide {
+        // The rows in one column at the right, as many as fit the height.
+        let fit = ((area.height + 1.0) / row_height).floor().max(0.0) as usize;
+        let count = others.len().min(fit);
+        let block = Area {
+            x: area.right() - row_width,
+            y: area.y + (area.height - count as f32 * row_height) / 2.0,
+            width: row_width,
+            height: count as f32 * row_height,
+        };
+        let heroes = Area {
+            width: area.width - row_width - gap,
+            ..area
+        };
+        (fit_pair(c, settings, heroes), Some((block, 1, count)), None)
+    } else {
+        // As many columns of rows as fit across, centred, and as many rows
+        // as leave the big numbers some room.
+        let columns = (((area.width + column_gap) / (row_width + column_gap)).floor() as usize)
+            .clamp(1, others.len().max(1));
+        let fit = ((area.height - c.px(64.0) - gap) / row_height)
+            .floor()
+            .max(0.0) as usize;
+        let count = others.len().min(fit * columns);
+        let row_count = count.div_ceil(columns);
+        let rows_height = row_count as f32 * row_height;
+        let rows_width = columns as f32 * row_width + (columns as f32 - 1.0) * column_gap;
+        let rows_block = if count > 0 { gap + rows_height } else { 0.0 };
+        let room = (area.height - rows_block).max(0.0);
+        let heroes = fit_pair(
+            c,
+            settings,
             Area {
-                height: 0.0,
+                height: room,
+                ..area
+            },
+        );
+        // The graph takes what the big numbers leave, if that's enough.
+        let graph_height = (room - heroes.height - gap - c.px(16.0)).min(c.px(MAX_GRAPH_HEIGHT));
+        let graph_width = rows_width.max(c.px(MIN_GRAPH_WIDTH)).min(area.width);
+        let with_graph = settings.show_history
+            && area.width >= c.px(MIN_GRAPH_WIDTH)
+            && graph_height >= c.px(MIN_GRAPH_HEIGHT);
+        let graph_block = if with_graph {
+            gap + graph_height + c.px(16.0)
+        } else {
+            0.0
+        };
+        // Centre the whole group: big numbers, rows, graph.
+        let total = heroes.height + rows_block + graph_block;
+        let top = area.y + ((area.height - total) / 2.0).max(0.0);
+        let heroes = Area { y: top, ..heroes };
+        let block = Area {
+            x: area.x + (area.width - rows_width) / 2.0,
+            y: heroes.bottom() + gap,
+            width: rows_width,
+            height: rows_height,
+        };
+        let graph = with_graph.then_some(Area {
+            x: area.x + (area.width - graph_width) / 2.0,
+            y: heroes.bottom() + rows_block + gap,
+            width: graph_width,
+            height: graph_height,
+        });
+        (heroes, Some((block, columns, count)), graph)
+    };
+
+    draw_pair(c, heroes, settings, display, big_name, level, caption);
+
+    if let Some((block, columns, count)) = readings {
+        // Most important first when not all fit, then in their usual order.
+        let mut shown: Vec<usize> = (0..others.len()).collect();
+        shown.sort_by_key(|&i| priority(others[i].0, big_name));
+        shown.truncate(count);
+        shown.sort_unstable();
+        let (text, dim) = (c.colour(Role::Text), c.dim());
+        let unit_width = c.px(36.0);
+        for (slot, &i) in shown.iter().enumerate() {
+            let (name, level, unit) = others[i];
+            let (row, column) = (slot / columns, slot % columns);
+            let x = block.x + column as f32 * (row_width + column_gap);
+            let y = block.y + row as f32 * row_height + (row_height - c.px(16.0)) / 2.0;
+            c.text(name, x, y, 13.0, dim, Align::Left);
+            let unit_x = x + row_width - unit_width;
+            c.bold(
+                &number(level),
+                unit_x - c.px(4.0),
+                y,
+                13.0,
+                text,
+                Align::Right,
+            );
+            c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
+        }
+    }
+    if let Some(graph) = graph {
+        draw_graph(c, graph, settings, display);
+    }
+}
+
+/// The size a big number gets in `width` × `height` (in text points), and
+/// the height its number and caption then take, in px.
+fn big_size(c: &Canvas, settings: &LoudnessMeterSettings, width: f32, height: f32) -> (f32, f32) {
+    let scale = c.scale * c.styling.text_scale;
+    let bar = if settings.show_thin_bars && width >= c.px(170.0) {
+        c.px(46.0)
+    } else {
+        0.0
+    };
+    // Monospace: "-10.8" is five characters at 0.6 of the size wide.
+    let size = ((width - bar - c.px(8.0)) / (6.0 * 0.6) / scale)
+        .min(height / BIG_BLOCK / scale)
+        .clamp(14.0, 96.0);
+    (size, size * BIG_BLOCK * scale)
+}
+
+/// Whether the two big numbers sit side by side in `area` (else one over
+/// the other): whichever lets them be larger.
+fn side_by_side(c: &Canvas, settings: &LoudnessMeterSettings, area: Area) -> bool {
+    let (side, _) = big_size(c, settings, area.width / 2.0, area.height);
+    let (stacked, _) = big_size(c, settings, area.width, area.height / 2.0);
+    side >= stacked
+}
+
+/// The part of `area` the two big numbers need, centred in it.
+fn fit_pair(c: &Canvas, settings: &LoudnessMeterSettings, area: Area) -> Area {
+    let height = if side_by_side(c, settings, area) {
+        big_size(c, settings, area.width / 2.0, area.height).1
+    } else {
+        2.0 * big_size(c, settings, area.width, area.height / 2.0).1
+    }
+    .min(area.height);
+    Area {
+        y: area.y + (area.height - height) / 2.0,
+        height,
+        ..area
+    }
+}
+
+/// The two big numbers in `area`, laid out as [`fit_pair`] chose.
+fn draw_pair(
+    c: &mut Canvas,
+    area: Area,
+    settings: &LoudnessMeterSettings,
+    display: &LoudnessDisplay,
+    big_name: &str,
+    level: Level,
+    caption: &str,
+) {
+    let (first, second) = if side_by_side(c, settings, area) {
+        let width = area.width / 2.0;
+        (
+            Area { width, ..area },
+            Area {
+                x: area.x + width,
+                width,
                 ..area
             },
         )
-    } else if wide {
-        // The readings keep room for one column of rows when there's room
-        // for both.
-        let rows_width = (area.width * 0.4).max(c.px(TILE_MIN_WIDTH));
-        let width = if area.width - rows_width - gap >= c.px(150.0) {
-            area.width - rows_width - gap
-        } else {
-            area.width
-        };
-        let heroes = Area { width, ..area };
-        let rest = Area {
-            x: area.x + width + gap,
-            width: (area.width - width - gap).max(0.0),
-            ..area
-        };
-        (heroes, rest)
     } else {
-        let height = (area.height * 0.5)
-            .min(area.width * 0.9)
-            .max(c.px(64.0))
-            .min(area.height);
-        let (heroes, rest) = area.split_top(height);
-        (
-            heroes,
-            Area {
-                y: rest.y + gap,
-                height: (rest.height - gap).max(0.0),
-                ..rest
-            },
-        )
+        area.split_top(area.height / 2.0)
     };
-
-    // The two big numbers, side by side or one over the other, whichever
-    // lets them be larger.
-    let size = |width: f32, height: f32| (width / 3.6).min(height / 1.6);
-    let (first, second) =
-        if size(heroes.width / 2.0, heroes.height) >= size(heroes.width, heroes.height / 2.0) {
-            let width = heroes.width / 2.0;
-            (
-                Area { width, ..heroes },
-                Area {
-                    x: heroes.x + width,
-                    width,
-                    ..heroes
-                },
-            )
-        } else {
-            heroes.split_top(heroes.height / 2.0)
-        };
+    let lufs = matches!(big_name, "S" | "M" | "I");
     let over_target = settings
         .target
         .zip(level.db())
         .is_some_and(|(target, db)| db > target);
-    let lufs = matches!(big_name, "S" | "M" | "I");
     let loudness_colour = if lufs && over_target {
         c.colour(Role::LoudnessOverTarget)
     } else {
         c.colour(Role::LoudnessBar)
     };
-    let target = if lufs { settings.target } else { None };
     draw_big(
         c,
         first,
@@ -477,7 +596,7 @@ fn draw_numbers(
             level,
             caption,
             colour: loudness_colour,
-            target,
+            target: if lufs { settings.target } else { None },
         },
     );
     let peak = display.left.peak_hold.max(display.right.peak_hold);
@@ -498,66 +617,6 @@ fn draw_numbers(
             target: None,
         },
     );
-
-    // The other readings as plain rows: as many as fit, most important
-    // first, in their usual order.
-    if rest.width < c.px(TILE_MIN_WIDTH) || rest.height < c.px(MIN_TILE_HEIGHT) {
-        return;
-    }
-    let columns = tile_columns(c, rest.width, others.len());
-    let min_row = c.px(MIN_TILE_HEIGHT);
-    let fit_rows = ((rest.height + gap) / (min_row + gap)).floor().max(0.0) as usize;
-    let mut shown: Vec<usize> = (0..others.len()).collect();
-    shown.sort_by_key(|&i| priority(others[i].0, big_name));
-    shown.truncate(fit_rows * columns);
-    shown.sort_unstable();
-    let row_count = shown.len().div_ceil(columns);
-    let row_height = c.px(TILE_HEIGHT).min(
-        ((rest.height - gap * (row_count as f32 - 1.0)) / row_count.max(1) as f32).max(min_row),
-    );
-    let column_gap = c.px(16.0);
-    let column_width = (rest.width - column_gap * (columns as f32 - 1.0)) / columns as f32;
-    // The block of rows sits in the middle of the room beside the big
-    // numbers, and at the top of the room under them.
-    let block = row_count as f32 * row_height + (row_count as f32 - 1.0).max(0.0) * gap;
-    let top = if wide {
-        rest.y + ((rest.height - block) / 2.0).max(0.0)
-    } else {
-        rest.y
-    };
-    let (text, dim) = (c.colour(Role::Text), c.dim());
-    let unit_width = c.px(36.0);
-    let pad = c.px(4.0);
-    for (slot, &i) in shown.iter().enumerate() {
-        let (name, level, unit) = others[i];
-        let (row, column) = (slot / columns, slot % columns);
-        let x = rest.x + column as f32 * (column_width + column_gap);
-        let y = top + row as f32 * (row_height + gap) + (row_height - c.px(16.0)) / 2.0;
-        c.text(name, x + pad, y, 13.0, dim, Align::Left);
-        let unit_x = x + column_width - pad - unit_width;
-        c.bold(
-            &number(level),
-            unit_x - c.px(4.0),
-            y,
-            13.0,
-            text,
-            Align::Right,
-        );
-        c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
-    }
-
-    // The loudness graph in the room under the readings.
-    if settings.show_history {
-        let top = top + row_count as f32 * (row_height + gap);
-        let room = Area {
-            y: top,
-            height: rest.bottom() - top - c.px(16.0),
-            ..rest
-        };
-        if room.width >= c.px(MIN_GRAPH_WIDTH) && room.height >= c.px(MIN_GRAPH_HEIGHT) {
-            draw_graph(c, room, settings, display);
-        }
-    }
 }
 
 /// One big number: its level, the caption under it, its colour and, for a
@@ -600,14 +659,9 @@ fn draw_big(c: &mut Canvas, area: Area, settings: &LoudnessMeterSettings, big: B
     } else {
         area.inset(c.px(4.0))
     };
-    // Monospace: "-10.8" is five characters at 0.6 of the size wide; the
-    // caption takes about 0.3 of the number's height under it.
     let scale = c.scale * c.styling.text_scale;
-    let by_width = room.width / (6.0 * 0.6) / scale;
-    let by_height = room.height / 1.75 / scale;
-    let size = by_width.min(by_height).clamp(14.0, 96.0);
+    let (size, block) = big_size(c, settings, area.width, area.height);
     let caption_size = (size * 0.22).clamp(9.0, 16.0);
-    let block = (size + caption_size * 1.4) * scale;
     let top = area.y + ((area.height - block) / 2.0).max(0.0);
     let centre = room.x + room.width / 2.0;
     c.text(&number(level), centre, top, size, colour, Align::Centre);
