@@ -17,7 +17,7 @@ How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Peak hold**, **Peak line**, and the shown frequency and level ranges. With
 **Peak line** on, the loudest peak's level, frequency and note stay at the top
 right, and a thin line runs from the peak to them.
-Hover over the Spectrum to read any frequency and its note.
+Turn on **Mouse readout** to read any frequency and its note under the mouse.
 
 ## Loudness Meter
 

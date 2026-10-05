@@ -432,6 +432,10 @@ fn spectrum_basic(ui: &mut egui::Ui, s: &mut SpectrumMeterSettings) -> bool {
         .checkbox(&mut s.show_peak_line, "Peak line")
         .on_hover_text("A line on the loudest peak, with its frequency and note")
         .changed();
+    changed |= ui
+        .checkbox(&mut s.show_cursor, "Mouse readout")
+        .on_hover_text("A line under the mouse, with its frequency and note")
+        .changed();
     changed
 }
 

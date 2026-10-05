@@ -38,6 +38,9 @@ pub struct SpectrumMeterSettings {
     pub show_peak_hold: bool,
     /// Whether a line marks the loudest peak, with its frequency and note. Default on.
     pub show_peak_line: bool,
+    /// Whether a line and readout follow the mouse over the Spectrum.
+    /// Default off: the peak line's readout is enough.
+    pub show_cursor: bool,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -46,6 +49,7 @@ impl Default for SpectrumMeterSettings {
             analysis: SpectrumSettings::default(),
             show_peak_hold: true,
             show_peak_line: true,
+            show_cursor: false,
         }
     }
 }
@@ -549,7 +553,7 @@ fn build_view(
                     *level = round_to(level.max(floor), 0.1);
                 }
             }
-            let cursor = pointer.map(|[x, _]| {
+            let cursor = pointer.filter(|_| settings.show_cursor).map(|[x, _]| {
                 let frequency = range.0 * (range.1 / range.0).powf(x);
                 CursorReadout {
                     x,

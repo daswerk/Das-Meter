@@ -261,6 +261,20 @@ fn a_setting_change_alone_redraws() {
 fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
     let mut app = App::playing();
     app.draw();
+    // Off by default: the mouse alone shows nothing and redraws nothing.
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
+    app.now += Duration::from_millis(20);
+    assert_ne!(app.core.decide(app.now), Decision::Draw);
+    let views = app.views();
+    assert!(matches!(
+        views[SPECTRUM],
+        MeterView::Spectrum { cursor: None, .. }
+    ));
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Spectrum(s) = s {
+            s.show_cursor = true;
+        }
+    });
     // Halfway across the Spectrum (the second quarter of the window) on a
     // 20 Hz–20 kHz log axis is √(20 · 20000) ≈ 632 Hz, nearest D#5.
     app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
