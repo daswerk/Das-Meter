@@ -93,8 +93,11 @@ pub struct LoudnessMeterSettings {
     /// Whether the L/R and LUFS bars are shown. Default off: the readings as
     /// numbers, one of them large.
     pub show_bars: bool,
-    /// The reading shown large while the bars are off. Default short-term.
+    /// The loudness reading shown large while the bars are off, beside the
+    /// sample peak. Default short-term.
     pub big_reading: BigReading,
+    /// Whether a thin bar stands beside each big number. Default off.
+    pub show_thin_bars: bool,
 }
 
 impl Default for LoudnessMeterSettings {
@@ -111,6 +114,7 @@ impl Default for LoudnessMeterSettings {
             history_span: Duration::from_secs(30),
             show_bars: false,
             big_reading: BigReading::ShortTerm,
+            show_thin_bars: false,
         }
     }
 }

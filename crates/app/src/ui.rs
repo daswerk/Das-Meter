@@ -474,6 +474,10 @@ fn loudness_basic(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings, reset: &mut 
                 (BigReading::TruePeak, "True peak"),
             ],
         );
+        changed |= ui
+            .checkbox(&mut s.show_thin_bars, "Thin bars")
+            .on_hover_text("A thin bar beside each big number")
+            .changed();
     }
     changed |= choice(
         ui,
