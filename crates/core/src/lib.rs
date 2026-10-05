@@ -30,8 +30,8 @@ pub use layout::{
 };
 pub use meters::{
     BigReading, CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind,
-    MeterSettings, MeterView, SpectrogramMeterSettings, SpectrumMeterSettings, StereoDrawing,
-    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
+    MeterSettings, MeterView, SpectrogramMeterSettings, SpectrumMeterSettings, SpectrumZoom,
+    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
@@ -110,6 +110,12 @@ pub enum Event<'a> {
     /// It closes an open menu; otherwise it picks from a "Pick a Send Plugin"
     /// list, or resets a Loudness Meter.
     Click {
+        window: WindowKey,
+        at: [f32; 2],
+    },
+    /// The left button went up at this point of the window: ends a box
+    /// dragged over a Spectrum, which then zooms into it.
+    Release {
         window: WindowKey,
         at: [f32; 2],
     },
@@ -364,6 +370,9 @@ pub struct AppCore {
     send_plugins: Vec<SendPlugin>,
     meters: Vec<MeterSlot>,
     pointer: Option<(WindowKey, [f32; 2])>,
+    /// A box being dragged over a Spectrum: its window, its Meter and where
+    /// it started, as fractions of the plot.
+    dragging: Option<(WindowKey, usize, [f32; 2])>,
     platform: Platform,
     mode: LayoutMode,
     layout: BarLayout,
@@ -451,6 +460,7 @@ impl AppCore {
                 })
                 .collect(),
             pointer: None,
+            dragging: None,
             note_until: None,
             note: Note::OutputChanged,
             silent_since: None,
@@ -804,6 +814,7 @@ impl AppCore {
             Audio(_)
             | SendPluginAudio { .. }
             | Pointer(_)
+            | Release { .. }
             | Visible(_)
             | CaptureStarted { .. }
             | CaptureFailed(_)
@@ -1090,6 +1101,12 @@ impl AppCore {
                 for slot in &mut self.meters {
                     slot.meter.pointer_changed();
                 }
+                if let (Some((window, meter, start)), Some((over, at))) = (self.dragging, pointer)
+                    && over == window
+                    && let Some((to, _)) = self.plot_point(window, meter, at)
+                {
+                    self.meters[meter].meter.drag_box(start, to);
+                }
             }
             Event::SetMeter { meter, settings } => match self.meters.get_mut(meter) {
                 Some(slot) => slot.meter.set_settings(settings.clamped()),
@@ -1178,9 +1195,24 @@ impl AppCore {
                     // A Meter's Start listening button.
                     self.handle(Event::StartListening, now);
                 } else if let Some(meter) = self.meter_at(window, at) {
-                    self.handle(Event::ResetLoudness { meter }, now);
+                    if self.meters[meter].meter.zooms() {
+                        self.press_on_spectrum(window, meter, at);
+                    } else {
+                        self.handle(Event::ResetLoudness { meter }, now);
+                    }
                 }
                 return;
+            }
+            Event::Release { window, at } => {
+                let Some((from, meter, start)) = self.dragging.take() else {
+                    return;
+                };
+                if from == window
+                    && let Some((to, _)) = self.plot_point(window, meter, at)
+                {
+                    self.meters[meter].meter.drag_box(start, to);
+                }
+                self.meters[meter].meter.end_drag();
             }
             Event::OpenMenu { window, at } => {
                 let Some(meter) = self.meter_at(window, at) else {
@@ -1753,6 +1785,69 @@ impl AppCore {
     }
 
     /// The Meter at `point` (window fractions) in the last scene drawn.
+    /// Where `at` (window fractions) falls on a Meter's plot, as fractions
+    /// of the plot (outside it below 0 or above 1), and the plot's size in
+    /// logical px once the window's size is known.
+    fn plot_point(
+        &self,
+        window: WindowKey,
+        meter: usize,
+        at: [f32; 2],
+    ) -> Option<([f32; 2], Option<[f32; 2]>)> {
+        let scene = self.drawn_window(window)?;
+        let frame = scene.meters.iter().find(|m| m.meter == meter)?.frame;
+        let local = [
+            (at[0] - frame.x) / frame.width,
+            (at[1] - frame.y) / frame.height,
+        ];
+        let inset = meters::METER_INSET;
+        Some(
+            match scene
+                .frame
+                .map(|r| [r.width * frame.width, r.height * frame.height])
+            {
+                Some([w, h]) if w > 4.0 * inset && h > 4.0 * inset => {
+                    let (w, h) = (w - 2.0 * inset, h - 2.0 * inset);
+                    (
+                        [
+                            (local[0] * (w + 2.0 * inset) - inset) / w,
+                            (local[1] * (h + 2.0 * inset) - inset) / h,
+                        ],
+                        Some([w, h]),
+                    )
+                }
+                _ => (local, None),
+            },
+        )
+    }
+
+    /// The left button went down on a Spectrum: closes its zoom window on
+    /// the close button, does nothing elsewhere in it, and otherwise starts
+    /// a box to zoom into.
+    fn press_on_spectrum(&mut self, window: WindowKey, meter: usize, at: [f32; 2]) {
+        let Some((point, size)) = self.plot_point(window, meter, at) else {
+            return;
+        };
+        let slot = &mut self.meters[meter].meter;
+        if let Some([left, top, right, bottom]) = slot.zoom_panel() {
+            let inside = (left..=right).contains(&point[0]) && (top..=bottom).contains(&point[1]);
+            if inside {
+                // The close button: the title bar's square at the right.
+                let [button_w, button_h] = size.map_or([0.05, 0.08], |[w, h]| {
+                    [meters::ZOOM_TITLE_HEIGHT / w, meters::ZOOM_TITLE_HEIGHT / h]
+                });
+                if point[0] >= right - button_w && point[1] <= top + button_h {
+                    slot.close_zoom();
+                    self.changed = true;
+                }
+                return;
+            }
+        }
+        self.dragging = Some((window, meter, point));
+        slot.drag_box(point, point);
+        self.changed = true;
+    }
+
     fn meter_at(&self, window: WindowKey, point: [f32; 2]) -> Option<usize> {
         self.drawn_window(window)?
             .meters

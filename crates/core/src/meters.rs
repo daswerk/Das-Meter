@@ -54,6 +54,48 @@ impl Default for SpectrumMeterSettings {
     }
 }
 
+/// The Spectrum's zoom window: the box dragged over the Spectrum, shown
+/// larger and at a finer resolution in a window inside the Meter.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpectrumZoom {
+    /// The dragged box, as fractions of the plot: left, top, right, bottom.
+    pub selection: [f32; 4],
+    /// Where the zoom window sits, as fractions of the plot: left, top,
+    /// right, bottom.
+    pub panel: [f32; 4],
+    /// The box's frequencies, left to right.
+    pub range: (f32, f32),
+    /// The box's levels at its bottom and top are the spectrum's `db_range`.
+    /// Levels rounded to 0.1 dB and clamped to that range's floor.
+    pub spectrum: Spectrum,
+}
+
+/// How far a Meter's drawing sits inside its frame, in logical px.
+pub const METER_INSET: f32 = 10.0;
+/// The zoom window's title bar, which holds its close button at the right,
+/// in logical px.
+pub const ZOOM_TITLE_HEIGHT: f32 = 20.0;
+
+/// The FFT size the zoom window analyses with: the largest, for the finest
+/// frequency resolution.
+pub const ZOOM_FFT_SIZE: usize = dasmeter_analysis::spectrum::MAX_FFT_SIZE;
+/// Points across the zoom window's line.
+pub const ZOOM_POINTS: usize = 400;
+/// The smallest box that zooms, as fractions of the plot; a smaller drag is
+/// a plain click.
+pub const MIN_ZOOM_BOX: [f32; 2] = [0.02, 0.04];
+
+/// The zoom window's place for a box: the half of the plot the box's centre
+/// isn't in, so the box stays in view.
+pub fn zoom_panel(selection: [f32; 4]) -> [f32; 4] {
+    let centre = (selection[0] + selection[2]) / 2.0;
+    if centre > 0.5 {
+        [0.01, 0.03, 0.5, 0.97]
+    } else {
+        [0.5, 0.03, 0.99, 0.97]
+    }
+}
+
 /// Which loudness the Loudness Meter's LUFS bar shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum LufsBar {
@@ -303,6 +345,11 @@ pub enum MeterView {
         cursor: Option<CursorReadout>,
         /// The loudest peak, when the peak line is on and there's sound.
         peak: Option<CursorReadout>,
+        /// The box being dragged, as fractions of the plot: left, top,
+        /// right, bottom.
+        selecting: Option<[f32; 4]>,
+        /// The open zoom window.
+        zoom: Option<SpectrumZoom>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
@@ -354,6 +401,18 @@ pub(crate) struct Meter {
     settings: MeterSettings,
     analyser: Option<Analyser>,
     view: Option<MeterView>,
+    /// The Spectrum's box being dragged, as fractions of the plot: where
+    /// the drag started and where the pointer is.
+    selecting: Option<[f32; 4]>,
+    zoom: Option<Zoom>,
+}
+
+/// An open zoom window: its box and the analyser behind it.
+struct Zoom {
+    selection: [f32; 4],
+    range: (f32, f32),
+    db_range: (f32, f32),
+    analyser: Option<Box<SpectrumAnalyser>>,
 }
 
 impl Meter {
@@ -362,6 +421,8 @@ impl Meter {
             settings,
             analyser: None,
             view: None,
+            selecting: None,
+            zoom: None,
         }
     }
 
@@ -377,6 +438,91 @@ impl Meter {
     pub fn start(&mut self, sample_rate: u32) {
         self.analyser = Some(analyser(sample_rate, &self.settings));
         self.view = None;
+        self.start_zoom();
+    }
+
+    /// Whether this is a Spectrum, which zooms into a dragged box.
+    pub fn zooms(&self) -> bool {
+        matches!(self.settings, MeterSettings::Spectrum(_))
+    }
+
+    /// The open zoom window's place, as fractions of the plot.
+    pub fn zoom_panel(&self) -> Option<[f32; 4]> {
+        self.zoom.as_ref().map(|z| zoom_panel(z.selection))
+    }
+
+    /// Starts or moves the box being dragged over the Spectrum.
+    pub fn drag_box(&mut self, from: [f32; 2], to: [f32; 2]) {
+        let clamp = |v: f32| v.clamp(0.0, 1.0);
+        let selecting = Some([clamp(from[0]), clamp(from[1]), clamp(to[0]), clamp(to[1])]);
+        if selecting != self.selecting {
+            self.selecting = selecting;
+            self.view = None;
+        }
+    }
+
+    /// The drag ended: zooms into the box if it's big enough. Returns whether it zoomed.
+    pub fn end_drag(&mut self) -> bool {
+        let Some([x0, y0, x1, y1]) = self.selecting.take() else {
+            return false;
+        };
+        self.view = None;
+        let MeterSettings::Spectrum(settings) = self.settings else {
+            return false;
+        };
+        let selection = [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)];
+        if selection[2] - selection[0] < MIN_ZOOM_BOX[0]
+            || selection[3] - selection[1] < MIN_ZOOM_BOX[1]
+        {
+            return false;
+        }
+        let analysis = settings.analysis;
+        let nyquist = self
+            .sample_rate()
+            .map_or(f32::MAX, |rate| rate as f32 / 2.0);
+        let (low, high) = (
+            analysis.frequency_range.0,
+            analysis.frequency_range.1.min(nyquist),
+        );
+        let frequency = |x: f32| low * (high / low).powf(x);
+        let (bottom, top) = analysis.db_range;
+        let db = |y: f32| top - y * (top - bottom);
+        self.zoom = Some(Zoom {
+            selection,
+            range: (frequency(selection[0]), frequency(selection[2])),
+            db_range: (db(selection[3]), db(selection[1])),
+            analyser: None,
+        });
+        self.start_zoom();
+        true
+    }
+
+    /// Closes the zoom window. Returns whether one was open.
+    pub fn close_zoom(&mut self) -> bool {
+        self.view = None;
+        self.zoom.take().is_some()
+    }
+
+    /// (Re)starts the zoom window's analyser at the Meter's sample rate.
+    fn start_zoom(&mut self) {
+        let (Some(rate), MeterSettings::Spectrum(settings)) = (self.sample_rate(), self.settings)
+        else {
+            return;
+        };
+        if let Some(zoom) = &mut self.zoom {
+            zoom.analyser = Some(Box::new(SpectrumAnalyser::new(
+                rate,
+                SpectrumSettings {
+                    fft_size: ZOOM_FFT_SIZE,
+                    frequency_range: zoom.range,
+                    db_range: zoom.db_range,
+                    style: dasmeter_analysis::SpectrumStyle::Line {
+                        points: ZOOM_POINTS,
+                    },
+                    ..settings.analysis
+                },
+            )));
+        }
     }
 
     /// The Source says it's mono (or not). Only the Stereometer shows it.
@@ -403,11 +549,23 @@ impl Meter {
     pub fn stop(&mut self) {
         self.analyser = None;
         self.view = None;
+        if let Some(zoom) = &mut self.zoom {
+            zoom.analyser = None;
+        }
     }
 
     pub fn set_settings(&mut self, settings: MeterSettings) {
         let sample_rate = self.sample_rate();
         let same_kind = std::mem::discriminant(&settings) == std::mem::discriminant(&self.settings);
+        // A new frequency or level range would move the zoomed box: close it.
+        let same_analysis = match (self.settings, settings) {
+            (MeterSettings::Spectrum(a), MeterSettings::Spectrum(b)) => a.analysis == b.analysis,
+            _ => same_kind,
+        };
+        if !same_analysis {
+            self.zoom = None;
+            self.selecting = None;
+        }
         self.settings = settings;
         self.view = None;
         let Some(sample_rate) = sample_rate else {
@@ -449,7 +607,12 @@ impl Meter {
     pub fn process(&mut self, frames: &[f32]) {
         match &mut self.analyser {
             Some(Analyser::Waveform(a)) => a.process(frames),
-            Some(Analyser::Spectrum(a)) => a.process(frames),
+            Some(Analyser::Spectrum(a)) => {
+                a.process(frames);
+                if let Some(zoom) = self.zoom.as_mut().and_then(|z| z.analyser.as_mut()) {
+                    zoom.process(frames);
+                }
+            }
             Some(Analyser::Loudness(a)) => a.process(frames),
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
@@ -477,9 +640,36 @@ impl Meter {
     /// `pointer` is the cursor's position inside the Meter (0–1 each way), if it's over it.
     pub fn view(&mut self, pointer: Option<[f32; 2]>) -> Option<&MeterView> {
         if self.view.is_none() {
-            self.view = Some(build_view(self.analyser.as_mut()?, &self.settings, pointer));
+            let mut view = build_view(self.analyser.as_mut()?, &self.settings, pointer);
+            if let MeterView::Spectrum {
+                selecting, zoom, ..
+            } = &mut view
+            {
+                *selecting = self.selecting;
+                *zoom = self.zoom.as_mut().and_then(Zoom::view);
+            }
+            self.view = Some(view);
         }
         self.view.as_ref()
+    }
+}
+
+impl Zoom {
+    fn view(&mut self) -> Option<SpectrumZoom> {
+        let analyser = self.analyser.as_mut()?;
+        let mut spectrum = analyser.update().clone();
+        let floor = spectrum.db_range.0;
+        for trace in &mut spectrum.traces {
+            for level in trace.levels.iter_mut().chain(&mut trace.peak_hold) {
+                *level = round_to(level.max(floor), 0.1);
+            }
+        }
+        Some(SpectrumZoom {
+            selection: self.selection,
+            panel: zoom_panel(self.selection),
+            range: self.range,
+            spectrum,
+        })
     }
 }
 
@@ -579,6 +769,8 @@ fn build_view(
                 range,
                 cursor,
                 peak,
+                selecting: None,
+                zoom: None,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {

@@ -1,9 +1,10 @@
 //! The Spectrum: a log-frequency axis, each trace as a line with soft fill or
 //! as bars, the peak-hold curve, the loudest peak's readout pinned to the top
-//! with a line to the peak, and the frequency and note under the cursor.
+//! with a line to the peak, the box being dragged to zoom into, and the zoom
+//! window showing that box larger and finer.
 
 use dasmeter_analysis::{Spectrum, SpectrumStyle};
-use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings};
+use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings, SpectrumZoom};
 
 use super::labels::Align;
 use super::shapes::Area;
@@ -30,6 +31,7 @@ const FREQUENCY_MARKS: [(f32, &str); 10] = [
 /// Horizontal grid lines every this many dB.
 const DB_STEP: f32 = 12.0;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
     area: Area,
@@ -38,6 +40,234 @@ pub fn draw(
     range: (f32, f32),
     cursor: Option<&CursorReadout>,
     peak: Option<&CursorReadout>,
+    selecting: Option<[f32; 4]>,
+    zoom: Option<&SpectrumZoom>,
+) {
+    // Labels under the zoom window would show through it: leave them out.
+    let panel = zoom.map(|zoom| fraction_of(area, zoom.panel));
+    c.covered = panel;
+    let marks: Vec<(f32, String)> = FREQUENCY_MARKS
+        .iter()
+        .map(|&(frequency, name)| (frequency, name.to_owned()))
+        .collect();
+    plot(c, area, settings, spectrum, range, &marks, DB_STEP);
+
+    let (low, high) = (range.0.ln(), range.1.ln());
+    let x_of = |f: f32| map(f.max(1.0).ln(), (low, high), area.x, area.right());
+    let db_range = spectrum.db_range;
+    let y_of = |db: f32| map(db, db_range, area.bottom(), area.y);
+    // The loudest peak's readout pinned to the top right, a leader line from
+    // the peak to it; the cursor's line and readout under it.
+    if let Some(peak) = peak {
+        peak_readout(c, area, spectrum, peak, &x_of, &y_of);
+    }
+    if let Some(cursor) = cursor {
+        let text = c.colour(Role::Text);
+        marker(
+            c,
+            area,
+            cursor,
+            text.faded(0.5),
+            usize::from(peak.is_some()),
+        );
+    }
+    c.covered = None;
+
+    // The box being dragged, or the one zoomed into.
+    if let Some(selection) = selecting.or(zoom.map(|zoom| zoom.selection)) {
+        outline(c, fraction_of(area, selection));
+    }
+    if let (Some(zoom), Some(panel)) = (zoom, panel) {
+        draw_zoom(c, panel, settings, zoom);
+    }
+}
+
+/// `fractions` (left, top, right, bottom) of `area`.
+fn fraction_of(area: Area, [left, top, right, bottom]: [f32; 4]) -> Area {
+    Area {
+        x: area.x + left * area.width,
+        y: area.y + top * area.height,
+        width: (right - left) * area.width,
+        height: (bottom - top) * area.height,
+    }
+}
+
+/// A box drawn as a thin accent frame over a faint fill.
+fn outline(c: &mut Canvas, area: Area) {
+    let accent = c.colour(Role::Accent);
+    let thin = c.px(1.0).max(1.0);
+    c.shapes.rect(area, accent.faded(0.03));
+    for edge in [
+        Area {
+            height: thin,
+            ..area
+        },
+        Area {
+            y: area.bottom() - thin,
+            height: thin,
+            ..area
+        },
+        Area {
+            width: thin,
+            ..area
+        },
+        Area {
+            x: area.right() - thin,
+            width: thin,
+            ..area
+        },
+    ] {
+        c.shapes.rect(edge, accent.faded(0.8));
+    }
+}
+
+/// The zoom window: a title bar with the box's ranges and a close button,
+/// and the box's Spectrum under it with its own scale.
+fn draw_zoom(c: &mut Canvas, panel: Area, settings: &SpectrumMeterSettings, zoom: &SpectrumZoom) {
+    let (text, dim) = (c.colour(Role::Text), c.dim());
+    let opaque = |colour: Colour| Colour { a: 255, ..colour };
+    c.shapes
+        .rounded_rect(panel, c.px(6.0), opaque(c.colour(Role::Grid)));
+    let inside = panel.inset(c.px(1.0));
+    c.shapes
+        .rounded_rect(inside, c.px(5.0), opaque(c.colour(Role::Panel)));
+
+    let title_height = c.px(dasmeter_core::meters::ZOOM_TITLE_HEIGHT);
+    let (title, body) = inside.split_top(title_height);
+    let db_range = zoom.spectrum.db_range;
+    let label = format!(
+        "{} – {}   {:.0} to {:.0} dB",
+        hertz(zoom.range.0),
+        hertz(zoom.range.1),
+        db_range.0,
+        db_range.1
+    );
+    let close = Area {
+        x: title.right() - title_height,
+        width: title_height,
+        ..title
+    };
+    let fits = text_width(c, &label, 10.0) < title.width - title_height - c.px(12.0);
+    if fits {
+        c.text(
+            &label,
+            title.x + c.px(8.0),
+            title.y + c.px(4.0),
+            10.0,
+            dim,
+            Align::Left,
+        );
+    }
+    c.shapes
+        .rect(close.inset(c.px(3.0)), c.colour(Role::Grid).faded(0.6));
+    c.text(
+        "×",
+        close.x + close.width / 2.0,
+        close.y + c.px(2.0),
+        13.0,
+        text,
+        Align::Centre,
+    );
+
+    let plot_area = Area {
+        x: body.x + c.px(4.0),
+        width: (body.width - c.px(8.0)).max(1.0),
+        height: (body.height - c.px(4.0)).max(1.0),
+        ..body
+    };
+    let marks = frequency_marks(zoom.range);
+    let span = db_range.1 - db_range.0;
+    let step = match span {
+        s if s >= 48.0 => 12.0,
+        s if s >= 24.0 => 6.0,
+        s if s >= 12.0 => 3.0,
+        s if s >= 5.0 => 1.0,
+        _ => 0.5,
+    };
+    plot(
+        c,
+        plot_area,
+        settings,
+        &zoom.spectrum,
+        zoom.range,
+        &marks,
+        step,
+    );
+}
+
+/// "440 Hz" or "2.35 kHz".
+fn hertz(frequency: f32) -> String {
+    if frequency < 1_000.0 {
+        format!("{frequency:.0} Hz")
+    } else {
+        format!("{:.2} kHz", frequency / 1_000.0)
+    }
+}
+
+/// Grid marks across a zoomed frequency range: 1-2-5 per decade over a wide
+/// range, every whole number per decade over a narrower one, and evenly
+/// spaced round steps over a narrow one.
+fn frequency_marks((low, high): (f32, f32)) -> Vec<(f32, String)> {
+    let label = |f: f32, step: f32| {
+        if f >= 1_000.0 {
+            let decimals = if step >= 1_000.0 {
+                0
+            } else if step >= 100.0 {
+                1
+            } else {
+                2
+            };
+            format!("{:.*}k", decimals, f / 1_000.0)
+        } else if step >= 1.0 {
+            format!("{f:.0}")
+        } else {
+            format!("{f:.1}")
+        }
+    };
+    let mut marks = Vec::new();
+    if high / low >= 3.0 {
+        let multiples: &[f32] = if high / low >= 30.0 {
+            &[1.0, 2.0, 5.0]
+        } else {
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        };
+        let mut decade = 10f32.powf(low.log10().floor());
+        while decade <= high {
+            for &m in multiples {
+                let f = m * decade;
+                if (low..=high).contains(&f) {
+                    marks.push((f, label(f, decade)));
+                }
+            }
+            decade *= 10.0;
+        }
+    } else {
+        // About six round steps across.
+        let rough = (high - low) / 6.0;
+        let power = 10f32.powf(rough.log10().floor());
+        let step = [1.0, 2.0, 5.0, 10.0]
+            .into_iter()
+            .map(|m| m * power)
+            .find(|&s| s >= rough)
+            .unwrap_or(10.0 * power);
+        let mut f = (low / step).ceil() * step;
+        while f <= high {
+            marks.push((f, label(f, step)));
+            f += step;
+        }
+    }
+    marks
+}
+
+/// The grid, its labels and the traces of `spectrum` in `area`.
+fn plot(
+    c: &mut Canvas,
+    area: Area,
+    settings: &SpectrumMeterSettings,
+    spectrum: &Spectrum,
+    range: (f32, f32),
+    marks: &[(f32, String)],
+    db_step: f32,
 ) {
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
     let thin = c.px(1.0).max(1.0);
@@ -48,7 +278,8 @@ pub fn draw(
 
     // Grid. A label that would run into the one before it is left out.
     let mut last_label: Option<f32> = None;
-    for (frequency, name) in FREQUENCY_MARKS {
+    for (frequency, name) in marks {
+        let frequency = *frequency;
         if frequency < range.0 || frequency > range.1 {
             continue;
         }
@@ -61,13 +292,14 @@ pub fn draw(
         c.shapes.rect(line, grid.faded(0.6));
         let half = text_width(c, name, 9.0) / 2.0;
         let clear = last_label.is_none_or(|last| x - half > last + c.px(4.0));
-        if !name.is_empty() && clear {
+        let inside = x - half > area.x + c.px(26.0) && x + half < area.right();
+        if !name.is_empty() && clear && inside {
             c.text(name, x, area.bottom() - c.px(13.0), 9.0, dim, Align::Centre);
             last_label = Some(x + half);
         }
     }
     let mut last_db_label: Option<f32> = None;
-    let mut db = (db_range.1 / DB_STEP).floor() * DB_STEP;
+    let mut db = (db_range.1 / db_step).floor() * db_step;
     while db > db_range.0 {
         let y = y_of(db);
         let line = Area {
@@ -90,7 +322,7 @@ pub fn draw(
                 Align::Right,
             );
         }
-        db -= DB_STEP;
+        db -= db_step;
     }
 
     // Traces: the first in the line colour, a second (R or S) in the accent colour.
@@ -155,22 +387,6 @@ pub fn draw(
                 }
             }
         }
-    }
-
-    // The loudest peak's readout pinned to the top right, a leader line from
-    // the peak to it; the cursor's line and readout under it.
-    if let Some(peak) = peak {
-        peak_readout(c, area, spectrum, peak, &x_of, &y_of);
-    }
-    if let Some(cursor) = cursor {
-        let text = c.colour(Role::Text);
-        marker(
-            c,
-            area,
-            cursor,
-            text.faded(0.5),
-            usize::from(peak.is_some()),
-        );
     }
 }
 

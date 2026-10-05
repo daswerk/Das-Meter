@@ -18,6 +18,11 @@ How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Peak line** on, the loudest peak's level, frequency and note stay at the top
 right, and a thin line runs from the peak to them.
 Turn on **Mouse readout** to read any frequency and its note under the mouse.
+Drag a box over the Spectrum to zoom into it: a zoom window opens in the
+other half of the Meter, showing the box's frequencies and levels larger, with
+its own scale and a finer frequency resolution (the largest FFT size). Its ×
+closes it. A tone keeps its level in the zoom window, but noise looks lower
+there, since each point covers fewer frequencies.
 
 ## Loudness Meter
 

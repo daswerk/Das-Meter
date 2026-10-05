@@ -28,6 +28,9 @@ pub struct Canvas<'a> {
     pub scale: f32,
     /// The Theme's styling: line weight, text size, shape cues.
     pub styling: Styling,
+    /// Text that would fall in this area is left out: something drawn over
+    /// it (labels are drawn after all shapes) covers it.
+    pub covered: Option<Area>,
 }
 
 impl Canvas<'_> {
@@ -50,8 +53,29 @@ impl Canvas<'_> {
         self.palette[Role::Text].faded(0.55)
     }
 
+    /// Whether text at `x`, `y` would run into the covered area.
+    fn hidden(&self, text: &str, x: f32, y: f32, size: f32, align: Align) -> bool {
+        let Some(covered) = self.covered else {
+            return false;
+        };
+        let height = self.px(size) * self.styling.text_scale;
+        let width = 0.6 * height * text.chars().count() as f32;
+        let left = match align {
+            Align::Left => x,
+            Align::Centre => x - width / 2.0,
+            Align::Right => x - width,
+        };
+        left < covered.right()
+            && left + width > covered.x
+            && y < covered.bottom()
+            && y + height > covered.y
+    }
+
     /// Text whose top edge is at `y`, `size` logical pixels high.
     pub fn text(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
+        if self.hidden(text, x, y, size, align) {
+            return;
+        }
         let style = Style {
             size: self.px(size) * self.styling.text_scale,
             colour,
@@ -62,6 +86,9 @@ impl Canvas<'_> {
     }
 
     pub fn bold(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
+        if self.hidden(text, x, y, size, align) {
+            return;
+        }
         let style = Style {
             size: self.px(size) * self.styling.text_scale,
             colour,
@@ -102,6 +129,7 @@ impl MeterRenderer {
             palette,
             scale,
             styling,
+            covered: None,
         }
     }
 
@@ -231,6 +259,8 @@ impl MeterRenderer {
                     range,
                     cursor,
                     peak,
+                    selecting,
+                    zoom,
                 } => spectrum::draw(
                     &mut c,
                     inner,
@@ -239,6 +269,8 @@ impl MeterRenderer {
                     *range,
                     cursor.as_ref(),
                     peak.as_ref(),
+                    *selecting,
+                    zoom.as_ref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)

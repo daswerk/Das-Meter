@@ -55,6 +55,13 @@ impl App {
         self.views()
     }
 
+    /// A frame later, the views whether or not anything changed.
+    fn settle(&mut self) -> Vec<MeterView> {
+        self.now += Duration::from_millis(20);
+        self.core.decide(self.now);
+        self.views()
+    }
+
     fn views(&self) -> Vec<MeterView> {
         self.core.scene().unwrap().windows[0]
             .meters
@@ -551,4 +558,104 @@ fn the_spectrogram_keeps_a_column_per_hop_and_goes_still_in_silence() {
     };
     assert!(columns.iter().flatten().all(|&l| l == 0));
     assert_eq!(*completed, 0);
+}
+
+#[test]
+fn a_box_dragged_over_the_spectrum_opens_a_zoom_window_that_closes() {
+    let mut app = App::playing();
+    app.send(Event::StartListening);
+    app.draw();
+    let window = WindowKey::Bar;
+    // The Spectrum fills the second quarter of the Bar. With the window's
+    // size unknown, its plot is the whole Meter.
+    let at = |x: f32, y: f32| [0.25 + 0.25 * x, y];
+
+    // A plain click zooms into nothing.
+    app.send(Event::Click {
+        window,
+        at: at(0.5, 0.5),
+    });
+    app.send(Event::Release {
+        window,
+        at: at(0.5, 0.5),
+    });
+    let views = app.settle();
+    assert!(matches!(
+        views[SPECTRUM],
+        MeterView::Spectrum {
+            zoom: None,
+            selecting: None,
+            ..
+        }
+    ));
+
+    // While dragging, the box shows.
+    app.send(Event::Click {
+        window,
+        at: at(0.8, 0.25),
+    });
+    app.send(Event::Pointer(Some((window, at(0.6, 0.5)))));
+    let views = app.draw();
+    let MeterView::Spectrum { selecting, .. } = &views[SPECTRUM] else {
+        unreachable!()
+    };
+    let [x0, y0, x1, y1] = selecting.expect("the box being dragged");
+    assert!(
+        (x0 - 0.8).abs() < 1e-4 && (y0 - 0.25).abs() < 1e-4,
+        "{selecting:?}"
+    );
+    assert!(
+        (x1 - 0.6).abs() < 1e-4 && (y1 - 0.5).abs() < 1e-4,
+        "{selecting:?}"
+    );
+
+    // Released, it zooms: the box's frequencies and levels, the 1 kHz tone
+    // in it, the window in the half the box isn't in.
+    app.send(Event::Release {
+        window,
+        at: at(0.6, 0.5),
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 1.0))));
+    let views = app.draw();
+    let MeterView::Spectrum {
+        zoom, selecting, ..
+    } = &views[SPECTRUM]
+    else {
+        unreachable!()
+    };
+    assert_eq!(*selecting, None);
+    let zoom = zoom.as_ref().expect("a zoom window");
+    // 20 Hz to 20 kHz across: 0.6 → 20 · 1000^0.6 ≈ 1262 Hz, 0.8 ≈ 5024 Hz.
+    // Its levels: −90 to 0 dB down: 0.25 → −22.5, 0.5 → −45.
+    assert!((zoom.range.0 - 1262.0).abs() < 2.0, "{:?}", zoom.range);
+    assert!((zoom.range.1 - 5024.0).abs() < 5.0, "{:?}", zoom.range);
+    assert_eq!(zoom.spectrum.db_range, (-45.0, -22.5));
+    assert_eq!(zoom.panel[0], 0.01, "the window on the left");
+    assert_eq!(zoom.spectrum.frequencies.len(), 400);
+    assert!(zoom.spectrum.frequencies[0] >= zoom.range.0 - 1.0);
+
+    // A click inside the window but off its close button does nothing; the
+    // close button (top right) closes it.
+    app.send(Event::Click {
+        window,
+        at: at(0.2, 0.5),
+    });
+    app.send(Event::Release {
+        window,
+        at: at(0.2, 0.5),
+    });
+    let views = app.settle();
+    assert!(matches!(
+        views[SPECTRUM],
+        MeterView::Spectrum { zoom: Some(_), .. }
+    ));
+    app.send(Event::Click {
+        window,
+        at: at(0.49, 0.05),
+    });
+    let views = app.draw();
+    assert!(matches!(
+        views[SPECTRUM],
+        MeterView::Spectrum { zoom: None, .. }
+    ));
 }

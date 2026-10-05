@@ -1109,7 +1109,17 @@ impl ApplicationHandler for Shell {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
-            } => app.drag = None,
+            } => {
+                // A divider drag ends; otherwise a box dragged over a Spectrum may.
+                if app.drag.take().is_some() {
+                    return;
+                }
+                let (Role::Meters(window), Some(cursor)) = (role, app.cursor) else {
+                    return;
+                };
+                let at = app.fraction(cursor);
+                self.core.handle(Event::Release { window, at }, now);
+            }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button,

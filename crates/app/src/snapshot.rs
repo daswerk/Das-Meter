@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|light|contrast|glass|cepstrum|spectrogram|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -56,7 +56,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     let (width, height) = match (open, custom) {
         (_, Some(size)) => size,
         (Some("bar"), _) => BAR,
-        (Some("window"), _) => (2400, 1440),
+        (Some("window" | "zoom" | "dragging"), _) => (2400, 1440),
         _ => (WIDTH, HEIGHT),
     };
     match open {
@@ -64,6 +64,37 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         Some("window") => {
             core.handle(Event::SetMode(LayoutMode::Window), now);
             core.handle(Event::Pointer(Some((WindowKey::Main, [0.4, 0.25]))), now);
+        }
+        // A box dragged over the Spectrum (2 to 8 kHz or so), released into
+        // the zoom window or still being dragged.
+        Some(option @ ("zoom" | "dragging")) => {
+            core.handle(Event::SetMode(LayoutMode::Window), now);
+            // Past the first-launch "Start listening", which a click would press.
+            core.handle(Event::StartListening, now);
+            now += Duration::from_millis(100);
+            core.decide(now);
+            let window = WindowKey::Main;
+            core.handle(
+                Event::Click {
+                    window,
+                    at: [0.66, 0.12],
+                },
+                now,
+            );
+            core.handle(Event::Pointer(Some((window, [0.86, 0.3]))), now);
+            if option == "zoom" {
+                core.handle(
+                    Event::Release {
+                        window,
+                        at: [0.86, 0.3],
+                    },
+                    now,
+                );
+            }
+            for block in noise(1.0, 5).chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+            }
         }
         Some(_) if custom.is_some() => {}
         // Themes: the built-ins, and a see-through copy of Dark.
