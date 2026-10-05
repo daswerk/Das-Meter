@@ -29,8 +29,8 @@ pub use layout::{
     BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
 };
 pub use meters::{
-    CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings,
-    MeterView, SpectrogramMeterSettings, SpectrumMeterSettings, StereoDrawing,
+    BigReading, CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind,
+    MeterSettings, MeterView, SpectrogramMeterSettings, SpectrumMeterSettings, StereoDrawing,
     StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};

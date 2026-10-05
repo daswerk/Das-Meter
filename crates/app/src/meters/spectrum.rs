@@ -203,11 +203,24 @@ fn peak_readout(
 ) {
     let accent = c.colour(Role::Accent);
     let text = c.colour(Role::Text);
-    let readout = peak_text(peak);
-    let width = text_width(c, &readout, 11.0) * c.styling.text_scale;
+    // The whole readout, else shorter ones, as the Meter's width allows.
+    let full = peak_text(peak);
+    let short = full.split("  ").next().unwrap_or(&full).to_owned();
+    let frequency = full.split(" @ ").nth(1).unwrap_or(&full).trim().to_owned();
+    let room = area.width - c.px(12.0);
+    let fitting = [full, short, frequency]
+        .into_iter()
+        .map(|t| (text_width(c, &t, 11.0) * c.styling.text_scale, t))
+        .find(|(width, _)| *width <= room);
     let right = area.right() - c.px(6.0);
     let top = area.y + c.px(4.0);
-    c.text(&readout, right, top, 11.0, text, Align::Right);
+    let width = match fitting {
+        Some((width, readout)) => {
+            c.text(&readout, right, top, 11.0, text, Align::Right);
+            width
+        }
+        None => 0.0,
+    };
 
     // The peak as drawn: the loudest trace at the drawn point nearest the
     // peak's frequency, so the line meets the bar or curve, not a raw bin.
@@ -238,7 +251,9 @@ fn peak_readout(
         top + c.px(11.0) * c.styling.text_scale + c.px(4.0),
     ];
     let thin = c.px(1.0).max(1.0);
-    c.shapes.line(from, to, thin, text.faded(0.6));
+    if width > 0.0 {
+        c.shapes.line(from, to, thin, text.faded(0.6));
+    }
     // A tick on the peak in the accent colour.
     let tick = Area {
         x: from[0] - c.px(5.0),

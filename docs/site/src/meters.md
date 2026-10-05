@@ -24,8 +24,11 @@ Hover over the Spectrum to read any frequency and its note.
 How loud the audio is: momentary (M), short-term (S) and integrated (I) LUFS,
 loudness range (LRA), true peak (TP), and the peak-to-loudness ratios **PLR**
 (true-peak maximum − integrated) and **PSR** (the last 3 s' true peak −
-short-term), with peak and RMS bars. Where there's room, the **loudness
-graph** shows the LUFS bar's reading over the last 10 to 120 s, with the target
+short-term). By default it shows numbers only: one **big reading**
+(short-term LUFS unless you pick momentary, integrated or true peak) with a
+thin bar beside it, and the rest as smaller numbers. Turn on **Show bars** for
+the peak and RMS bars instead. Where there's room, the **loudness
+graph** shows the LUFS reading over the last 10 to 120 s, with the target
 and integrated lines. Settings: a **Target** loudness, **Show true peak**,
 **Show LRA**, **Show PLR and PSR**, **Loudness graph** and its span, the RMS
 window, peak hold (or **Hold peaks until reset**) and the bar range. Click the Meter to

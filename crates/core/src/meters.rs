@@ -58,6 +58,17 @@ pub enum LufsBar {
     Momentary,
 }
 
+/// Which reading the Loudness Meter shows large when it shows numbers only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum BigReading {
+    #[default]
+    ShortTerm,
+    Momentary,
+    Integrated,
+    /// The true-peak maximum since the last reset.
+    TruePeak,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LoudnessMeterSettings {
@@ -79,6 +90,11 @@ pub struct LoudnessMeterSettings {
     /// How much time the loudness graph spans. Default 30 s.
     #[serde(with = "dasmeter_analysis::seconds")]
     pub history_span: Duration,
+    /// Whether the L/R and LUFS bars are shown. Default off: the readings as
+    /// numbers, one of them large.
+    pub show_bars: bool,
+    /// The reading shown large while the bars are off. Default short-term.
+    pub big_reading: BigReading,
 }
 
 impl Default for LoudnessMeterSettings {
@@ -93,6 +109,8 @@ impl Default for LoudnessMeterSettings {
             show_peak_to_loudness: true,
             show_history: true,
             history_span: Duration::from_secs(30),
+            show_bars: false,
+            big_reading: BigReading::ShortTerm,
         }
     }
 }

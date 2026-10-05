@@ -15,10 +15,10 @@ use dasmeter_core::docs::Topic;
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    Card, CepstrumMeterSettings, Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo,
-    LoudnessMeterSettings, LufsBar, MeterKind, MeterScene, MeterSettings, Palette, Platform, Role,
-    Scene, ScreenMode, SpectrogramMeterSettings, SpectrumMeterSettings, StereoDrawing,
-    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
+    BigReading, Card, CepstrumMeterSettings, Colour, Direction, Edge, Event, LayoutMode,
+    LineWeight, ListenTo, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene, MeterSettings,
+    Palette, Platform, Role, Scene, ScreenMode, SpectrogramMeterSettings, SpectrumMeterSettings,
+    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -457,6 +457,23 @@ fn loudness_basic(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings, reset: &mut 
     });
     if changed {
         s.target = on.then_some(target);
+    }
+    changed |= ui
+        .checkbox(&mut s.show_bars, "Show bars")
+        .on_hover_text("L/R and LUFS bars beside the numbers")
+        .changed();
+    if !s.show_bars {
+        changed |= choice(
+            ui,
+            "Big reading",
+            &mut s.big_reading,
+            &[
+                (BigReading::ShortTerm, "Short-term"),
+                (BigReading::Momentary, "Momentary"),
+                (BigReading::Integrated, "Integrated"),
+                (BigReading::TruePeak, "True peak"),
+            ],
+        );
     }
     changed |= choice(
         ui,

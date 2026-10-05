@@ -1,8 +1,10 @@
 //! The Loudness Meter: numbers for M, S, I, LRA, true peak, PLR and PSR; L/R
 //! RMS bars with sample-peak lines and hold ticks; a LUFS bar with the target
-//! line; and, where there's room, the loudness graph.
+//! line; and, where there's room, the loudness graph. With the bars off (the
+//! default) one reading is shown large, with a thin bar beside it, and the
+//! others as tiles.
 
-use dasmeter_core::{Level, LoudnessDisplay, LoudnessMeterSettings, LufsBar, Role};
+use dasmeter_core::{BigReading, Level, LoudnessDisplay, LoudnessMeterSettings, LufsBar, Role};
 
 use super::labels::Align;
 use super::shapes::Area;
@@ -64,6 +66,10 @@ pub fn draw(
     ];
     let rows: Vec<_> = rows.into_iter().flatten().collect();
     let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
+    if !settings.show_bars {
+        draw_numbers(c, area, settings, display, &rows);
+        return;
+    }
 
     // The bars take only the width they need: the scale, three bars and gaps.
     let gap = c.px(6.0);
@@ -349,6 +355,266 @@ pub fn draw(
         dim,
         Align::Centre,
     );
+}
+
+/// The big reading's name (as its tile is called), level, unit and caption.
+fn big_reading(
+    settings: &LoudnessMeterSettings,
+    display: &LoudnessDisplay,
+    true_peak: &'static str,
+) -> (&'static str, Level, &'static str) {
+    match settings.big_reading {
+        BigReading::ShortTerm => ("S", display.short_term, "LUFS short-term"),
+        BigReading::Momentary => ("M", display.momentary, "LUFS momentary"),
+        BigReading::Integrated => ("I", display.integrated, "LUFS integrated"),
+        BigReading::TruePeak if true_peak == "TP" => ("TP", display.true_peak_max, "dBTP max"),
+        BigReading::TruePeak => ("Peak", display.true_peak_max, "dBFS peak max"),
+    }
+}
+
+/// Numbers only: the big reading with a thin bar and its target, the other
+/// readings as tiles beside it (a wide area) or under it, and the loudness
+/// graph in the room left.
+fn draw_numbers(
+    c: &mut Canvas,
+    area: Area,
+    settings: &LoudnessMeterSettings,
+    display: &LoudnessDisplay,
+    rows: &[(&'static str, Level, &'static str)],
+) {
+    let gap = c.px(6.0);
+    let true_peak = if display.true_peak_oversampled {
+        "TP"
+    } else {
+        "Peak"
+    };
+    let (big_name, level, caption) = big_reading(settings, display, true_peak);
+    let others: Vec<_> = rows
+        .iter()
+        .copied()
+        .filter(|(name, ..)| *name != big_name)
+        .collect();
+
+    // Wider than tall: the big reading on the left, the tiles on the right.
+    // Otherwise the big reading on top.
+    let wide = area.width >= 1.4 * area.height;
+    // Too narrow for tiles: the big reading takes it all.
+    let (hero, rest) = if area.width < c.px(TILE_MIN_WIDTH) {
+        (
+            area,
+            Area {
+                height: 0.0,
+                ..area
+            },
+        )
+    } else if wide {
+        let width = (area.width * 0.5).max(c.px(150.0)).min(area.width);
+        let hero = Area { width, ..area };
+        let rest = Area {
+            x: area.x + width + gap,
+            width: (area.width - width - gap).max(0.0),
+            ..area
+        };
+        (hero, rest)
+    } else {
+        let height = (area.height * 0.4)
+            .min(area.width * 0.55)
+            .max(c.px(64.0))
+            .min(area.height);
+        let (hero, rest) = area.split_top(height);
+        (
+            hero,
+            Area {
+                y: rest.y + gap,
+                height: (rest.height - gap).max(0.0),
+                ..rest
+            },
+        )
+    };
+    draw_big(c, hero, settings, level, caption, big_name);
+
+    // The tiles: as many as fit, most important first, in their usual order.
+    if rest.width < c.px(TILE_MIN_WIDTH) || rest.height < c.px(MIN_TILE_HEIGHT) {
+        return;
+    }
+    let columns = tile_columns(c, rest.width, others.len());
+    let min_tile = c.px(MIN_TILE_HEIGHT);
+    let fit_rows = ((rest.height + gap) / (min_tile + gap)).floor().max(0.0) as usize;
+    let mut shown: Vec<usize> = (0..others.len()).collect();
+    shown.sort_by_key(|&i| priority(others[i].0, big_name));
+    shown.truncate(fit_rows * columns);
+    shown.sort_unstable();
+    let tile_rows = shown.len().div_ceil(columns);
+    let tile_height = c.px(TILE_HEIGHT).min(
+        ((rest.height - gap * (tile_rows as f32 - 1.0)) / tile_rows.max(1) as f32).max(min_tile),
+    );
+    let tile_width = (rest.width - gap * (columns as f32 - 1.0)) / columns as f32;
+    let (text, dim) = (c.colour(Role::Text), c.dim());
+    let tile_fill = c.colour(Role::Grid).faded(0.35);
+    let unit_width = c.px(36.0);
+    let pad = c.px(8.0);
+    for (slot, &i) in shown.iter().enumerate() {
+        let (name, level, unit) = others[i];
+        let (row, column) = (slot / columns, slot % columns);
+        let tile = Area {
+            x: rest.x + column as f32 * (tile_width + gap),
+            y: rest.y + row as f32 * (tile_height + gap),
+            width: tile_width,
+            height: tile_height,
+        };
+        c.shapes.rect(tile, tile_fill);
+        let y = tile.y + (tile_height - c.px(16.0)) / 2.0;
+        c.text(name, tile.x + pad, y, 13.0, dim, Align::Left);
+        let unit_x = tile.right() - pad - unit_width;
+        c.bold(
+            &number(level),
+            unit_x - c.px(4.0),
+            y,
+            13.0,
+            text,
+            Align::Right,
+        );
+        c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
+    }
+
+    // The loudness graph in the room under the tiles.
+    if settings.show_history {
+        let top = rest.y + tile_rows as f32 * (tile_height + gap);
+        let room = Area {
+            y: top,
+            height: rest.bottom() - top - c.px(16.0),
+            ..rest
+        };
+        if room.width >= c.px(MIN_GRAPH_WIDTH) && room.height >= c.px(MIN_GRAPH_HEIGHT) {
+            draw_graph(c, room, settings, display);
+        }
+    }
+}
+
+/// The big reading: the number as large as fits, its caption under it, and
+/// a thin bar beside it on the bar range with the target marked.
+fn draw_big(
+    c: &mut Canvas,
+    area: Area,
+    settings: &LoudnessMeterSettings,
+    level: Level,
+    caption: &str,
+    name: &str,
+) {
+    let dim = c.dim();
+    let lufs = matches!(name, "S" | "M" | "I");
+    let over = lufs
+        && settings
+            .target
+            .zip(level.db())
+            .is_some_and(|(target, db)| db > target);
+    let colour = if over {
+        c.colour(Role::LoudnessOverTarget)
+    } else {
+        c.colour(Role::LoudnessBar)
+    };
+
+    // The thin bar at the right, the number centred in the room left of it.
+    // A narrow area leaves the bar out.
+    let with_bar = area.width >= c.px(170.0);
+    let bar_width = c.px(6.0);
+    let pad = c.px(10.0);
+    let labels_width = c.px(30.0);
+    let bar = Area {
+        x: area.right() - labels_width - bar_width,
+        y: area.y + pad,
+        width: bar_width,
+        height: (area.height - 2.0 * pad).max(0.0),
+    };
+    let room = if with_bar {
+        Area {
+            width: (bar.x - area.x - pad).max(0.0),
+            ..area
+        }
+    } else {
+        area.inset(c.px(4.0))
+    };
+    // Monospace: "-10.8" is five characters at 0.6 of the size wide; the
+    // caption takes about 0.3 of the number's height under it.
+    let scale = c.scale * c.styling.text_scale;
+    let by_width = room.width / (6.0 * 0.6) / scale;
+    let by_height = room.height / 1.6 / scale;
+    let size = by_width.min(by_height).clamp(14.0, 96.0);
+    let caption_size = (size * 0.22).clamp(9.0, 16.0);
+    let block = (size + caption_size * 1.4) * scale;
+    let top = area.y + ((area.height - block) / 2.0).max(0.0);
+    let centre = room.x + room.width / 2.0;
+    c.text(&number(level), centre, top, size, colour, Align::Centre);
+    // Only the unit when the whole caption doesn't fit.
+    let fits = |text: &str| text.chars().count() as f32 * 0.6 * caption_size * scale <= room.width;
+    let caption = if fits(caption) {
+        caption
+    } else {
+        caption.split(' ').next().unwrap_or(caption)
+    };
+    c.text(
+        caption,
+        centre,
+        top + size * 1.15 * scale,
+        caption_size,
+        dim,
+        Align::Centre,
+    );
+
+    if !with_bar || bar.height < c.px(24.0) {
+        return;
+    }
+    let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
+    let y_of = |db: f64| map(db as f32, range, bar.bottom(), bar.y).clamp(bar.y, bar.bottom());
+    c.shapes.rect(bar, c.colour(Role::Background));
+    if let Some(db) = level.db() {
+        let y = y_of(db);
+        c.shapes.rect(
+            Area {
+                y,
+                height: bar.bottom() - y,
+                ..bar
+            },
+            colour,
+        );
+    }
+    // The top and bottom of the range, and the target for a loudness reading,
+    // right-aligned so "0" lines up with "-60".
+    let label_x = bar.right() + c.px(28.0);
+    c.text(
+        &format!("{}", range.1),
+        label_x,
+        bar.y - c.px(5.0),
+        9.0,
+        dim,
+        Align::Right,
+    );
+    c.text(
+        &format!("{}", range.0),
+        label_x,
+        bar.bottom() - c.px(7.0),
+        9.0,
+        dim,
+        Align::Right,
+    );
+    if let (true, Some(target)) = (lufs, settings.target) {
+        let y = y_of(target);
+        let text = c.colour(Role::Text);
+        c.shapes.line(
+            [bar.x - c.px(3.0), y],
+            [bar.right() + c.px(3.0), y],
+            c.stroke(1.5),
+            text,
+        );
+        c.text(
+            &format!("{target}"),
+            label_x,
+            y - c.px(6.0),
+            9.0,
+            text,
+            Align::Right,
+        );
+    }
 }
 
 /// The loudness graph: the LUFS bar's reading over the span, newest at the
