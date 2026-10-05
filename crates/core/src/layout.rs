@@ -354,6 +354,34 @@ impl BarLayout {
         true
     }
 
+    /// Puts `new` into the Bar right after `after`, sharing its space half and half.
+    pub fn add_after(&mut self, after: usize, new: usize) -> bool {
+        let Some(index) = self.meters.iter().position(|(m, _)| *m == after) else {
+            return false;
+        };
+        if self.meters.iter().any(|(m, _)| *m == new) {
+            return false;
+        }
+        let half = self.meters[index].1 / 2.0;
+        self.meters[index].1 = half;
+        self.meters.insert(index + 1, (new, half));
+        true
+    }
+
+    /// Takes `meter` out of the Bar; the others share its space. The Bar
+    /// keeps at least one Meter.
+    pub fn remove(&mut self, meter: usize) -> bool {
+        let Some(index) = self.meters.iter().position(|(m, _)| *m == meter) else {
+            return false;
+        };
+        if self.meters.len() == 1 {
+            return false;
+        }
+        self.meters.remove(index);
+        self.normalise();
+        true
+    }
+
     pub fn pop_out_mut(&mut self, meter: usize) -> Option<&mut PopOut> {
         self.pop_outs.iter_mut().find(|p| p.meter == meter)
     }

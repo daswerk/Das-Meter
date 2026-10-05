@@ -187,6 +187,16 @@ pub enum Event<'a> {
         split: SplitId,
         at: f32,
     },
+    /// Add a Meter of `kind`, on default settings, next to this one: after it
+    /// in the Bar, or in a pane split off it in Window mode.
+    AddMeter {
+        meter: usize,
+        kind: MeterKind,
+    },
+    /// Take this Meter out of the Bar (the Bar keeps at least one).
+    RemoveFromBar {
+        meter: usize,
+    },
     /// Show another kind of Meter in this Meter's pane, on default settings.
     AssignMeter {
         meter: usize,
@@ -1314,6 +1324,42 @@ impl AppCore {
                 if !self.window.tree.set_ratio(split, ratio) {
                     return;
                 }
+            }
+            Event::AddMeter { meter, kind } => {
+                if meter >= self.meters.len() {
+                    return;
+                }
+                let added = match self.mode {
+                    LayoutMode::Bar => {
+                        if !self.layout.meters.iter().any(|(m, _)| *m == meter) {
+                            return;
+                        }
+                        let new = self.spare_meter(meter);
+                        self.layout.add_after(meter, new).then_some(new)
+                    }
+                    LayoutMode::Window => {
+                        let new = self.spare_meter(meter);
+                        self.window
+                            .tree
+                            .split_pane(meter, Direction::SideBySide, new)
+                            .then_some(new)
+                    }
+                };
+                let Some(new) = added else {
+                    return;
+                };
+                if self.meters[new].meter.settings().kind() != kind {
+                    self.meters[new]
+                        .meter
+                        .set_settings(MeterSettings::default_of(kind));
+                }
+                self.menu = None;
+            }
+            Event::RemoveFromBar { meter } => {
+                if self.mode != LayoutMode::Bar || !self.layout.remove(meter) {
+                    return;
+                }
+                self.menu = None;
             }
             Event::AssignMeter { meter, kind } => {
                 let Some(slot) = self.meters.get_mut(meter) else {

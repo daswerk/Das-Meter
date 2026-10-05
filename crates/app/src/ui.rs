@@ -872,24 +872,35 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
     }
 }
 
+/// "Add Meter": a Meter of the picked kind next to this one.
+fn add_meter_item(ui: &mut egui::Ui, meter: usize, actions: &mut Actions) {
+    ui.menu_button("Add Meter", |ui| {
+        for kind in MeterKind::ALL {
+            if ui.button(kind_label(kind)).clicked() {
+                actions.push(Event::AddMeter { meter, kind });
+                ui.close();
+            }
+        }
+    });
+}
+
+fn kind_label(kind: MeterKind) -> &'static str {
+    match kind {
+        MeterKind::Waveform => "Waveform",
+        MeterKind::Spectrum => "Spectrum",
+        MeterKind::Loudness => "Loudness",
+        MeterKind::Stereometer => "Stereo",
+        MeterKind::Cepstrum => "Cepstrum",
+    }
+}
+
 /// Which kind of Meter this one is: switching gives it that kind's defaults.
 fn kind_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
     let Some(meter_scene) = meter_scene(scene, meter) else {
         return;
     };
     let mut kind = meter_scene.settings.kind();
-    let kinds = MeterKind::ALL.map(|k| {
-        (
-            k,
-            match k {
-                MeterKind::Waveform => "Waveform",
-                MeterKind::Spectrum => "Spectrum",
-                MeterKind::Loudness => "Loudness",
-                MeterKind::Stereometer => "Stereo",
-                MeterKind::Cepstrum => "Cepstrum",
-            },
-        )
-    });
+    let kinds = MeterKind::ALL.map(|k| (k, kind_label(k)));
     if choice(ui, "Show", &mut kind, &kinds) {
         actions.push(Event::AssignMeter { meter, kind });
     }
@@ -912,6 +923,7 @@ fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actio
             });
         }
     });
+    add_meter_item(ui, meter, actions);
     let panes = scene.windows.first().map_or(0, |w| w.meters.len());
     if ui
         .add_enabled(panes > 1, egui::Button::new("Close pane"))
@@ -948,12 +960,21 @@ fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut 
                 .iter()
                 .find(|w| w.key == WindowKey::Bar)
                 .map_or(0, |w| w.meters.len());
-            if ui
-                .add_enabled(in_bar > 1, egui::Button::new("Pop out"))
-                .clicked()
-            {
-                actions.push(Event::PopOut { meter });
-            }
+            add_meter_item(ui, meter, actions);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(in_bar > 1, egui::Button::new("Pop out"))
+                    .clicked()
+                {
+                    actions.push(Event::PopOut { meter });
+                }
+                if ui
+                    .add_enabled(in_bar > 1, egui::Button::new("Remove from Bar"))
+                    .clicked()
+                {
+                    actions.push(Event::RemoveFromBar { meter });
+                }
+            });
         }
     }
 }

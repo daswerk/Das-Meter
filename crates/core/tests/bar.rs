@@ -364,3 +364,58 @@ fn dragging_the_ends_shortens_the_bar_along_its_edge() {
     let frame = app.bar().frame.unwrap();
     assert!(near(frame.y, 33.0 + 879.0 * 200.0 / 1512.0), "{frame:?}");
 }
+
+#[test]
+fn the_bar_takes_more_meters_and_gives_them_back() {
+    use dasmeter_core::MeterKind;
+    let mut app = App::mac();
+    let before = app.bar_meters();
+    assert_eq!(before.len(), 4);
+    let loudness_width = before.iter().find(|(m, _)| *m == LOUDNESS).unwrap().1;
+
+    // Add Meter: next to the one clicked, splitting its space, any kind, as many as wanted.
+    app.send(Event::AddMeter {
+        meter: LOUDNESS,
+        kind: MeterKind::Spectrum,
+    });
+    let after = app.bar_meters();
+    assert_eq!(after.len(), 5);
+    let at = after.iter().position(|(m, _)| *m == LOUDNESS).unwrap();
+    let (added, width) = after[at + 1];
+    assert!(near(width, loudness_width / 2.0));
+    assert!(near(after[at].1, loudness_width / 2.0));
+    let kind = |app: &mut App, meter: usize| {
+        app.bar()
+            .meters
+            .iter()
+            .find(|m| m.meter == meter)
+            .unwrap()
+            .settings
+            .kind()
+    };
+    assert_eq!(kind(&mut app, added), MeterKind::Spectrum);
+    for kind in [
+        MeterKind::Cepstrum,
+        MeterKind::Waveform,
+        MeterKind::Loudness,
+    ] {
+        app.send(Event::AddMeter {
+            meter: SPECTRUM,
+            kind,
+        });
+    }
+    let meters = app.bar_meters();
+    assert_eq!(meters.len(), 8);
+    assert!(near(meters.iter().map(|(_, w)| w).sum::<f32>(), 1.0));
+
+    // Remove from Bar: the others share its space; the last one stays.
+    app.send(Event::RemoveFromBar { meter: added });
+    let meters = app.bar_meters();
+    assert_eq!(meters.len(), 7);
+    assert!(meters.iter().all(|(m, _)| *m != added));
+    assert!(near(meters.iter().map(|(_, w)| w).sum::<f32>(), 1.0));
+    for (meter, _) in meters {
+        app.send(Event::RemoveFromBar { meter });
+    }
+    assert_eq!(app.bar_meters().len(), 1);
+}
