@@ -1,6 +1,6 @@
 //! The Spectrum: a log-frequency axis, each trace as a line with soft fill or
-//! as bars, the peak-hold curve, the peak line on the loudest peak, and the
-//! frequency and note under the cursor.
+//! as bars, the peak-hold curve, the loudest peak's readout pinned to the top
+//! with a line to the peak, and the frequency and note under the cursor.
 
 use dasmeter_analysis::{Spectrum, SpectrumStyle};
 use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings};
@@ -157,10 +157,10 @@ pub fn draw(
         }
     }
 
-    // The peak line on the top row, the cursor's readout under it.
+    // The loudest peak's readout pinned to the top right, a leader line from
+    // the peak to it; the cursor's line and readout under it.
     if let Some(peak) = peak {
-        let accent = c.colour(Role::Accent);
-        marker(c, area, peak, accent, 0);
+        peak_readout(c, area, spectrum, peak, &x_of, &y_of);
     }
     if let Some(cursor) = cursor {
         let text = c.colour(Role::Text);
@@ -172,6 +172,81 @@ pub fn draw(
             usize::from(peak.is_some()),
         );
     }
+}
+
+/// "−15.5 dBFS @ 40.0 Hz  D#1 +12¢": fixed widths, so the digits change in
+/// place instead of the text shifting as the peak moves.
+fn peak_text(peak: &CursorReadout) -> String {
+    let level = peak
+        .level
+        .map_or_else(|| "    --".to_owned(), |db| format!("{db:6.1}"));
+    let frequency = if peak.frequency < 1_000.0 {
+        format!("{:6.1} Hz ", peak.frequency)
+    } else {
+        format!("{:6.2} kHz", peak.frequency / 1_000.0)
+    };
+    let note = peak.note.map_or_else(String::new, |note| {
+        format!("  {:<3} {:+3.0}¢", note.to_string(), note.cents)
+    });
+    format!("{level} dBFS @ {frequency}{note}")
+}
+
+/// The peak's readout at the top right, and a thin line from the top of the
+/// peak (as drawn) to the readout.
+fn peak_readout(
+    c: &mut Canvas,
+    area: Area,
+    spectrum: &Spectrum,
+    peak: &CursorReadout,
+    x_of: &impl Fn(f32) -> f32,
+    y_of: &impl Fn(f32) -> f32,
+) {
+    let accent = c.colour(Role::Accent);
+    let text = c.colour(Role::Text);
+    let readout = peak_text(peak);
+    let width = text_width(c, &readout, 11.0) * c.styling.text_scale;
+    let right = area.right() - c.px(6.0);
+    let top = area.y + c.px(4.0);
+    c.text(&readout, right, top, 11.0, text, Align::Right);
+
+    // The peak as drawn: the loudest trace at the drawn point nearest the
+    // peak's frequency, so the line meets the bar or curve, not a raw bin.
+    let nearest = spectrum
+        .frequencies
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            let distance = |f: f32| (f.max(1.0) / peak.frequency.max(1.0)).ln().abs();
+            distance(**a).total_cmp(&distance(**b))
+        })
+        .map(|(i, _)| i);
+    let drawn = nearest.and_then(|i| {
+        spectrum
+            .traces
+            .iter()
+            .filter_map(|t| t.levels.get(i).copied())
+            .reduce(f32::max)
+    });
+    let level = drawn.or(peak.level).unwrap_or(spectrum.db_range.0);
+    let from = [
+        x_of(peak.frequency),
+        y_of(level.clamp(spectrum.db_range.0, spectrum.db_range.1)),
+    ];
+    // To the middle of the readout's underside, kept clear of the text.
+    let to = [
+        (right - width / 2.0).max(area.x),
+        top + c.px(11.0) * c.styling.text_scale + c.px(4.0),
+    ];
+    let thin = c.px(1.0).max(1.0);
+    c.shapes.line(from, to, thin, text.faded(0.6));
+    // A tick on the peak in the accent colour.
+    let tick = Area {
+        x: from[0] - c.px(5.0),
+        y: from[1] - c.px(1.0),
+        width: c.px(10.0),
+        height: c.px(2.0),
+    };
+    c.shapes.rect(tick, accent);
 }
 
 /// A vertical line at a frequency, with its frequency and note on text row
@@ -204,7 +279,7 @@ fn marker(c: &mut Canvas, area: Area, at: &CursorReadout, line_colour: Colour, r
     } else {
         (area.right() - width).max(area.x)
     };
-    // Below the top dB label.
+    // Under the peak readout when there is one.
     let text = c.colour(Role::Text);
     let y = area.y + c.px(12.0) + row as f32 * c.px(16.0);
     c.text(&readout, start, y, 11.0, text, Align::Left);

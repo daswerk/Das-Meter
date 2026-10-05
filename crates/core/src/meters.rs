@@ -227,6 +227,8 @@ pub struct CursorReadout {
     pub x: f32,
     pub frequency: f32,
     pub note: Option<dasmeter_analysis::Note>,
+    /// The level there in dB, to 0.1 dB: set for the Spectrum's loudest peak.
+    pub level: Option<f32>,
 }
 
 /// What a live Meter shows: its settings and its draw data.
@@ -476,17 +478,19 @@ fn build_view(
                     x,
                     frequency,
                     note: note_name(frequency),
+                    level: None,
                 }
             });
             let peak = settings
                 .show_peak_line
                 .then(|| a.peak(floor))
                 .flatten()
-                .map(|(frequency, _)| CursorReadout {
+                .map(|(frequency, level)| CursorReadout {
                     x: ((frequency / range.0).ln() / (range.1 / range.0).ln()).clamp(0.0, 1.0),
-                    // To 0.1 Hz: finer would only redraw for nothing.
+                    // To 0.1 Hz and 0.1 dB: finer would only redraw for nothing.
                     frequency: round_to(frequency, 0.1),
                     note: note_name(frequency),
+                    level: Some(round_to(level, 0.1)),
                 });
             MeterView::Spectrum {
                 settings,
@@ -530,6 +534,7 @@ fn build_view(
                     // To 0.1 Hz: finer would only redraw for nothing.
                     frequency: round_to(pitch.frequency, 0.1),
                     note: note_name(pitch.frequency),
+                    level: None,
                 });
             MeterView::Cepstrum {
                 settings,
