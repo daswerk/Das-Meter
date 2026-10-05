@@ -268,3 +268,58 @@ fn a_meters_override_wins_over_the_theme() {
     });
     assert!(app.scene().windows[0].meters[WAVEFORM].overrides.is_empty());
 }
+
+#[test]
+fn a_folder_theme_can_be_renamed_and_the_choice_follows() {
+    let mut app = App::new();
+    app.send(Event::DuplicateTheme { theme: DARK });
+    app.flush();
+    let copy = app.index_of("Dark copy");
+
+    app.send(Event::RenameTheme {
+        theme: copy,
+        name: "  Studio night ",
+    });
+    let scene = app.scene();
+    assert_eq!(
+        scene.theme.name, "Studio night",
+        "trimmed, and still in use"
+    );
+    assert_eq!(scene.theme.themes[copy].name, "Studio night");
+    assert_eq!(app.core.current_data().theme.light, "Studio night");
+    assert_eq!(app.core.current_data().theme.dark, "Studio night");
+    // The same file, now with the new name.
+    let writes = app.flush();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].file_name, "dark-copy.toml");
+    assert_eq!(
+        Theme::from_toml(&writes[0].contents).unwrap().name,
+        "Studio night"
+    );
+    // A rescan finds it under its new name and keeps it chosen.
+    app.rescan();
+    assert_eq!(app.scene().theme.name, "Studio night");
+
+    // A name another Theme has gets " (2)"; built-ins and empty names are refused.
+    app.send(Event::RenameTheme {
+        theme: copy,
+        name: "Light",
+    });
+    assert_eq!(app.scene().theme.name, "Light (2)");
+    app.send(Event::RenameTheme {
+        theme: copy,
+        name: "   ",
+    });
+    app.send(Event::RenameTheme {
+        theme: LIGHT,
+        name: "Day",
+    });
+    let names: Vec<String> = app
+        .scene()
+        .theme
+        .themes
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    assert_eq!(names, ["Dark", "Light", "High contrast", "Light (2)"]);
+}

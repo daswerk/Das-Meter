@@ -695,6 +695,38 @@ impl Presets {
         true
     }
 
+    /// A Theme was renamed: every Preset that uses it follows.
+    pub fn rename_theme(&mut self, old: &str, new: &str) {
+        let follow = |theme: &mut ThemeRef| {
+            let mut changed = false;
+            for name in [&mut theme.light, &mut theme.dark] {
+                if name == old {
+                    *name = new.to_owned();
+                    changed = true;
+                }
+            }
+            changed
+        };
+        for entry in &mut self.entries {
+            let State::Ok {
+                data,
+                read_only: false,
+            } = &mut entry.state
+            else {
+                continue;
+            };
+            if follow(&mut data.theme) {
+                self.ops.push(PresetOp::Write {
+                    file_name: entry.file.clone(),
+                    contents: data.to_toml(),
+                });
+            }
+        }
+        if let Some(opened) = &mut self.opened {
+            follow(&mut opened.theme);
+        }
+    }
+
     /// Moves the Preset at `from` to `to` in the list.
     pub fn reorder(&mut self, from: usize, to: usize) -> bool {
         if from >= self.entries.len() || to >= self.entries.len() || from == to {

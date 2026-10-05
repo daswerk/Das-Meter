@@ -650,6 +650,15 @@ impl Shell {
                     self.core
                         .handle(Event::RenamePreset { index, name: &name }, now);
                 }
+                Request::RenameTheme { index, name } => {
+                    self.core.handle(
+                        Event::RenameTheme {
+                            theme: index,
+                            name: &name,
+                        },
+                        now,
+                    );
+                }
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
                 }

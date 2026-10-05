@@ -38,6 +38,10 @@ pub enum Request {
         index: usize,
         name: String,
     },
+    RenameTheme {
+        index: usize,
+        name: String,
+    },
     /// Show a Preset file in Finder (Explorer on Windows).
     ShowPresetInFolder {
         file_name: String,
@@ -1321,6 +1325,30 @@ fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         );
         return;
     }
+    // Rename: the typed name is kept in egui's memory until it's applied.
+    let id = egui::Id::new(("theme name", current));
+    let mut name = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| theme.name.clone());
+    ui.horizontal(|ui| {
+        ui.label("Name");
+        let field = ui.add(egui::TextEdit::singleline(&mut name).desired_width(180.0));
+        let rename = ui.add_enabled(
+            !name.trim().is_empty() && name.trim() != theme.name,
+            egui::Button::new("Rename"),
+        );
+        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (rename.clicked() || entered) && !name.trim().is_empty() && name.trim() != theme.name {
+            actions.requests.push(Request::RenameTheme {
+                index: current,
+                name: name.trim().to_owned(),
+            });
+            // Show the name the core gives it (" (2)" if taken) once applied.
+            ui.data_mut(|d| d.remove::<String>(id));
+            return;
+        }
+        ui.data_mut(|d| d.insert_temp(id, name.clone()));
+    });
     // Styling.
     let mut styling = theme.styling;
     let mut changed = ui

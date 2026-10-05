@@ -265,6 +265,33 @@ impl Themes {
         Some(self.entries.len() - 1)
     }
 
+    /// Renames one of the folder's Themes; a name another Theme has gets
+    /// " (2)". The file keeps its name. The choice follows the rename.
+    /// Returns the old and new name.
+    pub fn rename(&mut self, index: usize, name: &str) -> Option<(String, String)> {
+        let name = name.trim();
+        let entry = self.entries.get(index).filter(|e| !e.built_in)?;
+        if name.is_empty() || entry.theme.name == name {
+            return None;
+        }
+        let old = entry.theme.name.clone();
+        let new = if self.find(name).is_none() {
+            name.to_owned()
+        } else {
+            (2..)
+                .map(|n| format!("{name} ({n})"))
+                .find(|n| self.find(n).is_none())
+                .expect("some number is free")
+        };
+        self.edit(index, |theme| theme.name.clone_from(&new));
+        for chosen in [&mut self.light, &mut self.dark] {
+            if *chosen == old {
+                chosen.clone_from(&new);
+            }
+        }
+        Some((old, new))
+    }
+
     /// Edits one of the folder's Themes; built-ins can't be changed.
     fn edit(&mut self, index: usize, change: impl FnOnce(&mut Theme)) -> bool {
         let Some(entry) = self.entries.get_mut(index).filter(|e| !e.built_in) else {

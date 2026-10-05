@@ -212,6 +212,11 @@ pub enum Event<'a> {
     DuplicateTheme {
         theme: usize,
     },
+    /// Rename a Theme from the themes folder.
+    RenameTheme {
+        theme: usize,
+        name: &'a str,
+    },
     /// Edit one colour role of a Theme from the themes folder.
     SetThemeColour {
         theme: usize,
@@ -1346,6 +1351,12 @@ impl AppCore {
                 if self.themes.duplicate(theme).is_none() {
                     return;
                 }
+            }
+            Event::RenameTheme { theme, name } => {
+                let Some((old, new)) = self.themes.rename(theme, name) else {
+                    return;
+                };
+                self.presets.rename_theme(&old, &new);
             }
             Event::SetThemeColour {
                 theme,
