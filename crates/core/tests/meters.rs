@@ -483,3 +483,58 @@ fn cepstrum_settings_are_kept_within_their_limits() {
     let (low, high) = kept.analysis.pitch_range;
     assert!(high >= 2.0 * low, "at least an octave: {low}–{high}");
 }
+
+#[test]
+fn the_spectrogram_keeps_a_column_per_hop_and_goes_still_in_silence() {
+    use dasmeter_analysis::signals::{silence, sine};
+    let mut app = App::playing();
+    let mut settings = dasmeter_core::SpectrogramMeterSettings::default();
+    settings.analysis.span = std::time::Duration::from_secs(7); // kept to a span it offers
+    app.send(Event::SetMeter {
+        meter: SPECTRUM,
+        settings: MeterSettings::Spectrogram(settings),
+    });
+    let Some(MeterSettings::Spectrogram(kept)) = app.core.meter_settings(SPECTRUM) else {
+        panic!()
+    };
+    assert!([5, 10].contains(&kept.analysis.span.as_secs()));
+
+    app.feed(&both(&sine(RATE, 1_000.0, -6.0, 0.0, frames(RATE, 1.0))));
+    let views = app.draw();
+    let MeterView::Spectrogram {
+        columns,
+        range,
+        completed,
+        ..
+    } = &views[SPECTRUM]
+    else {
+        panic!("{:?}", views[SPECTRUM])
+    };
+    let per_second =
+        dasmeter_analysis::spectrogram::COLUMNS as f64 / kept.analysis.span.as_secs_f64();
+    assert!(
+        (columns.len() as f64 - per_second).abs() <= 1.0,
+        "{}",
+        columns.len()
+    );
+    assert_eq!(*completed, columns.len() as u64);
+    assert!(
+        columns
+            .iter()
+            .all(|c| c.len() == dasmeter_analysis::spectrogram::ROWS)
+    );
+    assert_eq!(*range, (20.0, 20_000.0));
+
+    // A whole span of silence: every column dark, and the count left out so
+    // the scene stops changing.
+    app.feed(&both(&silence(frames(RATE, 12.0))));
+    let views = app.draw();
+    let MeterView::Spectrogram {
+        columns, completed, ..
+    } = &views[SPECTRUM]
+    else {
+        panic!()
+    };
+    assert!(columns.iter().flatten().all(|&l| l == 0));
+    assert_eq!(*completed, 0);
+}

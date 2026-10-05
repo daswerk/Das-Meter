@@ -30,8 +30,8 @@ pub use layout::{
 };
 pub use meters::{
     CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings,
-    MeterView, SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
-    WaveformMeterSettings,
+    MeterView, SpectrogramMeterSettings, SpectrumMeterSettings, StereoDrawing,
+    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};

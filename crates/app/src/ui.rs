@@ -17,8 +17,8 @@ use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_UR
 use dasmeter_core::{
     Card, CepstrumMeterSettings, Colour, Direction, Edge, Event, LayoutMode, LineWeight, ListenTo,
     LoudnessMeterSettings, LufsBar, MeterKind, MeterScene, MeterSettings, Palette, Platform, Role,
-    Scene, ScreenMode, SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings,
-    WaveformColouring, WaveformMeterSettings, WindowKey,
+    Scene, ScreenMode, SpectrogramMeterSettings, SpectrumMeterSettings, StereoDrawing,
+    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -727,6 +727,86 @@ fn cepstrum_advanced(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
     changed
 }
 
+fn spectrogram_basic(ui: &mut egui::Ui, s: &mut SpectrogramMeterSettings) -> bool {
+    let mut seconds = s.analysis.span.as_secs();
+    let spans: Vec<(u64, String)> = limits::SPECTROGRAM_SPANS
+        .iter()
+        .map(|&v| (v, format!("{v} s")))
+        .collect();
+    let spans: Vec<(u64, &str)> = spans.iter().map(|(v, l)| (*v, l.as_str())).collect();
+    let mut changed = choice(ui, "Span", &mut seconds, &spans);
+    if changed {
+        s.analysis.span = Duration::from_secs(seconds);
+    }
+    changed |= ui.checkbox(&mut s.show_scale, "Frequency scale").changed();
+    changed
+}
+
+fn spectrogram_advanced(ui: &mut egui::Ui, s: &mut SpectrogramMeterSettings) -> bool {
+    let a = &mut s.analysis;
+    let sizes: Vec<(usize, String)> = limits::SPECTROGRAM_FFT_SIZES
+        .iter()
+        .map(|&n| (n, n.to_string()))
+        .collect();
+    let sizes: Vec<(usize, &str)> = sizes.iter().map(|(n, s)| (*n, s.as_str())).collect();
+    let mut changed = choice(ui, "FFT size", &mut a.fft_size, &sizes);
+    changed |= choice(
+        ui,
+        "Window",
+        &mut a.window,
+        &[
+            (WindowFunction::Hann, "Hann"),
+            (WindowFunction::BlackmanHarris, "Blackman-Harris"),
+            (WindowFunction::Rectangular, "Rectangular"),
+        ],
+    );
+    let slopes: Vec<(f32, String)> = limits::SPECTRUM_SLOPES
+        .iter()
+        .map(|&v| (v, format!("{v} dB/oct")))
+        .collect();
+    let slopes: Vec<(f32, &str)> = slopes.iter().map(|(v, l)| (*v, l.as_str())).collect();
+    changed |= choice(ui, "Slope", &mut a.slope, &slopes);
+    let (low, high) = limits::SPECTRUM_FREQUENCIES;
+    let mut range = (
+        f64::from(a.frequency_range.0),
+        f64::from(a.frequency_range.1),
+    );
+    let mut freq = false;
+    freq |= ui
+        .add(
+            Slider::new(&mut range.0, f64::from(low)..=f64::from(high))
+                .text("Lowest frequency")
+                .suffix(" Hz")
+                .logarithmic(true),
+        )
+        .changed();
+    freq |= ui
+        .add(
+            Slider::new(&mut range.1, f64::from(low)..=f64::from(high))
+                .text("Highest frequency")
+                .suffix(" Hz")
+                .logarithmic(true),
+        )
+        .changed();
+    if freq {
+        a.frequency_range = (range.0 as f32, range.1 as f32);
+        changed = true;
+    }
+    let mut db = (f64::from(a.db_range.0), f64::from(a.db_range.1));
+    let (low, high) = limits::SPECTRUM_DB;
+    if range_sliders(
+        ui,
+        ("Floor", "Top"),
+        &mut db,
+        (f64::from(low), f64::from(high)),
+        " dB",
+    ) {
+        a.db_range = (db.0 as f32, db.1 as f32);
+        changed = true;
+    }
+    changed
+}
+
 fn stereometer_advanced(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> bool {
     let mut changed = duration_slider(
         ui,
@@ -786,6 +866,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Loudness(w) => loudness_basic(ui, w, &mut reset),
         MeterSettings::Stereometer(w) => stereometer_basic(ui, w),
         MeterSettings::Cepstrum(w) => cepstrum_basic(ui, w),
+        MeterSettings::Spectrogram(w) => spectrogram_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -803,6 +884,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Loudness(w) => loudness_advanced(ui, w),
         MeterSettings::Stereometer(w) => stereometer_advanced(ui, w),
         MeterSettings::Cepstrum(w) => cepstrum_advanced(ui, w),
+        MeterSettings::Spectrogram(w) => spectrogram_advanced(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -891,6 +973,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::Loudness => "Loudness",
         MeterKind::Stereometer => "Stereo",
         MeterKind::Cepstrum => "Cepstrum",
+        MeterKind::Spectrogram => "Spectrogram",
     }
 }
 
@@ -1452,6 +1535,12 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::CorrelationNegative,
         ],
         MeterSettings::Cepstrum(_) => &[Role::CepstrumTrace, Role::Accent],
+        MeterSettings::Spectrogram(_) => &[
+            Role::SpectrumFill,
+            Role::SpectrumLine,
+            Role::Accent,
+            Role::Text,
+        ],
     }
 }
 

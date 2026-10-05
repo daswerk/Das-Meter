@@ -7,11 +7,13 @@
 use std::time::Duration;
 
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
-use dasmeter_analysis::{CepstrumSettings, PeakHold, SpectrumStyle, StereoScaling};
+use dasmeter_analysis::{
+    CepstrumSettings, PeakHold, SpectrogramSettings, SpectrumStyle, StereoScaling,
+};
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, SpectrumMeterSettings,
-    StereometerMeterSettings, WaveformMeterSettings,
+    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, SpectrogramMeterSettings,
+    SpectrumMeterSettings, StereometerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -91,6 +93,9 @@ pub const LOUDNESS_BAR: (f64, f64) = (-120.0, 6.0);
 pub const CEPSTRUM_FFT_SIZES: [usize; 3] = dasmeter_analysis::cepstrum::FFT_SIZES;
 pub const CEPSTRUM_PITCH: (f32, f32) = dasmeter_analysis::cepstrum::PITCH_LIMITS;
 pub const CEPSTRUM_SMOOTHING: (Duration, Duration) = (Duration::ZERO, Duration::from_secs(1));
+/// The Spectrogram's FFT sizes and span choices (seconds).
+pub const SPECTROGRAM_FFT_SIZES: [usize; 4] = dasmeter_analysis::spectrogram::FFT_SIZES;
+pub const SPECTROGRAM_SPANS: [u64; 4] = [5, 10, 20, 30];
 /// The Stereometer's persistence.
 pub const STEREO_PERSISTENCE: (Duration, Duration) =
     (Duration::from_millis(5), Duration::from_millis(340));
@@ -149,6 +154,7 @@ impl MeterSettings {
             MeterSettings::Loudness(s) => MeterSettings::Loudness(s.clamped()),
             MeterSettings::Stereometer(s) => MeterSettings::Stereometer(s.clamped()),
             MeterSettings::Cepstrum(s) => MeterSettings::Cepstrum(s.clamped()),
+            MeterSettings::Spectrogram(s) => MeterSettings::Spectrogram(s.clamped()),
         }
     }
 }
@@ -256,6 +262,36 @@ impl CepstrumMeterSettings {
             high.max(low * 2.0).min(CEPSTRUM_PITCH.1),
         );
         a.smoothing = clamp_duration(a.smoothing, CEPSTRUM_SMOOTHING);
+        self
+    }
+}
+
+impl SpectrogramMeterSettings {
+    fn clamped(mut self) -> Self {
+        let defaults = SpectrogramSettings::default();
+        let a = &mut self.analysis;
+        if !SPECTROGRAM_FFT_SIZES.contains(&a.fft_size) {
+            a.fft_size = defaults.fft_size;
+        }
+        a.slope = nearest(a.slope, &SPECTRUM_SLOPES, |s| s);
+        let (low, high) = a.frequency_range;
+        let low = clamp_f32(low, SPECTRUM_FREQUENCIES, defaults.frequency_range.0);
+        let high = clamp_f32(high, SPECTRUM_FREQUENCIES, defaults.frequency_range.1);
+        // At least an octave shown.
+        a.frequency_range = if high >= low * 2.0 {
+            (low, high)
+        } else {
+            (
+                low.min(SPECTRUM_FREQUENCIES.1 / 2.0),
+                (low * 2.0).min(SPECTRUM_FREQUENCIES.1),
+            )
+        };
+        let (floor, top) = a.db_range;
+        let floor = clamp_f32(floor, SPECTRUM_DB, defaults.db_range.0);
+        let top = clamp_f32(top, SPECTRUM_DB, defaults.db_range.1);
+        a.db_range = (floor.min(top - MIN_DB_SPAN), top.max(floor + MIN_DB_SPAN));
+        let seconds = nearest(a.span.as_secs_f32(), &SPECTROGRAM_SPANS, |s| s as f32);
+        a.span = Duration::from_secs(seconds);
         self
     }
 }

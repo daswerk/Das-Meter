@@ -5,6 +5,7 @@ mod cepstrum;
 mod labels;
 mod loudness;
 mod shapes;
+mod spectrogram;
 mod spectrum;
 mod stereometer;
 mod waveform;
@@ -260,6 +261,12 @@ impl MeterRenderer {
                     *quefrency_range,
                     pitch.as_ref(),
                 ),
+                MeterView::Spectrogram {
+                    settings,
+                    columns,
+                    range,
+                    ..
+                } => spectrogram::draw(&mut c, inner, settings, columns, *range),
             },
         }
         if let Some(source) = &meter.source {

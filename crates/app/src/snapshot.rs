@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|light|contrast|glass|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|light|contrast|glass|cepstrum|spectrogram|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -89,6 +89,34 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             now,
         ),
         Some("settings") => core.handle(Event::ShowSettings(true), now),
+        // The Spectrogram in the Spectrum's place, on a sweep from 60 Hz to
+        // 12 kHz over pink noise, with a 1 kHz tone joining halfway.
+        Some("spectrogram") => {
+            let settings =
+                dasmeter_core::MeterSettings::default_of(dasmeter_core::MeterKind::Spectrogram);
+            core.handle(Event::SetMeter { meter: 1, settings }, now);
+            let seconds = 10.0;
+            let n = frames(RATE, seconds);
+            let noise = pink_noise(n, -40.0, 9);
+            let (f0, f1) = (60.0_f64, 12_000.0_f64);
+            let rate = (f1 / f0).ln() / seconds;
+            let audio: Vec<f32> = (0..n)
+                .flat_map(|i| {
+                    let t = i as f64 / f64::from(RATE);
+                    let phase = std::f64::consts::TAU * f0 * ((rate * t).exp() - 1.0) / rate;
+                    let mut x = 0.25 * phase.sin() + f64::from(noise[i]);
+                    if t > seconds / 2.0 {
+                        x += 0.1 * (std::f64::consts::TAU * 1_000.0 * t).sin();
+                    }
+                    [x as f32, x as f32]
+                })
+                .collect();
+            for block in audio.chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
         // The Cepstrum in the Spectrum's place, on a 220 Hz harmonic tone.
         Some("cepstrum") => {
             let settings =

@@ -32,6 +32,10 @@ _Avoid_: Module, visualizer, widget
 The Meter for how loud the audio is: peak and RMS levels together with LUFS loudness.
 _Avoid_: Level meter, LUFS meter, VU
 
+**Spectrogram**:
+The Meter for how the spectrum changes over time: frequency up, time across, loudness as brightness.
+_Avoid_: Waterfall, sonogram
+
 **Stereometer**:
 The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
 _Avoid_: Goniometer, vectorscope, correlometer

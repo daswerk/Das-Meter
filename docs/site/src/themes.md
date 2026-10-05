@@ -8,7 +8,8 @@ besides colour).
 By default a Preset uses the Dark and Light pair and **follows the system's
 light/dark setting**. Turn that off to pick one Theme.
 
-To make your own, duplicate a Theme in the settings and change it. Themes are
+To make your own, duplicate a Theme in the settings, give it a name with
+**Rename**, and change it. Presets that use a Theme follow its new name. Themes are
 files in the themes folder, so you can share them:
 
 - macOS: `~/Library/Application Support/Das-Meter/themes`

@@ -1,11 +1,12 @@
-//! The four Meters: their settings, their analysers and what each puts in the scene.
+//! The Meters: their settings, their analysers and what each puts in the scene.
 
 use std::time::Duration;
 
 use dasmeter_analysis::{
-    CepstrumAnalyser, CepstrumSettings, LoudnessAnalyser, LoudnessSettings, Spectrum,
-    SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView, StereometerAnalyser,
-    StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings, note_name,
+    CepstrumAnalyser, CepstrumSettings, LoudnessAnalyser, LoudnessSettings, SpectrogramAnalyser,
+    SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView,
+    StereometerAnalyser, StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings,
+    note_name,
 };
 
 use crate::scene::{Level, LoudnessDisplay};
@@ -151,6 +152,24 @@ impl Default for CepstrumMeterSettings {
     }
 }
 
+/// The Spectrogram: the Spectrum of the mono sum over time, scrolling left.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SpectrogramMeterSettings {
+    pub analysis: SpectrogramSettings,
+    /// Whether the frequency scale is shown on the left. Default on.
+    pub show_scale: bool,
+}
+
+impl Default for SpectrogramMeterSettings {
+    fn default() -> Self {
+        SpectrogramMeterSettings {
+            analysis: SpectrogramSettings::default(),
+            show_scale: true,
+        }
+    }
+}
+
 /// Most points the Stereometer keeps, whatever the persistence and rate.
 const MAX_STEREO_POINTS: usize = 16_384;
 
@@ -162,6 +181,7 @@ pub enum MeterSettings {
     Loudness(LoudnessMeterSettings),
     Stereometer(StereometerMeterSettings),
     Cepstrum(CepstrumMeterSettings),
+    Spectrogram(SpectrogramMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -172,15 +192,17 @@ pub enum MeterKind {
     Loudness,
     Stereometer,
     Cepstrum,
+    Spectrogram,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 5] = [
+    pub const ALL: [MeterKind; 6] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
         MeterKind::Stereometer,
         MeterKind::Cepstrum,
+        MeterKind::Spectrogram,
     ];
 }
 
@@ -195,6 +217,9 @@ impl MeterSettings {
                 MeterSettings::Stereometer(StereometerMeterSettings::default())
             }
             MeterKind::Cepstrum => MeterSettings::Cepstrum(CepstrumMeterSettings::default()),
+            MeterKind::Spectrogram => {
+                MeterSettings::Spectrogram(SpectrogramMeterSettings::default())
+            }
         }
     }
 
@@ -205,6 +230,7 @@ impl MeterSettings {
             MeterSettings::Loudness(_) => MeterKind::Loudness,
             MeterSettings::Stereometer(_) => MeterKind::Stereometer,
             MeterSettings::Cepstrum(_) => MeterKind::Cepstrum,
+            MeterSettings::Spectrogram(_) => MeterKind::Spectrogram,
         }
     }
 
@@ -216,6 +242,7 @@ impl MeterSettings {
             MeterSettings::Loudness(_) => "Loudness Meter",
             MeterSettings::Stereometer(_) => "Stereometer",
             MeterSettings::Cepstrum(_) => "Cepstrum",
+            MeterSettings::Spectrogram(_) => "Spectrogram",
         }
     }
 }
@@ -273,6 +300,18 @@ pub enum MeterView {
         /// period sits (0–1 across), its frequency and its note.
         pitch: Option<CursorReadout>,
     },
+    Spectrogram {
+        settings: SpectrogramMeterSettings,
+        /// Oldest first, the newest at the right edge; each column's levels
+        /// (0 for the dB range's floor to 255 for its top) from the lowest
+        /// frequency up, at log-spaced frequencies across `range`.
+        columns: Vec<Vec<u8>>,
+        /// Frequencies at the bottom and top (the top is capped at Nyquist).
+        range: (f32, f32),
+        /// Columns added since the start; 0 while all of it is silence, so
+        /// the scene stops changing and the app sleeps.
+        completed: u64,
+    },
 }
 
 enum Analyser {
@@ -281,6 +320,7 @@ enum Analyser {
     Loudness(Box<LoudnessAnalyser>),
     Stereometer(Box<StereometerAnalyser>),
     Cepstrum(Box<CepstrumAnalyser>),
+    Spectrogram(Box<SpectrogramAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -359,6 +399,9 @@ impl Meter {
                 a.set_settings(stereo_analysis(sample_rate, &s))
             }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
+            (Some(Analyser::Spectrogram(a)), MeterSettings::Spectrogram(s)) => {
+                a.set_settings(s.analysis)
+            }
             _ => debug_assert!(!same_kind),
         }
         if !same_kind {
@@ -373,6 +416,7 @@ impl Meter {
             Analyser::Loudness(a) => a.sample_rate(),
             Analyser::Stereometer(a) => a.sample_rate(),
             Analyser::Cepstrum(a) => a.sample_rate(),
+            Analyser::Spectrogram(a) => a.sample_rate(),
         })
     }
 
@@ -383,6 +427,14 @@ impl Meter {
             Some(Analyser::Loudness(a)) => a.process(frames),
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
+            Some(Analyser::Spectrogram(a)) => {
+                let before = a.completed();
+                a.process(frames);
+                // It only looks different once a column is added.
+                if a.completed() == before {
+                    return;
+                }
+            }
             None => return,
         }
         self.view = None;
@@ -430,6 +482,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         ))),
         MeterSettings::Cepstrum(s) => {
             Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
+        }
+        MeterSettings::Spectrogram(s) => {
+            Analyser::Spectrogram(Box::new(SpectrogramAnalyser::new(sample_rate, s.analysis)))
         }
     }
 }
@@ -541,6 +596,18 @@ fn build_view(
                 values: cepstrum.values.iter().map(|&v| round_to(v, 0.01)).collect(),
                 quefrency_range: cepstrum.quefrency_range,
                 pitch,
+            }
+        }
+        (Analyser::Spectrogram(a), MeterSettings::Spectrogram(settings)) => {
+            let nyquist = a.sample_rate() as f32 / 2.0;
+            let (low, high) = settings.analysis.frequency_range;
+            let columns: Vec<Vec<u8>> = a.columns().cloned().collect();
+            let silent = columns.iter().flatten().all(|&level| level == 0);
+            MeterView::Spectrogram {
+                settings,
+                columns,
+                range: (low, high.min(nyquist)),
+                completed: if silent { 0 } else { a.completed() },
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),

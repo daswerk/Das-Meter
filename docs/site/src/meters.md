@@ -14,8 +14,9 @@ and the two band crossovers.
 How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Slope** (0, 3, 4.5 or 6 dB per octave, pivoted at 1 kHz), **Smoothing**,
 **Style** (a line, or bars at 3, 6 or 12 per octave), attack and release,
-**Peak hold**, **Peak line**, and the shown frequency and level ranges. The
-**peak line** marks the loudest peak as drawn, with its frequency and note.
+**Peak hold**, **Peak line**, and the shown frequency and level ranges. With
+**Peak line** on, the loudest peak's level, frequency and note stay at the top
+right, and a thin line runs from the peak to them.
 Hover over the Spectrum to read any frequency and its note.
 
 ## Loudness Meter
@@ -50,6 +51,17 @@ note; noise and chords give "No pitch". Settings: **FFT size**, the lowest and
 highest pitch to look for (50 to 1000 Hz by default) and the smoothing.
 
 To show it, right-click a Meter and choose **Show ▸ Cepstrum**.
+
+## Spectrogram
+
+The Spectrum over time: frequency from the bottom up, time scrolling to the
+left with the newest audio at the right edge, and louder shown brighter, in
+the Theme's Spectrum colours up to its text colour. Settings: **Span** (5, 10,
+20 or 30 s), **Frequency scale**, and in the settings panel the FFT size,
+window, slope and the frequency and level ranges.
+
+To show it, right-click a Meter and choose **Show ▸ Spectrogram**, or
+**Add Meter ▸ Spectrogram**.
 
 ## Small sizes
 
