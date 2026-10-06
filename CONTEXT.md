@@ -14,6 +14,10 @@ _Avoid_: Input mode, Source Mode
 Where the audio a Meter shows comes from. When the app listens to System Capture, every Meter's Source is System Capture; when it listens to Send Plugins, each Meter picks its own Send Plugin as its Source.
 _Avoid_: Input, device, feed
 
+**Overlay Source**:
+A second Send Plugin that a Phase Scope draws over its main Source, so the two can be compared. Only Send Plugins can be an Overlay Source; with System Capture the Phase Scope shows its one Source alone.
+_Avoid_: Sidechain, second input
+
 **System Capture**:
 The default Source: the mix of everything the computer plays through its default output. Audio that bypasses the operating system's mixer, such as a DAW using ASIO on Windows, is not heard; Send Plugins cover that case.
 _Avoid_: Loopback, desktop audio
@@ -35,6 +39,14 @@ _Avoid_: Level meter, LUFS meter, VU
 **Spectrogram**:
 The Meter for how the spectrum changes over time: frequency up, time across, loudness as brightness.
 _Avoid_: Waterfall, sonogram
+
+**Phase Scope**:
+The Meter that shows the waveform over one Cycle, held still so each beat lands in the same place. It can draw an Overlay Source on top to show where two tracks, such as kick and bass, push together or cancel out.
+_Avoid_: Oscilloscope, occularScope, cycle scope
+
+**Cycle**:
+The stretch of time a Phase Scope shows: one beat or one bar. It follows the DAW's tempo when listening to Send Plugins, and a typed-in or tapped tempo with System Capture.
+_Avoid_: Window, period, sweep
 
 **Stereometer**:
 The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
