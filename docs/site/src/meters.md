@@ -29,8 +29,8 @@ with their note; the one nearest the mouse also shows its frequency and level.
 Only peaks that stand out for a couple of seconds are marked, and a dot stays
 where it was found. The zoom window marks its peaks the same way.
 **Colour ▸ Steady harmonics** makes harmonics that keep sounding glow brighter.
-**Harmonics colour** and **Peak dots colour** pick their colours; off, they
-follow the Theme (the dots take the Spectrum's line colour).
+Their colours, **Spectrum peak dots** and **Spectrum harmonics**, are with
+the Spectrum's other colours in the Theme and the Meter's own colours.
 
 ## Loudness Meter
 

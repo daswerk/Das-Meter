@@ -94,7 +94,7 @@ pub fn draw(
         peak_readout(c, area, spectrum, peak, &x_of, &y_of);
     }
     if !held_peaks.is_empty() {
-        let colour = peak_colour(c, settings);
+        let colour = c.colour(Role::SpectrumPeakDots);
         held_marks(c, area, held_peaks, pointer, colour, &x_of, &y_of);
     }
     if let Some(cursor) = cursor {
@@ -206,13 +206,6 @@ fn held_marks(
         };
         c.text(&label, left, spot.y, 10.0, colour, Align::Left);
     }
-}
-
-/// The held peaks' dots: the colour picked for them, else the Spectrum's line.
-fn peak_colour(c: &Canvas, settings: &SpectrumMeterSettings) -> Colour {
-    settings
-        .peak_colour
-        .unwrap_or_else(|| c.colour(Role::SpectrumLine))
 }
 
 /// `fractions` (left, top, right, bottom) of `area`.
@@ -342,7 +335,7 @@ fn draw_zoom(
         let (low, high) = (zoom.range.0.ln(), zoom.range.1.ln());
         let x_of = |f: f32| map(f.max(1.0).ln(), (low, high), plot_area.x, plot_area.right());
         let y_of = |db: f32| map(db, db_range, plot_area.bottom(), plot_area.y);
-        let colour = peak_colour(c, settings);
+        let colour = c.colour(Role::SpectrumPeakDots);
         held_marks(c, plot_area, &zoom.peaks, inside, colour, &x_of, &y_of);
     }
 
@@ -532,11 +525,8 @@ fn plot(
     let colours = [c.colour(Role::SpectrumLine), c.colour(Role::Accent)];
     let fill = c.colour(Role::SpectrumFill);
     let hold = c.colour(Role::SpectrumPeakHold);
-    // Steady harmonics glow in the colour picked for them, else toward the
-    // text colour.
-    let glow = settings
-        .harmonics_colour
-        .unwrap_or_else(|| mix(c.colour(Role::Accent), c.colour(Role::Text), 0.55));
+    // Steady harmonics glow in their own colour.
+    let glow = c.colour(Role::SpectrumHarmonics);
     let frequencies = &spectrum.frequencies;
     for (trace, line) in spectrum.traces.iter().zip(colours) {
         let points = |levels: &[f32]| -> Vec<[f32; 2]> {

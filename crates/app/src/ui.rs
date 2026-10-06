@@ -450,44 +450,6 @@ fn spectrum_basic(ui: &mut egui::Ui, s: &mut SpectrumMeterSettings) -> bool {
             (SpectrumColouring::SteadyHarmonics, "Steady harmonics"),
         ],
     );
-    if s.colouring == SpectrumColouring::SteadyHarmonics {
-        changed |= own_colour(
-            ui,
-            "Harmonics colour",
-            &mut s.harmonics_colour,
-            Colour::rgb(0xff, 0xd2, 0x6e),
-        );
-    }
-    changed |= own_colour(
-        ui,
-        "Peak dots colour",
-        &mut s.peak_colour,
-        Colour::rgb(0xff, 0xff, 0xff),
-    );
-    changed
-}
-
-/// A colour that follows the Theme unless one is picked: a checkbox to pick
-/// one (starting from `first`) and its colour button. Returns whether it changed.
-fn own_colour(ui: &mut egui::Ui, label: &str, colour: &mut Option<Colour>, first: Colour) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        let mut own = colour.is_some();
-        if ui
-            .checkbox(&mut own, label)
-            .on_hover_text("Off: the Theme's colour")
-            .changed()
-        {
-            *colour = own.then_some(first);
-            changed = true;
-        }
-        if let Some(current) = *colour
-            && let Some(picked) = colour_button(ui, current)
-        {
-            *colour = Some(picked);
-            changed = true;
-        }
-    });
     changed
 }
 
@@ -1600,6 +1562,8 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::SpectrumLine,
             Role::SpectrumFill,
             Role::SpectrumPeakHold,
+            Role::SpectrumPeakDots,
+            Role::SpectrumHarmonics,
         ],
         MeterSettings::Loudness(_) => &[
             Role::LoudnessBar,

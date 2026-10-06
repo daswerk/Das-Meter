@@ -99,6 +99,8 @@ pub enum Role {
     SpectrumLine,
     SpectrumFill,
     SpectrumPeakHold,
+    SpectrumPeakDots,
+    SpectrumHarmonics,
     // Loudness Meter.
     LoudnessBar,
     LoudnessPeak,
@@ -127,6 +129,8 @@ impl Role {
             Role::SpectrumLine => "spectrum_line",
             Role::SpectrumFill => "spectrum_fill",
             Role::SpectrumPeakHold => "spectrum_peak_hold",
+            Role::SpectrumPeakDots => "spectrum_peak_dots",
+            Role::SpectrumHarmonics => "spectrum_harmonics",
             Role::LoudnessBar => "loudness_bar",
             Role::LoudnessPeak => "loudness_peak",
             Role::LoudnessOverTarget => "loudness_over_target",
@@ -151,6 +155,8 @@ impl Role {
             Role::SpectrumLine => "Spectrum line",
             Role::SpectrumFill => "Spectrum fill",
             Role::SpectrumPeakHold => "Spectrum peak hold",
+            Role::SpectrumPeakDots => "Spectrum peak dots",
+            Role::SpectrumHarmonics => "Spectrum harmonics",
             Role::LoudnessBar => "Loudness bar",
             Role::LoudnessPeak => "Loudness peak",
             Role::LoudnessOverTarget => "Loudness over target",
@@ -161,7 +167,7 @@ impl Role {
         }
     }
 
-    pub const ALL: [Role; 18] = [
+    pub const ALL: [Role; 20] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -173,6 +179,8 @@ impl Role {
         Role::SpectrumLine,
         Role::SpectrumFill,
         Role::SpectrumPeakHold,
+        Role::SpectrumPeakDots,
+        Role::SpectrumHarmonics,
         Role::LoudnessBar,
         Role::LoudnessPeak,
         Role::LoudnessOverTarget,
@@ -204,6 +212,8 @@ impl Palette {
             Role::SpectrumLine => Colour::rgb(0xc3, 0x9b, 0xff),
             Role::SpectrumFill => Colour::rgb(0x7a, 0x3f, 0xd6),
             Role::SpectrumPeakHold => Colour::rgb(0xe8, 0xe8, 0xe8),
+            Role::SpectrumPeakDots => Colour::rgb(0xc3, 0x9b, 0xff),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd2, 0x6e),
             Role::LoudnessBar => Colour::rgb(0x2f, 0xbf, 0x71),
             Role::LoudnessPeak => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::LoudnessOverTarget => Colour::rgb(0xff, 0x8a, 0x3d),
@@ -233,6 +243,8 @@ impl Palette {
             Role::SpectrumLine => Colour::rgb(0x6b, 0x2f, 0xc7),
             Role::SpectrumFill => Colour::rgb(0xc5, 0xa6, 0xf2),
             Role::SpectrumPeakHold => Colour::rgb(0x4a, 0x50, 0x58),
+            Role::SpectrumPeakDots => Colour::rgb(0x6b, 0x2f, 0xc7),
+            Role::SpectrumHarmonics => Colour::rgb(0xd9, 0x7a, 0x00),
             Role::LoudnessBar => Colour::rgb(0x1f, 0x9d, 0x5a),
             Role::LoudnessPeak => Colour::rgb(0x2a, 0x2e, 0x33),
             Role::LoudnessOverTarget => Colour::rgb(0xe0, 0x6a, 0x10),
@@ -261,6 +273,8 @@ impl Palette {
             Role::SpectrumLine => Colour::rgb(0xff, 0xff, 0xff),
             Role::SpectrumFill => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::SpectrumPeakHold => Colour::rgb(0xff, 0xd6, 0x00),
+            Role::SpectrumPeakDots => Colour::rgb(0xff, 0xff, 0xff),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd6, 0x00),
             Role::LoudnessBar => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::LoudnessPeak => Colour::rgb(0xff, 0xff, 0xff),
             Role::LoudnessOverTarget => Colour::rgb(0xff, 0x9f, 0x1c),

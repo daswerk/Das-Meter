@@ -10,7 +10,6 @@ use dasmeter_analysis::{
 };
 
 use crate::scene::{Level, LoudnessDisplay};
-use crate::theme::Colour;
 
 /// How the Waveform is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -57,10 +56,6 @@ pub struct SpectrumMeterSettings {
     /// pointer is over it, the held peaks marked with their notes. Default on.
     pub slow_on_hover: bool,
     pub colouring: SpectrumColouring,
-    /// The held peaks' dots; `None` for the Spectrum's line colour.
-    pub peak_colour: Option<Colour>,
-    /// The glow of steady harmonics; `None` for the Theme's.
-    pub harmonics_colour: Option<Colour>,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -72,8 +67,6 @@ impl Default for SpectrumMeterSettings {
             show_cursor: false,
             slow_on_hover: true,
             colouring: SpectrumColouring::Plain,
-            peak_colour: None,
-            harmonics_colour: None,
         }
     }
 }
