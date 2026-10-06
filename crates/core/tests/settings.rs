@@ -370,13 +370,15 @@ fn clicking_the_loudness_meter_resets_integrated_and_the_maxima() {
     let mut app = App::playing();
     assert!(integrated(app.draw()) != Level::Silent);
 
-    // A click on another Meter changes nothing, so nothing is redrawn.
+    // A click on another Meter resets nothing. (It may still redraw: the
+    // Waveform scrolls on to its newest column.)
     app.send(Event::Click {
         window: WindowKey::Bar,
         at: inside(SPECTRUM),
     });
     app.now += Duration::from_millis(40);
-    assert!(matches!(app.core.decide(app.now), Decision::Sleep { .. }));
+    app.core.decide(app.now);
+    assert!(integrated(app.core.scene().unwrap()) != Level::Silent);
 
     app.send(Event::Click {
         window: WindowKey::Bar,

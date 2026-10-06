@@ -6,13 +6,12 @@ use dasmeter_core::{Colour, Role, SpectrogramMeterSettings};
 
 use super::labels::Align;
 use super::shapes::Area;
-use super::{Canvas, map};
+use super::{Canvas, map, mix};
 
-/// How many colours the levels fall into: neighbouring rows of one colour
-/// are drawn as one rectangle.
-const STEPS: u8 = 48;
-/// Levels below this step stay the panel's colour.
-const FIRST_STEP: u8 = 2;
+/// Levels up to this one stay the panel's colour; the colours fade in over
+/// the next [`FADE_IN`] levels, so quiet parts have no hard edge.
+const FIRST_LEVEL: usize = 8;
+const FADE_IN: usize = 16;
 
 const FREQUENCY_MARKS: [(f32, &str); 8] = [
     (50.0, "50"),
@@ -25,18 +24,8 @@ const FREQUENCY_MARKS: [(f32, &str); 8] = [
     (10_000.0, "10k"),
 ];
 
-fn mix(a: Colour, b: Colour, t: f32) -> Colour {
-    let channel = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
-    Colour {
-        r: channel(a.r, b.r),
-        g: channel(a.g, b.g),
-        b: channel(a.b, b.b),
-        a: channel(a.a, b.a),
-    }
-}
-
-/// The colour of each step, from the quietest (faint fill) to the loudest.
-fn colours(c: &Canvas) -> Vec<Colour> {
+/// The colour of each level, from the quietest (faint fill) to the loudest.
+fn colours(c: &Canvas) -> [Colour; 256] {
     let stops = [
         (0.0, c.colour(Role::SpectrumFill).faded(0.15)),
         (0.35, c.colour(Role::SpectrumFill)),
@@ -44,19 +33,22 @@ fn colours(c: &Canvas) -> Vec<Colour> {
         (0.88, c.colour(Role::Accent)),
         (1.0, c.colour(Role::Text)),
     ];
-    (0..=STEPS)
-        .map(|step| {
-            let t = f32::from(step) / f32::from(STEPS);
-            let upper = stops
-                .iter()
-                .position(|(at, _)| *at >= t)
-                .unwrap_or(stops.len() - 1);
-            let lower = upper.saturating_sub(1);
-            let ((a_at, a), (b_at, b)) = (stops[lower], stops[upper]);
-            let span = (b_at - a_at).max(f32::EPSILON);
-            mix(a, b, ((t - a_at) / span).clamp(0.0, 1.0))
-        })
-        .collect()
+    std::array::from_fn(|level| {
+        let t = level as f32 / 255.0;
+        let upper = stops
+            .iter()
+            .position(|(at, _)| *at >= t)
+            .unwrap_or(stops.len() - 1);
+        let lower = upper.saturating_sub(1);
+        let ((a_at, a), (b_at, b)) = (stops[lower], stops[upper]);
+        let span = (b_at - a_at).max(f32::EPSILON);
+        let colour = mix(a, b, ((t - a_at) / span).clamp(0.0, 1.0));
+        let fade = (level.saturating_sub(FIRST_LEVEL) as f32 / FADE_IN as f32).min(1.0);
+        Colour {
+            a: (f32::from(colour.a) * fade).round() as u8,
+            ..colour
+        }
+    })
 }
 
 pub fn draw(
@@ -65,6 +57,7 @@ pub fn draw(
     settings: &SpectrogramMeterSettings,
     columns: &[Vec<u8>],
     range: (f32, f32),
+    lag: f32,
 ) {
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
     let scale_width = if settings.show_scale { c.px(30.0) } else { 0.0 };
@@ -76,43 +69,18 @@ pub fn draw(
     let (low, high) = (range.0.max(1.0).ln(), range.1.max(1.0).ln());
     let y_of = |f: f32| map(f.max(1.0).ln(), (low, high), plot.bottom(), plot.y);
 
-    // The picture: one column per entry, newest against the right edge.
+    // The picture, on the GPU: newest against the right edge, scrolling
+    // smoothly by the columns still to come in.
     let palette = colours(c);
-    let column_width = plot.width / dasmeter_analysis::spectrogram::COLUMNS as f32;
-    for (age, column) in columns.iter().rev().enumerate() {
-        let right = plot.right() - age as f32 * column_width;
-        let x = right - column_width;
-        if right <= plot.x {
-            break;
-        }
-        let rows = column.len().max(1);
-        let row_height = plot.height / rows as f32;
-        let step_of = |level: u8| ((u32::from(level) * u32::from(STEPS) + 127) / 255) as u8;
-        // Runs of rows in one colour, from the bottom up.
-        let mut row = 0;
-        while row < column.len() {
-            let step = step_of(column[row]);
-            let start = row;
-            while row < column.len() && step_of(column[row]) == step {
-                row += 1;
-            }
-            if step < FIRST_STEP {
-                continue;
-            }
-            let top = plot.bottom() - row as f32 * row_height;
-            let bottom = plot.bottom() - start as f32 * row_height;
-            c.shapes.rect(
-                Area {
-                    x: x.max(plot.x),
-                    y: top,
-                    // A hair wider, so columns never leave seams between them.
-                    width: (right - x.max(plot.x)) + c.px(0.5),
-                    height: bottom - top,
-                },
-                palette[usize::from(step)],
-            );
-        }
-    }
+    let rows = columns.first().map_or(0, Vec::len);
+    c.heatmap.draw(
+        plot,
+        columns,
+        dasmeter_analysis::spectrogram::COLUMNS,
+        rows,
+        lag,
+        palette,
+    );
 
     if !settings.show_scale {
         return;
@@ -125,7 +93,7 @@ pub fn draw(
             continue;
         }
         let y = y_of(frequency);
-        c.shapes.rect(
+        c.overlay.rect(
             Area {
                 y: y - thin / 2.0,
                 height: thin,

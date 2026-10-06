@@ -2,6 +2,7 @@
 //! drawing that Meter's part of the scene with the palette's colour roles.
 
 mod cepstrum;
+mod heatmap;
 mod labels;
 mod loudness;
 mod shapes;
@@ -15,6 +16,7 @@ use dasmeter_core::{
 };
 
 use crate::gpu::{Gpu, Text};
+use heatmap::Heatmap;
 use labels::{Align, Labels, Style};
 pub use shapes::Area;
 use shapes::Shapes;
@@ -22,6 +24,9 @@ use shapes::Shapes;
 /// What a Meter's drawing code draws with: shapes, labels, colours and the scale factor.
 pub struct Canvas<'a> {
     pub shapes: &'a mut Shapes,
+    /// Shapes drawn over the heat map (and under the labels).
+    pub overlay: &'a mut Shapes,
+    pub heatmap: &'a mut Heatmap,
     labels: &'a mut Labels,
     palette: &'a Palette,
     /// Physical pixels per logical pixel.
@@ -111,6 +116,8 @@ pub struct Look<'a> {
 /// Draws one Meter (or the notes over a window) into its area.
 pub struct MeterRenderer {
     shapes: Shapes,
+    heatmap: Heatmap,
+    overlay: Shapes,
     labels: Labels,
 }
 
@@ -118,6 +125,8 @@ impl MeterRenderer {
     pub fn new(gpu: &Gpu, text: &mut Text) -> MeterRenderer {
         MeterRenderer {
             shapes: Shapes::new(gpu),
+            heatmap: Heatmap::new(gpu),
+            overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
         }
     }
@@ -125,6 +134,8 @@ impl MeterRenderer {
     fn canvas<'a>(&'a mut self, palette: &'a Palette, scale: f32, styling: Styling) -> Canvas<'a> {
         Canvas {
             shapes: &mut self.shapes,
+            overlay: &mut self.overlay,
+            heatmap: &mut self.heatmap,
             labels: &mut self.labels,
             palette,
             scale,
@@ -135,11 +146,15 @@ impl MeterRenderer {
 
     fn begin(&mut self, gpu: &Gpu, area: Area) {
         self.shapes.begin(gpu, area);
+        self.heatmap.begin();
+        self.overlay.begin(gpu, area);
         self.labels.clear();
     }
 
     fn finish(&mut self, gpu: &Gpu, text: &mut Text, area: Area) {
         self.shapes.prepare(gpu);
+        self.heatmap.prepare(gpu);
+        self.overlay.prepare(gpu);
         self.labels.prepare(gpu, text, area);
     }
 
@@ -252,7 +267,8 @@ impl MeterRenderer {
                     settings,
                     traces,
                     completed,
-                } => waveform::draw(&mut c, inner, settings, traces, *completed),
+                    lag,
+                } => waveform::draw(&mut c, inner, settings, traces, *completed, *lag),
                 MeterView::Spectrum {
                     settings,
                     spectrum,
@@ -261,14 +277,21 @@ impl MeterRenderer {
                     peak,
                     selecting,
                     zoom,
+                    pointer,
+                    held_peaks,
                 } => spectrum::draw(
                     &mut c,
+                    area,
                     inner,
                     settings,
                     spectrum,
                     *range,
-                    cursor.as_ref(),
-                    peak.as_ref(),
+                    spectrum::Marks {
+                        cursor: cursor.as_ref(),
+                        peak: peak.as_ref(),
+                        held_peaks,
+                        pointer: *pointer,
+                    },
                     *selecting,
                     zoom.as_ref(),
                 ),
@@ -297,8 +320,9 @@ impl MeterRenderer {
                     settings,
                     columns,
                     range,
+                    lag,
                     ..
-                } => spectrogram::draw(&mut c, inner, settings, columns, *range),
+                } => spectrogram::draw(&mut c, inner, settings, columns, *range, *lag),
             },
         }
         if let Some(source) = &meter.source {
@@ -353,8 +377,22 @@ impl MeterRenderer {
     }
 
     pub fn render(&self, text: &Text, pass: &mut wgpu::RenderPass) {
+        // The shapes set the Meter's scissor, which clips the rest too.
         self.shapes.render(pass);
+        self.heatmap.render(pass);
+        self.overlay.render(pass);
         self.labels.render(text, pass);
+    }
+}
+
+/// `a` blended toward `b` by `t` (0 to 1), alpha too.
+pub fn mix(a: Colour, b: Colour, t: f32) -> Colour {
+    let channel = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Colour {
+        r: channel(a.r, b.r),
+        g: channel(a.g, b.g),
+        b: channel(a.b, b.b),
+        a: channel(a.a, b.a),
     }
 }
 

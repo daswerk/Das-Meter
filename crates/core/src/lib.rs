@@ -30,8 +30,9 @@ pub use layout::{
 };
 pub use meters::{
     BigReading, CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind,
-    MeterSettings, MeterView, SpectrogramMeterSettings, SpectrumMeterSettings, SpectrumZoom,
-    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
+    MeterSettings, MeterView, SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings,
+    SpectrumZoom, StereoDrawing, StereometerMeterSettings, WaveformColouring,
+    WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
@@ -1889,7 +1890,7 @@ impl AppCore {
             self.note_until = None;
         }
         self.changed = false;
-        let scene = self.build_scene(note_until.is_some());
+        let scene = self.build_scene(note_until.is_some(), now);
         if self.drawn.as_ref() == Some(&scene) {
             // Nothing visible changes any more, and the silence has outlasted
             // every peak hold: the Meters have settled.
@@ -1992,7 +1993,7 @@ impl AppCore {
         (placed, vec![window])
     }
 
-    fn build_scene(&mut self, note: bool) -> Scene {
+    fn build_scene(&mut self, note: bool, now: Duration) -> Scene {
         let (placed, mut windows) = match self.mode {
             LayoutMode::Bar => self.bar_windows(),
             LayoutMode::Window => self.pane_windows(),
@@ -2005,7 +2006,7 @@ impl AppCore {
                         Capture::Starting if !self.may_capture() => MeterState::NotListening,
                         Capture::Starting => MeterState::Starting,
                         Capture::Failed(reason) => MeterState::Unavailable(reason.clone()),
-                        Capture::Live => self.live_state(i, frame, pointer),
+                        Capture::Live => self.live_state(i, frame, pointer, now),
                     };
                     let source = SourceLabel {
                         name: "System Capture".to_owned(),
@@ -2019,7 +2020,7 @@ impl AppCore {
                             name: plugin.name.clone(),
                             colour: Some(colour(plugin.colour)),
                         };
-                        (self.live_state(i, frame, pointer), Some(source))
+                        (self.live_state(i, frame, pointer, now), Some(source))
                     }
                     Resolved::Waiting(name) => {
                         let source = SourceLabel {
@@ -2084,9 +2085,15 @@ impl AppCore {
         }
     }
 
-    fn live_state(&mut self, meter: usize, frame: Frame, pointer: Option<[f32; 2]>) -> MeterState {
+    fn live_state(
+        &mut self,
+        meter: usize,
+        frame: Frame,
+        pointer: Option<[f32; 2]>,
+        now: Duration,
+    ) -> MeterState {
         let pointer = pointer.and_then(|p| frame.locate(p));
-        match self.meters[meter].meter.view(pointer) {
+        match self.meters[meter].meter.view(pointer, now) {
             Some(view) => MeterState::Live(view.clone()),
             None => MeterState::Starting,
         }

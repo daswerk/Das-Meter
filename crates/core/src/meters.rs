@@ -30,6 +30,17 @@ pub struct WaveformMeterSettings {
     pub colouring: WaveformColouring,
 }
 
+/// How the Spectrum is coloured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum SpectrumColouring {
+    /// The Theme's Spectrum colours. The default.
+    #[default]
+    Plain,
+    /// Harmonics that keep sounding glow brighter, so the dominant ones
+    /// (in the bass, say) stand out in the Spectrum itself.
+    SteadyHarmonics,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct SpectrumMeterSettings {
@@ -41,6 +52,10 @@ pub struct SpectrumMeterSettings {
     /// Whether a line and readout follow the mouse over the Spectrum.
     /// Default off: the peak line's readout is enough.
     pub show_cursor: bool,
+    /// Whether the Spectrum slows down and keeps its peaks while the
+    /// pointer is over it, the held peaks marked with their notes. Default on.
+    pub slow_on_hover: bool,
+    pub colouring: SpectrumColouring,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -50,6 +65,8 @@ impl Default for SpectrumMeterSettings {
             show_peak_hold: true,
             show_peak_line: true,
             show_cursor: false,
+            slow_on_hover: true,
+            colouring: SpectrumColouring::Plain,
         }
     }
 }
@@ -84,6 +101,23 @@ pub const ZOOM_POINTS: usize = 400;
 /// The smallest box that zooms, as fractions of the plot; a smaller drag is
 /// a plain click.
 pub const MIN_ZOOM_BOX: [f32; 2] = [0.02, 0.04];
+
+/// How many held peaks are marked while the pointer is over a Spectrum.
+pub const HELD_PEAKS: usize = 5;
+/// How far a held peak must rise above the lower of the dips either side
+/// of it to be marked, in dB.
+const HELD_PEAK_PROMINENCE_DB: f32 = 6.0;
+/// The least distance between two marked peaks, in octaves.
+const HELD_PEAK_SPACING_OCTAVES: f32 = 1.0 / 6.0;
+
+/// How far behind its newest column a scrolling Meter draws, in seconds:
+/// enough to bridge the gaps between audio blocks, so it scrolls the same
+/// distance every frame instead of jumping a block at a time.
+const PLAYHEAD_LAG: f64 = 0.04;
+/// A playhead further than this from where it should be jumps there, in seconds.
+const PLAYHEAD_JUMP: f64 = 0.25;
+/// The share of its drift a playhead corrects each frame.
+const PLAYHEAD_CORRECTION: f64 = 0.08;
 
 /// The zoom window's place for a box: the half of the plot the box's centre
 /// isn't in, so the box stays in view.
@@ -335,6 +369,10 @@ pub enum MeterView {
         traces: Vec<Vec<WaveformColumn>>,
         /// Columns completed since the start: the newest column's number plus one.
         completed: u64,
+        /// How many columns (fractional) the picture is drawn behind its
+        /// newest, which are still to scroll in: it moves steadily between
+        /// audio blocks. 0 in silence.
+        lag: f32,
     },
     Spectrum {
         settings: SpectrumMeterSettings,
@@ -350,6 +388,12 @@ pub enum MeterView {
         selecting: Option<[f32; 4]>,
         /// The open zoom window.
         zoom: Option<SpectrumZoom>,
+        /// Where the pointer is over the Meter (0–1 each way across its
+        /// frame), if it is: the zoom window shows the pitch under it.
+        pointer: Option<[f32; 2]>,
+        /// While the pointer is over the Spectrum (and it slows on hover):
+        /// the loudest held peaks, with their frequencies, notes and levels.
+        held_peaks: Vec<CursorReadout>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
@@ -384,7 +428,47 @@ pub enum MeterView {
         /// Columns added since the start; 0 while all of it is silence, so
         /// the scene stops changing and the app sleeps.
         completed: u64,
+        /// As the Waveform's: columns still to scroll in.
+        lag: f32,
     },
+}
+
+/// Paces columns that arrive in bursts (audio comes a block at a time) onto
+/// the frames' clock: a scrolling Meter draws [`PLAYHEAD_LAG`] behind its
+/// newest column and moves on at the columns' rate, nudged back whenever
+/// it drifts.
+#[derive(Default)]
+struct Playhead {
+    /// Columns shown (fractional), and when.
+    shown: Option<(f64, Duration)>,
+}
+
+impl Playhead {
+    /// How many columns behind the newest to draw at `now`.
+    fn lag(&mut self, now: Duration, completed: u64, per_second: f64) -> f32 {
+        let newest = completed as f64;
+        let target = newest - PLAYHEAD_LAG * per_second;
+        let shown = match self.shown {
+            Some((shown, at)) => {
+                let predicted = shown + now.saturating_sub(at).as_secs_f64() * per_second;
+                let drift = target - predicted;
+                if drift.abs() > PLAYHEAD_JUMP * per_second {
+                    target
+                } else {
+                    predicted + drift * PLAYHEAD_CORRECTION
+                }
+            }
+            None => target,
+        };
+        let shown = shown.clamp(0.0, newest);
+        self.shown = Some((shown, now));
+        // To a hundredth of a column: finer would only redraw for nothing.
+        (((newest - shown) * 100.0).round() / 100.0) as f32
+    }
+
+    fn reset(&mut self) {
+        self.shown = None;
+    }
 }
 
 enum Analyser {
@@ -405,6 +489,7 @@ pub(crate) struct Meter {
     /// the drag started and where the pointer is.
     selecting: Option<[f32; 4]>,
     zoom: Option<Zoom>,
+    playhead: Playhead,
 }
 
 /// An open zoom window: its box and the analyser behind it.
@@ -423,6 +508,7 @@ impl Meter {
             view: None,
             selecting: None,
             zoom: None,
+            playhead: Playhead::default(),
         }
     }
 
@@ -638,25 +724,48 @@ impl Meter {
 
     /// What the Meter shows now, or `None` before a Source starts.
     /// `pointer` is the cursor's position inside the Meter (0–1 each way), if it's over it.
-    pub fn view(&mut self, pointer: Option<[f32; 2]>) -> Option<&MeterView> {
+    /// `now` paces the scrolling Meters.
+    pub fn view(&mut self, pointer: Option<[f32; 2]>, now: Duration) -> Option<&MeterView> {
         if self.view.is_none() {
             let mut view = build_view(self.analyser.as_mut()?, &self.settings, pointer);
             if let MeterView::Spectrum {
-                selecting, zoom, ..
+                selecting,
+                zoom,
+                settings,
+                ..
             } = &mut view
             {
                 *selecting = self.selecting;
-                *zoom = self.zoom.as_mut().and_then(Zoom::view);
+                let slow = pointer.is_some() && settings.slow_on_hover;
+                *zoom = self.zoom.as_mut().and_then(|z| z.view(slow));
             }
             self.view = Some(view);
+        }
+        let per_second = match self.analyser.as_ref()? {
+            Analyser::Waveform(_) => f64::from(dasmeter_analysis::waveform::COLUMNS_PER_SECOND),
+            Analyser::Spectrogram(a) => a.columns_per_second(),
+            _ => return self.view.as_ref(),
+        };
+        if let Some(
+            MeterView::Waveform { completed, lag, .. }
+            | MeterView::Spectrogram { completed, lag, .. },
+        ) = &mut self.view
+        {
+            *lag = if *completed == 0 {
+                self.playhead.reset();
+                0.0
+            } else {
+                self.playhead.lag(now, *completed, per_second)
+            };
         }
         self.view.as_ref()
     }
 }
 
 impl Zoom {
-    fn view(&mut self) -> Option<SpectrumZoom> {
+    fn view(&mut self, slow: bool) -> Option<SpectrumZoom> {
         let analyser = self.analyser.as_mut()?;
+        analyser.set_slow(slow);
         let mut spectrum = analyser.update().clone();
         let floor = spectrum.db_range.0;
         for trace in &mut spectrum.traces {
@@ -730,19 +839,35 @@ fn build_view(
                 settings,
                 traces,
                 completed: if silent { 0 } else { a.completed() },
+                lag: 0.0,
             }
         }
         (Analyser::Spectrum(a), MeterSettings::Spectrum(settings)) => {
             let nyquist = a.sample_rate() as f32 / 2.0;
             let (low, high) = settings.analysis.frequency_range;
             let range = (low, high.min(nyquist));
+            let slow = pointer.is_some() && settings.slow_on_hover;
+            a.set_slow(slow);
             let mut spectrum = a.update().clone();
             let floor = spectrum.db_range.0;
+            let steady = settings.colouring == SpectrumColouring::SteadyHarmonics;
             for trace in &mut spectrum.traces {
                 for level in trace.levels.iter_mut().chain(&mut trace.peak_hold) {
                     *level = round_to(level.max(floor), 0.1);
                 }
+                if steady {
+                    for value in &mut trace.steadiness {
+                        *value = round_to(*value, 0.02);
+                    }
+                } else {
+                    trace.steadiness = Vec::new();
+                }
             }
+            let held_peaks = if slow {
+                held_peaks(&spectrum, range, |f| a.refine(f))
+            } else {
+                Vec::new()
+            };
             let cursor = pointer.filter(|_| settings.show_cursor).map(|[x, _]| {
                 let frequency = range.0 * (range.1 / range.0).powf(x);
                 CursorReadout {
@@ -754,7 +879,7 @@ fn build_view(
             });
             let peak = settings
                 .show_peak_line
-                .then(|| a.peak(floor))
+                .then(|| a.steady_peak())
                 .flatten()
                 .map(|(frequency, level)| CursorReadout {
                     x: ((frequency / range.0).ln() / (range.1 / range.0).ln()).clamp(0.0, 1.0),
@@ -771,6 +896,8 @@ fn build_view(
                 peak,
                 selecting: None,
                 zoom: None,
+                pointer,
+                held_peaks,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {
@@ -826,10 +953,95 @@ fn build_view(
                 columns,
                 range: (low, high.min(nyquist)),
                 completed: if silent { 0 } else { a.completed() },
+                lag: 0.0,
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),
     }
+}
+
+/// The loudest peaks of the held curve (the loudest trace at each point):
+/// local maxima that stand [`HELD_PEAK_PROMINENCE_DB`] above the dips around
+/// them, at most [`HELD_PEAKS`], at least [`HELD_PEAK_SPACING_OCTAVES`]
+/// apart, lowest frequency first.
+/// `refine` finds where a peak near a point's frequency really is.
+fn held_peaks(
+    spectrum: &Spectrum,
+    range: (f32, f32),
+    refine: impl Fn(f32) -> f32,
+) -> Vec<CursorReadout> {
+    let floor = spectrum.db_range.0;
+    let held: Vec<f32> = (0..spectrum.frequencies.len())
+        .map(|i| {
+            spectrum
+                .traces
+                .iter()
+                .filter_map(|t| t.peak_hold.get(i).copied())
+                .fold(floor, f32::max)
+        })
+        .collect();
+    // How far each local maximum rises above the higher of the lowest
+    // points between it and a louder point (or the edge) on either side.
+    let mut candidates: Vec<(usize, f32)> = Vec::new();
+    for i in 1..held.len().saturating_sub(1) {
+        let level = held[i];
+        if level <= floor || level < held[i - 1] || level < held[i + 1] {
+            continue;
+        }
+        let dip = |points: &mut dyn Iterator<Item = usize>| {
+            let mut lowest = level;
+            for j in points {
+                if held[j] > level {
+                    break;
+                }
+                lowest = lowest.min(held[j]);
+            }
+            lowest
+        };
+        let left = dip(&mut (0..i).rev());
+        let right = dip(&mut (i + 1..held.len()));
+        let prominence = level - left.max(right);
+        if prominence >= HELD_PEAK_PROMINENCE_DB {
+            candidates.push((i, level));
+        }
+    }
+    candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut chosen: Vec<(usize, f32)> = Vec::new();
+    for (i, level) in candidates {
+        let f = spectrum.frequencies[i];
+        let clear = chosen
+            .iter()
+            .all(|&(j, _)| (f / spectrum.frequencies[j]).log2().abs() >= HELD_PEAK_SPACING_OCTAVES);
+        if clear {
+            chosen.push((i, level));
+        }
+        if chosen.len() == HELD_PEAKS {
+            break;
+        }
+    }
+    chosen.sort_by_key(|&(i, _)| i);
+    chosen
+        .into_iter()
+        .map(|(i, level)| {
+            // The level between points, by a parabola through it and its
+            // neighbours; the frequency from the bins.
+            let (left, right) = (held[i - 1], held[i + 1]);
+            let curve = left - 2.0 * level + right;
+            let offset = if curve < 0.0 {
+                (0.5 * (left - right) / curve).clamp(-0.5, 0.5)
+            } else {
+                0.0
+            };
+            let level = round_to(level - 0.25 * (left - right) * offset, 0.1);
+            let frequency = refine(spectrum.frequencies[i]);
+            CursorReadout {
+                x: ((frequency / range.0).ln() / (range.1 / range.0).ln()).clamp(0.0, 1.0),
+                frequency: round_to(frequency, 0.1),
+                note: note_name(frequency),
+                level: Some(level),
+            }
+        })
+        .collect()
 }
 
 /// The loudness graph's points: the LUFS bar's reading every 100 ms over the

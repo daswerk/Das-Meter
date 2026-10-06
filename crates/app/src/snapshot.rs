@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -90,6 +90,8 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                     },
                     now,
                 );
+                // The pointer in the zoom window, for its pitch readout.
+                core.handle(Event::Pointer(Some((window, [0.25, 0.25]))), now);
             }
             for block in noise(1.0, 5).chunks(1024) {
                 now += Duration::from_secs_f64(512.0 / f64::from(RATE));
@@ -147,6 +149,43 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 core.handle(Event::Audio(block), now);
                 core.decide(now);
             }
+        }
+        // The Spectrum coloured by steady harmonics, on a 55 Hz bass tone
+        // with its harmonics over pink noise, the pointer over it.
+        Some("harmonics") => {
+            let Some(dasmeter_core::MeterSettings::Spectrum(mut settings)) = core.meter_settings(1)
+            else {
+                return Err("the second Meter isn't a Spectrum".into());
+            };
+            settings.colouring = dasmeter_core::SpectrumColouring::SteadyHarmonics;
+            core.handle(
+                Event::SetMeter {
+                    meter: 1,
+                    settings: dasmeter_core::MeterSettings::Spectrum(settings),
+                },
+                now,
+            );
+            let n = frames(RATE, 4.0);
+            let noise = pink_noise(n, -36.0, 11);
+            let audio: Vec<f32> = (0..n)
+                .flat_map(|i| {
+                    let t = i as f64 / f64::from(RATE);
+                    let x: f64 = (1..=8)
+                        .map(|k| {
+                            let k = f64::from(k);
+                            (std::f64::consts::TAU * 55.0 * k * t).sin() * 0.3 / k
+                        })
+                        .sum::<f64>()
+                        + f64::from(noise[i]);
+                    [x as f32, x as f32]
+                })
+                .collect();
+            for block in audio.chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+            core.handle(Event::Pointer(Some((WindowKey::Bar, [0.3, 0.5]))), now);
         }
         // The Cepstrum in the Spectrum's place, on a 220 Hz harmonic tone.
         Some("cepstrum") => {

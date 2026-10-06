@@ -1,14 +1,26 @@
 //! The Spectrum: a log-frequency axis, each trace as a line with soft fill or
-//! as bars, the peak-hold curve, the loudest peak's readout pinned to the top
-//! with a line to the peak, the box being dragged to zoom into, and the zoom
-//! window showing that box larger and finer.
+//! as bars (steady harmonics glowing brighter, if it's coloured so), the
+//! peak-hold curve, the loudest standing peak's readout pinned to the top
+//! with a line to the peak, the held peaks marked while the pointer is over
+//! it, the box being dragged to zoom into, and the zoom window showing that
+//! box larger and finer, with the pitch under the pointer.
 
-use dasmeter_analysis::{Spectrum, SpectrumStyle};
+use dasmeter_analysis::{Spectrum, SpectrumStyle, note_name};
 use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings, SpectrumZoom};
 
 use super::labels::Align;
 use super::shapes::Area;
-use super::{Canvas, map};
+use super::{Canvas, map, mix};
+
+/// The readouts and marks over a Spectrum.
+pub struct Marks<'a> {
+    pub cursor: Option<&'a CursorReadout>,
+    pub peak: Option<&'a CursorReadout>,
+    /// Marked while the pointer is over the Spectrum.
+    pub held_peaks: &'a [CursorReadout],
+    /// Where the pointer is, as fractions of the Meter's frame.
+    pub pointer: Option<[f32; 2]>,
+}
 
 /// About how wide `text` is in the monospace labels at `size`, in px.
 fn text_width(c: &Canvas, text: &str, size: f32) -> f32 {
@@ -31,26 +43,46 @@ const FREQUENCY_MARKS: [(f32, &str); 10] = [
 /// Horizontal grid lines every this many dB.
 const DB_STEP: f32 = 12.0;
 
+/// `meter` is the Meter's whole frame (where `marks.pointer` is measured),
+/// `area` the plot inside it.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
+    meter: Area,
     area: Area,
     settings: &SpectrumMeterSettings,
     spectrum: &Spectrum,
     range: (f32, f32),
-    cursor: Option<&CursorReadout>,
-    peak: Option<&CursorReadout>,
+    marks: Marks,
     selecting: Option<[f32; 4]>,
     zoom: Option<&SpectrumZoom>,
 ) {
+    let Marks {
+        cursor,
+        peak,
+        held_peaks,
+        pointer,
+    } = marks;
+    let pointer = pointer.map(|[x, y]| [meter.x + x * meter.width, meter.y + y * meter.height]);
     // Labels under the zoom window would show through it: leave them out.
     let panel = zoom.map(|zoom| fraction_of(area, zoom.panel));
     c.covered = panel;
-    let marks: Vec<(f32, String)> = FREQUENCY_MARKS
+    let grid_marks: Vec<(f32, String)> = FREQUENCY_MARKS
         .iter()
         .map(|&(frequency, name)| (frequency, name.to_owned()))
         .collect();
-    plot(c, area, settings, spectrum, range, &marks, DB_STEP);
+    // While it holds its peaks (under the pointer), the held curve shows.
+    let show_hold = settings.show_peak_hold || !held_peaks.is_empty();
+    plot(
+        c,
+        area,
+        settings,
+        spectrum,
+        range,
+        &grid_marks,
+        DB_STEP,
+        show_hold,
+    );
 
     let (low, high) = (range.0.ln(), range.1.ln());
     let x_of = |f: f32| map(f.max(1.0).ln(), (low, high), area.x, area.right());
@@ -60,6 +92,9 @@ pub fn draw(
     // the peak to it; the cursor's line and readout under it.
     if let Some(peak) = peak {
         peak_readout(c, area, spectrum, peak, &x_of, &y_of);
+    }
+    if !held_peaks.is_empty() {
+        held_marks(c, area, held_peaks, pointer, &x_of, &y_of);
     }
     if let Some(cursor) = cursor {
         let text = c.colour(Role::Text);
@@ -78,7 +113,100 @@ pub fn draw(
         outline(c, fraction_of(area, selection));
     }
     if let (Some(zoom), Some(panel)) = (zoom, panel) {
-        draw_zoom(c, panel, settings, zoom);
+        draw_zoom(c, panel, settings, zoom, pointer);
+    }
+}
+
+/// The held peaks, each a dot with its note; the one nearest the pointer
+/// also with its frequency, cents and level.
+fn held_marks(
+    c: &mut Canvas,
+    area: Area,
+    held: &[CursorReadout],
+    pointer: Option<[f32; 2]>,
+    x_of: &impl Fn(f32) -> f32,
+    y_of: &impl Fn(f32) -> f32,
+) {
+    let (text, accent, panel) = (
+        c.colour(Role::Text),
+        c.colour(Role::Accent),
+        c.colour(Role::Panel),
+    );
+    let nearest = pointer.and_then(|[px, _]| {
+        held.iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                (x_of(a.frequency) - px)
+                    .abs()
+                    .total_cmp(&(x_of(b.frequency) - px).abs())
+            })
+            .map(|(i, _)| i)
+    });
+    // Dots first; then the labels, the nearest's first, each above its dot
+    // (or a row higher, or below near the top) where it runs into none
+    // placed before it, else left out.
+    let mut order: Vec<usize> = (0..held.len()).collect();
+    order.sort_by_key(|&i| (Some(i) != nearest, i));
+    let mut placed: Vec<Area> = Vec::new();
+    for &i in &order {
+        let peak = &held[i];
+        let level = peak.level.unwrap_or(-200.0);
+        let (x, y) = (x_of(peak.frequency), y_of(level));
+        let size = c.px(if Some(i) == nearest { 7.0 } else { 5.0 });
+        let dot = Area {
+            x: x - size / 2.0,
+            y: y - size / 2.0,
+            width: size,
+            height: size,
+        };
+        c.shapes.rounded_rect(dot.inset(-c.px(1.0)), size, panel);
+        c.shapes.rounded_rect(dot, size / 2.0, accent);
+        let label = if Some(i) == nearest {
+            let mut label = hertz(peak.frequency);
+            if let Some(note) = peak.note {
+                label += &format!("  {note} {:+.0}¢", note.cents);
+            }
+            label + &format!("  {level:.1} dB")
+        } else {
+            peak.note
+                .map_or_else(|| hertz(peak.frequency), |n| n.to_string())
+        };
+        let width = text_width(c, &label, 10.0) * c.styling.text_scale;
+        let height = c.px(12.0) * c.styling.text_scale;
+        // Clear of the dB labels at the left.
+        let left = (x - width / 2.0)
+            .max(area.x + c.px(26.0))
+            .min(area.right() - width - c.px(2.0));
+        let rows = [
+            y - c.px(18.0),
+            y - c.px(18.0) - height - c.px(2.0),
+            y + c.px(6.0),
+        ];
+        let spot = rows
+            .into_iter()
+            .filter(|&top| top > area.y + c.px(30.0) && top + height < area.bottom())
+            .map(|top| Area {
+                x: left - c.px(3.0),
+                y: top,
+                width: width + c.px(6.0),
+                height,
+            })
+            .find(|spot| {
+                placed.iter().all(|other| {
+                    spot.right() <= other.x
+                        || spot.x >= other.right()
+                        || spot.bottom() <= other.y
+                        || spot.y >= other.bottom()
+                })
+            });
+        let Some(spot) = spot else { continue };
+        placed.push(spot);
+        let colour = if Some(i) == nearest {
+            text
+        } else {
+            text.faded(0.75)
+        };
+        c.text(&label, left, spot.y, 10.0, colour, Align::Left);
     }
 }
 
@@ -123,7 +251,13 @@ fn outline(c: &mut Canvas, area: Area) {
 
 /// The zoom window: a title bar with the box's ranges and a close button,
 /// and the box's Spectrum under it with its own scale.
-fn draw_zoom(c: &mut Canvas, panel: Area, settings: &SpectrumMeterSettings, zoom: &SpectrumZoom) {
+fn draw_zoom(
+    c: &mut Canvas,
+    panel: Area,
+    settings: &SpectrumMeterSettings,
+    zoom: &SpectrumZoom,
+    pointer: Option<[f32; 2]>,
+) {
     let (text, dim) = (c.colour(Role::Text), c.dim());
     let opaque = |colour: Colour| Colour { a: 255, ..colour };
     c.shapes
@@ -192,6 +326,61 @@ fn draw_zoom(c: &mut Canvas, panel: Area, settings: &SpectrumMeterSettings, zoom
         zoom.range,
         &marks,
         step,
+        settings.show_peak_hold,
+    );
+
+    // The pitch under the pointer: a line, and its frequency, note and level.
+    let Some([x, y]) = pointer else { return };
+    let inside =
+        x >= plot_area.x && x <= plot_area.right() && y >= plot_area.y && y <= plot_area.bottom();
+    if !inside {
+        return;
+    }
+    let along = (x - plot_area.x) / plot_area.width;
+    let frequency = zoom.range.0 * (zoom.range.1 / zoom.range.0).powf(along);
+    let level = map(y, (plot_area.bottom(), plot_area.y), db_range.0, db_range.1);
+    let thin = c.px(1.0).max(1.0);
+    c.shapes.rect(
+        Area {
+            x: x - thin / 2.0,
+            width: thin,
+            ..plot_area
+        },
+        text.faded(0.5),
+    );
+    let mut readout = format!("{:.1} Hz", frequency);
+    if frequency >= 1_000.0 {
+        readout = format!("{:.3} kHz", frequency / 1_000.0);
+    }
+    if let Some(note) = note_name(frequency) {
+        readout += &format!("  {note} {:+.0}¢", note.cents);
+    }
+    readout += &format!("  {level:.1} dB");
+    let width = text_width(c, &readout, 11.0) * c.styling.text_scale;
+    let right_of = x + c.px(6.0);
+    let start = if right_of + width <= plot_area.right() {
+        right_of
+    } else {
+        (x - c.px(6.0) - width).max(plot_area.x)
+    };
+    let back = Area {
+        x: start - c.px(3.0),
+        y: plot_area.y + c.px(3.0),
+        width: width + c.px(6.0),
+        height: c.px(15.0) * c.styling.text_scale,
+    };
+    let opaque = Colour {
+        a: 230,
+        ..c.colour(Role::Panel)
+    };
+    c.shapes.rounded_rect(back, c.px(3.0), opaque);
+    c.text(
+        &readout,
+        start,
+        plot_area.y + c.px(4.0),
+        11.0,
+        text,
+        Align::Left,
     );
 }
 
@@ -260,6 +449,7 @@ fn frequency_marks((low, high): (f32, f32)) -> Vec<(f32, String)> {
 }
 
 /// The grid, its labels and the traces of `spectrum` in `area`.
+#[allow(clippy::too_many_arguments)]
 fn plot(
     c: &mut Canvas,
     area: Area,
@@ -268,6 +458,7 @@ fn plot(
     range: (f32, f32),
     marks: &[(f32, String)],
     db_step: f32,
+    show_hold: bool,
 ) {
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
     let thin = c.px(1.0).max(1.0);
@@ -329,6 +520,8 @@ fn plot(
     let colours = [c.colour(Role::SpectrumLine), c.colour(Role::Accent)];
     let fill = c.colour(Role::SpectrumFill);
     let hold = c.colour(Role::SpectrumPeakHold);
+    // Steady harmonics glow toward the text colour.
+    let glow = mix(c.colour(Role::Accent), c.colour(Role::Text), 0.55);
     let frequencies = &spectrum.frequencies;
     for (trace, line) in spectrum.traces.iter().zip(colours) {
         let points = |levels: &[f32]| -> Vec<[f32; 2]> {
@@ -353,7 +546,24 @@ fn plot(
                     fill_top.faded(0.05),
                 );
                 c.shapes.polyline(&curve, c.stroke(1.5), line);
-                if settings.show_peak_hold {
+                if trace.steadiness.len() == curve.len() {
+                    let stroke = c.stroke(2.5);
+                    for (i, pair) in curve.windows(2).enumerate() {
+                        let steady = (trace.steadiness[i] + trace.steadiness[i + 1]) / 2.0;
+                        if steady < 0.05 {
+                            continue;
+                        }
+                        let ([x0, y0], [x1, y1]) = (pair[0], pair[1]);
+                        c.shapes.quad(
+                            [[x0, y0], [x1, y1], [x0, area.bottom()], [x1, area.bottom()]],
+                            glow.faded(0.7 * steady),
+                            glow.faded(0.08 * steady),
+                        );
+                        c.shapes
+                            .line(pair[0], pair[1], stroke, mix(line, glow, steady));
+                    }
+                }
+                if show_hold {
                     c.shapes
                         .polyline(&points(&trace.peak_hold), c.stroke(1.0), hold.faded(0.6));
                 }
@@ -373,8 +583,13 @@ fn plot(
                         width,
                         height: area.bottom() - y,
                     };
-                    c.shapes.gradient(bar, line.faded(0.8), line.faded(0.25));
-                    if settings.show_peak_hold {
+                    let colour = trace
+                        .steadiness
+                        .get(i)
+                        .map_or(line, |&steady| mix(line, glow, steady));
+                    c.shapes
+                        .gradient(bar, colour.faded(0.8), colour.faded(0.25));
+                    if show_hold {
                         let y = y_of(trace.peak_hold[i]);
                         let tick = Area {
                             x,

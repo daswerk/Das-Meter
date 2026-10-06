@@ -17,8 +17,9 @@ use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_UR
 use dasmeter_core::{
     BigReading, Card, CepstrumMeterSettings, Colour, Direction, Edge, Event, LayoutMode,
     LineWeight, ListenTo, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene, MeterSettings,
-    Palette, Platform, Role, Scene, ScreenMode, SpectrogramMeterSettings, SpectrumMeterSettings,
-    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
+    Palette, Platform, Role, Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring,
+    SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
+    WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -436,6 +437,19 @@ fn spectrum_basic(ui: &mut egui::Ui, s: &mut SpectrumMeterSettings) -> bool {
         .checkbox(&mut s.show_cursor, "Mouse readout")
         .on_hover_text("A line under the mouse, with its frequency and note")
         .changed();
+    changed |= ui
+        .checkbox(&mut s.slow_on_hover, "Slow down under the mouse")
+        .on_hover_text("Under the mouse the Spectrum falls slower and keeps its peaks, marked with their notes")
+        .changed();
+    changed |= choice(
+        ui,
+        "Colour",
+        &mut s.colouring,
+        &[
+            (SpectrumColouring::Plain, "Plain"),
+            (SpectrumColouring::SteadyHarmonics, "Steady harmonics"),
+        ],
+    );
     changed
 }
 

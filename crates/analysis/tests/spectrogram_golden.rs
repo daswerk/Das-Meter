@@ -21,8 +21,9 @@ fn settings() -> SpectrogramSettings {
 #[test]
 fn a_column_every_span_over_columns_and_no_more_than_columns_kept() {
     let mut a = SpectrogramAnalyser::new(RATE, settings());
-    // 4 s / 256 columns = 750 frames a column; fed in odd-sized blocks.
-    let audio = both(&sine(RATE, 1_000.0, -6.0, 0.0, 750 * 10 + 10));
+    // 4 s / COLUMNS columns a column; fed in odd-sized blocks.
+    let hop = (4 * RATE as usize) / COLUMNS;
+    let audio = both(&sine(RATE, 1_000.0, -6.0, 0.0, hop * 10 + 10));
     for block in audio.chunks(2 * 333) {
         a.process(block);
     }

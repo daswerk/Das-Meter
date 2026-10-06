@@ -268,14 +268,17 @@ fn a_setting_change_alone_redraws() {
 fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
     let mut app = App::playing();
     app.draw();
-    // Off by default: the mouse alone shows nothing and redraws nothing.
+    // Off by default: the mouse alone shows no readout (it slows the
+    // Spectrum and marks its held peaks instead).
     app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
-    app.now += Duration::from_millis(20);
-    assert_ne!(app.core.decide(app.now), Decision::Draw);
-    let views = app.views();
+    let views = app.draw();
     assert!(matches!(
         views[SPECTRUM],
-        MeterView::Spectrum { cursor: None, .. }
+        MeterView::Spectrum {
+            cursor: None,
+            pointer: Some(_),
+            ..
+        }
     ));
     app.set(SPECTRUM, |s| {
         if let MeterSettings::Spectrum(s) = s {
@@ -658,4 +661,84 @@ fn a_box_dragged_over_the_spectrum_opens_a_zoom_window_that_closes() {
         views[SPECTRUM],
         MeterView::Spectrum { zoom: None, .. }
     ));
+}
+
+#[test]
+fn hovering_the_spectrum_marks_its_held_peaks_unless_turned_off() {
+    let mut app = App::playing();
+    let views = app.draw();
+    let MeterView::Spectrum { held_peaks, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    assert!(held_peaks.is_empty(), "only while hovering");
+
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
+    let views = app.draw();
+    let MeterView::Spectrum { held_peaks, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    let loudest = held_peaks
+        .iter()
+        .max_by(|a, b| a.level.unwrap().total_cmp(&b.level.unwrap()))
+        .expect("the sine's peak");
+    assert!(
+        (loudest.frequency / 1_000.0).log2().abs() < 0.05,
+        "{}",
+        loudest.frequency
+    );
+    assert_eq!(loudest.note.unwrap().to_string(), "B5");
+
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Spectrum(s) = s {
+            s.slow_on_hover = false;
+        }
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 0.2))));
+    let views = app.draw();
+    let MeterView::Spectrum { held_peaks, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    assert!(held_peaks.is_empty());
+}
+
+#[test]
+fn steadiness_comes_with_the_steady_harmonics_colouring_only() {
+    let mut app = App::playing();
+    let views = app.draw();
+    let MeterView::Spectrum { spectrum, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    assert!(spectrum.traces[0].steadiness.is_empty());
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Spectrum(s) = s {
+            s.colouring = dasmeter_core::SpectrumColouring::SteadyHarmonics;
+        }
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 3.0))));
+    let views = app.draw();
+    let MeterView::Spectrum { spectrum, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    let steadiness = &spectrum.traces[0].steadiness;
+    assert_eq!(steadiness.len(), spectrum.frequencies.len());
+    assert!(steadiness.iter().copied().fold(0.0, f32::max) > 0.5);
+}
+
+#[test]
+fn the_waveform_scrolls_between_blocks_and_stands_still_in_silence() {
+    use dasmeter_analysis::signals::silence;
+    let mut app = App::playing();
+    let lag = |views: &[MeterView]| match &views[WAVEFORM] {
+        MeterView::Waveform { lag, .. } => *lag,
+        _ => panic!(),
+    };
+    // Drawing again before the next block: the picture moves on by itself.
+    let first = lag(&app.draw());
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, 512)));
+    let second = lag(&app.draw());
+    assert!(first > 0.0 && second > 0.0, "{first} {second}");
+    assert!(second < 0.25 * 200.0, "within the jump limit: {second}");
+
+    app.feed(&both(&silence(frames(RATE, 6.0))));
+    assert_eq!(lag(&app.settle()), 0.0);
 }

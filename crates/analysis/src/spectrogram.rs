@@ -12,10 +12,11 @@ use crate::ChannelView;
 use crate::loudness::PeakHold;
 use crate::spectrum::{SpectrumAnalyser, SpectrumSettings, SpectrumStyle, WindowFunction};
 
-/// Columns across the span.
-pub const COLUMNS: usize = 256;
+/// Columns across the span: finer than most Meters are wide, so a large
+/// Spectrogram stays sharp.
+pub const COLUMNS: usize = 1_024;
 /// Log-spaced frequencies per column.
-pub const ROWS: usize = 160;
+pub const ROWS: usize = 512;
 /// The FFT sizes offered.
 pub const FFT_SIZES: [usize; 4] = [1_024, 2_048, 4_096, 8_192];
 
@@ -67,8 +68,11 @@ pub struct SpectrogramAnalyser {
 impl SpectrogramAnalyser {
     pub fn new(sample_rate: u32, settings: SpectrogramSettings) -> SpectrogramAnalyser {
         let hop = hop(sample_rate, &settings);
+        let mut spectrum =
+            SpectrumAnalyser::new(sample_rate, spectrum_settings(sample_rate, &settings));
+        spectrum.set_lean(true);
         SpectrogramAnalyser {
-            spectrum: SpectrumAnalyser::new(sample_rate, spectrum_settings(sample_rate, &settings)),
+            spectrum,
             settings,
             hop,
             until_column: hop,
@@ -83,6 +87,11 @@ impl SpectrogramAnalyser {
 
     pub fn settings(&self) -> &SpectrogramSettings {
         &self.settings
+    }
+
+    /// How many columns are added per second of audio.
+    pub fn columns_per_second(&self) -> f64 {
+        f64::from(self.sample_rate()) / self.hop as f64
     }
 
     /// New settings start the picture over.
