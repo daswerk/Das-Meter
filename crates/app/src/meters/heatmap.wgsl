@@ -12,6 +12,8 @@ struct Params {
     info: vec4<f32>,
     // Columns and rows per pixel.
     footprint: vec4<f32>,
+    // Under the picture where its alpha is 1, else none.
+    back: vec4<f32>,
     palette: array<vec4<f32>, 256>,
 };
 
@@ -49,6 +51,9 @@ fn fs_main(in: Out) -> @location(0) vec4<f32> {
     // Columns back from the newest; texel space along time.
     let column = stored - ((1.0 - in.uv.x) * across + lag);
     if column < 0.0 {
+        if p.back.a > 0.0 {
+            return p.back;
+        }
         discard;
     }
     let row = in.uv.y * rows;
@@ -66,5 +71,9 @@ fn fs_main(in: Out) -> @location(0) vec4<f32> {
             level = max(level, textureSampleLevel(levels, linear_sampler, vec2<f32>(x, y), 0.0).r);
         }
     }
-    return p.palette[u32(round(clamp(level, 0.0, 1.0) * 255.0))];
+    let colour = p.palette[u32(round(clamp(level, 0.0, 1.0) * 255.0))];
+    if p.back.a > 0.0 {
+        return vec4<f32>(mix(p.back.rgb, colour.rgb, colour.a), 1.0);
+    }
+    return colour;
 }

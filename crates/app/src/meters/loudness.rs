@@ -1,8 +1,8 @@
 //! The Loudness Meter: numbers for M, S, I, LRA, true peak, PLR and PSR; L/R
 //! RMS bars with sample-peak lines and hold ticks; a LUFS bar with the target
-//! line; and, where there's room, the loudness graph. With the bars off (the
-//! default) one loudness reading and the sample peak are shown large, and the
-//! other readings as plain rows.
+//! line; and, where there's room, the loudness graph. One loudness reading
+//! and the sample peak are shown large and the other readings as plain
+//! rows, with the bars (off by default) beside or under them.
 
 use dasmeter_core::{
     BigReading, Colour, Level, LoudnessDisplay, LoudnessMeterSettings, LufsBar, Role,
@@ -12,16 +12,11 @@ use super::labels::Align;
 use super::shapes::Area;
 use super::{Canvas, map};
 
-/// A number tile's height and the narrowest one, in logical px.
+/// A reading's row height, in logical px.
 const TILE_HEIGHT: f32 = 26.0;
-/// The lowest a tile gets before readings are left out.
-const MIN_TILE_HEIGHT: f32 = 20.0;
-/// The narrowest single tile, beside the bars in a small, wide area.
-const SINGLE_TILE_WIDTH: f32 = 110.0;
-/// Below this height the tiles shrink to the single reading the bar shows.
-const TINY_HEIGHT: f32 = 64.0;
-/// The rate line under the tiles.
-const RATE_HEIGHT: f32 = 16.0;
+/// The least height the bars get under the numbers.
+const BARS_MIN_HEIGHT: f32 = 120.0;
+/// Narrower than this, only the big numbers are shown.
 const TILE_MIN_WIDTH: f32 = 150.0;
 /// A reading's row in the numbers-only layout: name, value and unit.
 const ROW_WIDTH: f32 = 160.0;
@@ -51,7 +46,6 @@ pub fn draw(
     display: &LoudnessDisplay,
 ) {
     let (text, dim) = (c.colour(Role::Text), c.dim());
-    let size = 13.0;
 
     // Numbers, each in its own tile: name, value and unit on one line.
     let true_peak = if display.true_peak_oversampled {
@@ -75,7 +69,6 @@ pub fn draw(
             .then_some(("PSR", display.psr, "LU")),
     ];
     let rows: Vec<_> = rows.into_iter().flatten().collect();
-    let rate = format!("{:.1} kHz", f64::from(display.sample_rate) / 1000.0);
     if !settings.show_bars {
         draw_numbers(c, area, settings, display, &rows);
         return;
@@ -85,17 +78,13 @@ pub fn draw(
     let gap = c.px(6.0);
     let scale_width = c.px(28.0);
     let bars_width = scale_width + 3.0 * c.px(MAX_BAR_WIDTH) + 4.0 * gap;
-    // Wider than tall (a Bar along the top or bottom): tiles on the left, bars
-    // on the right at full height. Otherwise tiles above, bars below.
-    let beside = area.width >= area.height && area.width >= c.px(TILE_MIN_WIDTH) + bars_width
-        // A short, wide area keeps its bars beside a single narrower tile.
-        || (area.width >= 1.2 * area.height
-            && area.width >= c.px(SINGLE_TILE_WIDTH) + bars_width);
-    let graph_wanted = settings.show_history;
-    let mut graph: Option<Area> = None;
-    let (tiles, bars) = if beside {
-        let tiles = Area {
-            width: area.width - bars_width - gap,
+    // The numbers keep the same plain look as without bars, in the room the
+    // bars leave: beside them when wider than tall, above them otherwise.
+    let beside =
+        area.width >= area.height && area.width >= c.px(MIN_HEROES_WIDTH) + bars_width + c.px(10.0);
+    let (numbers, bars) = if beside {
+        let numbers = Area {
+            width: area.width - bars_width - c.px(10.0),
             ..area
         };
         let bars = Area {
@@ -103,116 +92,24 @@ pub fn draw(
             width: bars_width,
             ..area
         };
-        (tiles, bars)
+        (numbers, bars)
     } else {
-        // At most half the height for tiles; the bars keep the rest.
-        let columns = tile_columns(c, area.width, rows.len());
-        let tile_rows = rows.len().div_ceil(columns) as f32;
-        let wanted = tile_rows * (c.px(TILE_HEIGHT) + gap) + c.px(RATE_HEIGHT);
-        let (tiles, row) = area.split_top(wanted.min(area.height / 2.0));
+        let height = (area.height * 0.45).max(c.px(BARS_MIN_HEIGHT).min(area.height / 2.0));
+        let (numbers, row) = area.split_bottom(height);
         let width = bars_width.min(row.width);
-        let graph_width = row.width - width - gap;
-        let bars = if graph_wanted
-            && graph_width >= c.px(MIN_GRAPH_WIDTH)
-            && row.height - gap >= c.px(MIN_GRAPH_HEIGHT)
-        {
-            // The loudness graph fills the width beside the bars, which go right.
-            graph = Some(Area {
-                x: row.x,
-                y: row.y + gap,
-                width: graph_width,
-                height: row.height - gap - c.px(16.0),
-            });
-            Area {
-                x: row.right() - width,
-                y: row.y + gap,
-                width,
-                height: (row.height - gap).max(0.0),
-            }
-        } else {
-            // The bar group sits in the middle of the width left under the tiles.
-            Area {
-                x: row.x + (row.width - width) / 2.0,
-                y: row.y + gap,
-                width,
-                height: (row.height - gap).max(0.0),
-            }
+        let bars = Area {
+            x: row.x + (row.width - width) / 2.0,
+            y: row.y + gap,
+            width,
+            height: (row.height - gap).max(0.0),
         };
-        (tiles, bars)
+        (numbers, bars)
     };
-
-    // As many readings as fit, most important first; shown in their usual order.
-    let columns = tile_columns(c, tiles.width, rows.len());
-    let min_tile = c.px(MIN_TILE_HEIGHT);
-    let fit_rows = ((tiles.height + gap) / (min_tile + gap)).floor().max(0.0) as usize;
-    // A very short area (a thin Bar) shows just the one reading the bar shows.
-    // So does one too narrow for a tile at its narrowest.
-    let capacity = if tiles.height < c.px(TINY_HEIGHT) || tiles.width < c.px(TILE_MIN_WIDTH) {
-        fit_rows.min(1)
-    } else {
-        (fit_rows * columns).min(rows.len())
+    let plain = LoudnessMeterSettings {
+        show_thin_bars: false,
+        ..*settings
     };
-    let bar_name = match settings.lufs_bar {
-        LufsBar::ShortTerm => "S",
-        LufsBar::Momentary => "M",
-    };
-    let mut shown: Vec<usize> = (0..rows.len()).collect();
-    shown.sort_by_key(|&i| priority(rows[i].0, bar_name));
-    shown.truncate(capacity);
-    shown.sort_unstable();
-    let tile_rows = shown.len().div_ceil(columns).max(1);
-    // The rate line goes under the tiles only where there's room left for it.
-    let room = tiles.height - tile_rows as f32 * (min_tile + gap);
-    let show_rate = !shown.is_empty() && room >= c.px(RATE_HEIGHT);
-    let for_tiles = tiles.height - if show_rate { c.px(RATE_HEIGHT) } else { 0.0 };
-    let tile_height = ((for_tiles - gap * (tile_rows as f32 - 1.0)) / tile_rows as f32)
-        .clamp(min_tile, c.px(TILE_HEIGHT));
-    let tile_width = (tiles.width - gap * (columns as f32 - 1.0)) / columns as f32;
-    let tile_fill = c.colour(Role::Grid).faded(0.35);
-    let unit_width = c.px(36.0);
-    let pad = c.px(8.0);
-    for (slot, &i) in shown.iter().enumerate() {
-        let (name, level, unit) = rows[i];
-        let (row, column) = (slot / columns, slot % columns);
-        let tile = Area {
-            x: tiles.x + column as f32 * (tile_width + gap),
-            y: tiles.y + row as f32 * (tile_height + gap),
-            width: tile_width,
-            height: tile_height,
-        };
-        c.shapes.rect(tile, tile_fill);
-        let y = tile.y + (tile_height - c.px(16.0)) / 2.0;
-        c.text(name, tile.x + pad, y, size, dim, Align::Left);
-        let unit_x = tile.right() - pad - unit_width;
-        c.bold(
-            &number(level),
-            unit_x - c.px(4.0),
-            y,
-            size,
-            text,
-            Align::Right,
-        );
-        c.text(unit, unit_x, y + c.px(2.0), 10.0, dim, Align::Left);
-    }
-    let below = tiles.y + tile_rows as f32 * (tile_height + gap);
-    if show_rate {
-        c.text(&rate, tiles.x, below, 10.0, dim, Align::Left);
-    }
-    // Beside the bars (a wide area), the graph takes the room under the tiles.
-    if beside && graph_wanted && !shown.is_empty() {
-        let top = below + if show_rate { c.px(RATE_HEIGHT) } else { 0.0 };
-        let room = Area {
-            y: top,
-            height: tiles.bottom() - top - c.px(16.0),
-            ..tiles
-        };
-        if room.width >= c.px(MIN_GRAPH_WIDTH) && room.height >= c.px(MIN_GRAPH_HEIGHT) {
-            graph = Some(room);
-        }
-    }
-    if let Some(graph) = graph {
-        draw_graph(c, graph, settings, display);
-    }
+    draw_numbers(c, numbers, &plain, display, &rows);
 
     // Bars: L, R, then the LUFS bar.
     let (bars, names) = bars.split_bottom(c.px(16.0));
@@ -833,14 +730,6 @@ fn draw_graph(
     );
 }
 
-/// How many tile columns fit `width`: as many as fit at their narrowest, at most one per reading.
-fn tile_columns(c: &Canvas, width: f32, count: usize) -> usize {
-    let fit = ((width + c.px(6.0)) / (c.px(TILE_MIN_WIDTH) + c.px(6.0))).floor() as usize;
-    fit.clamp(1, count.max(1))
-}
-
-/// Which readings stay when not all fit, lowest first: the LUFS the bar
-/// shows, integrated, true peak, the other of M and S, then LRA.
 fn priority(name: &str, bar: &str) -> u8 {
     match name {
         _ if name == bar => 0,

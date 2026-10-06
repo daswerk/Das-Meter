@@ -56,7 +56,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     let (width, height) = match (open, custom) {
         (_, Some(size)) => size,
         (Some("bar"), _) => BAR,
-        (Some("window" | "zoom" | "dragging"), _) => (2400, 1440),
+        (Some("window" | "zoom" | "dragging" | "bars-window" | "spectrogram-zoom"), _) => {
+            (2400, 1440)
+        }
         _ => (WIDTH, HEIGHT),
     };
     match open {
@@ -99,6 +101,37 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             }
         }
         Some(_) if custom.is_some() => {}
+        // The Loudness Meter with its bars on, in the Bar or a window.
+        Some(option @ ("bars" | "bars-window")) => {
+            if option == "bars-window" {
+                core.handle(Event::SetMode(LayoutMode::Window), now);
+            }
+            let meter = (0..8)
+                .find(|&i| {
+                    matches!(
+                        core.meter_settings(i),
+                        Some(dasmeter_core::MeterSettings::Loudness(_))
+                    )
+                })
+                .ok_or("there's no Loudness Meter")?;
+            let Some(dasmeter_core::MeterSettings::Loudness(mut settings)) =
+                core.meter_settings(meter)
+            else {
+                unreachable!()
+            };
+            settings.show_bars = true;
+            core.handle(
+                Event::SetMeter {
+                    meter,
+                    settings: dasmeter_core::MeterSettings::Loudness(settings),
+                },
+                now,
+            );
+            for block in noise(1.0, 7).chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+            }
+        }
         // Themes: the built-ins, and a see-through copy of Dark.
         Some("light") => core.handle(Event::ChooseTheme { light: 1, dark: 1 }, now),
         Some("contrast") => core.handle(Event::ChooseTheme { light: 2, dark: 2 }, now),
@@ -123,11 +156,34 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         ),
         Some("settings") => core.handle(Event::ShowSettings(true), now),
         // The Spectrogram in the Spectrum's place, on a sweep from 60 Hz to
-        // 12 kHz over pink noise, with a 1 kHz tone joining halfway.
-        Some("spectrogram") => {
+        // 12 kHz over pink noise, with a 1 kHz tone joining halfway; or, in a
+        // window, zoomed into the box around the tone.
+        Some(option @ ("spectrogram" | "spectrogram-zoom")) => {
             let settings =
                 dasmeter_core::MeterSettings::default_of(dasmeter_core::MeterKind::Spectrogram);
             core.handle(Event::SetMeter { meter: 1, settings }, now);
+            if option == "spectrogram-zoom" {
+                core.handle(Event::SetMode(LayoutMode::Window), now);
+                core.handle(Event::StartListening, now);
+                now += Duration::from_millis(100);
+                core.decide(now);
+                let window = WindowKey::Main;
+                core.handle(
+                    Event::Click {
+                        window,
+                        at: [0.55, 0.2],
+                    },
+                    now,
+                );
+                core.handle(Event::Pointer(Some((window, [0.95, 0.3]))), now);
+                core.handle(
+                    Event::Release {
+                        window,
+                        at: [0.95, 0.3],
+                    },
+                    now,
+                );
+            }
             let seconds = 10.0;
             let n = frames(RATE, seconds);
             let noise = pink_noise(n, -40.0, 9);

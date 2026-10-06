@@ -293,7 +293,7 @@ impl MeterRenderer {
                         pointer: *pointer,
                     },
                     *selecting,
-                    zoom.as_ref(),
+                    zoom.as_deref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)
@@ -321,8 +321,19 @@ impl MeterRenderer {
                     columns,
                     range,
                     lag,
+                    selecting,
+                    zoom,
                     ..
-                } => spectrogram::draw(&mut c, inner, settings, columns, *range, *lag),
+                } => spectrogram::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    columns,
+                    *range,
+                    *lag,
+                    *selecting,
+                    zoom.as_ref(),
+                ),
             },
         }
         if let Some(source) = &meter.source {

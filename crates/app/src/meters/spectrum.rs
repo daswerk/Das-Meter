@@ -94,7 +94,8 @@ pub fn draw(
         peak_readout(c, area, spectrum, peak, &x_of, &y_of);
     }
     if !held_peaks.is_empty() {
-        held_marks(c, area, held_peaks, pointer, &x_of, &y_of);
+        let colour = peak_colour(c, settings);
+        held_marks(c, area, held_peaks, pointer, colour, &x_of, &y_of);
     }
     if let Some(cursor) = cursor {
         let text = c.colour(Role::Text);
@@ -124,14 +125,11 @@ fn held_marks(
     area: Area,
     held: &[CursorReadout],
     pointer: Option<[f32; 2]>,
+    dot_colour: Colour,
     x_of: &impl Fn(f32) -> f32,
     y_of: &impl Fn(f32) -> f32,
 ) {
-    let (text, accent, panel) = (
-        c.colour(Role::Text),
-        c.colour(Role::Accent),
-        c.colour(Role::Panel),
-    );
+    let (text, panel) = (c.colour(Role::Text), c.colour(Role::Panel));
     let nearest = pointer.and_then(|[px, _]| {
         held.iter()
             .enumerate()
@@ -160,7 +158,7 @@ fn held_marks(
             height: size,
         };
         c.shapes.rounded_rect(dot.inset(-c.px(1.0)), size, panel);
-        c.shapes.rounded_rect(dot, size / 2.0, accent);
+        c.shapes.rounded_rect(dot, size / 2.0, dot_colour);
         let label = if Some(i) == nearest {
             let mut label = hertz(peak.frequency);
             if let Some(note) = peak.note {
@@ -210,8 +208,15 @@ fn held_marks(
     }
 }
 
+/// The held peaks' dots: the colour picked for them, else the Spectrum's line.
+fn peak_colour(c: &Canvas, settings: &SpectrumMeterSettings) -> Colour {
+    settings
+        .peak_colour
+        .unwrap_or_else(|| c.colour(Role::SpectrumLine))
+}
+
 /// `fractions` (left, top, right, bottom) of `area`.
-fn fraction_of(area: Area, [left, top, right, bottom]: [f32; 4]) -> Area {
+pub(super) fn fraction_of(area: Area, [left, top, right, bottom]: [f32; 4]) -> Area {
     Area {
         x: area.x + left * area.width,
         y: area.y + top * area.height,
@@ -329,13 +334,20 @@ fn draw_zoom(
         settings.show_peak_hold,
     );
 
-    // The pitch under the pointer: a line, and its frequency, note and level.
-    let Some([x, y]) = pointer else { return };
-    let inside =
-        x >= plot_area.x && x <= plot_area.right() && y >= plot_area.y && y <= plot_area.bottom();
-    if !inside {
-        return;
+    let inside = pointer.filter(|&[x, y]| {
+        x >= plot_area.x && x <= plot_area.right() && y >= plot_area.y && y <= plot_area.bottom()
+    });
+    // Its steadiest peaks, marked as on the Spectrum under the pointer.
+    if !zoom.peaks.is_empty() {
+        let (low, high) = (zoom.range.0.ln(), zoom.range.1.ln());
+        let x_of = |f: f32| map(f.max(1.0).ln(), (low, high), plot_area.x, plot_area.right());
+        let y_of = |db: f32| map(db, db_range, plot_area.bottom(), plot_area.y);
+        let colour = peak_colour(c, settings);
+        held_marks(c, plot_area, &zoom.peaks, inside, colour, &x_of, &y_of);
     }
+
+    // The pitch under the pointer: a line, and its frequency, note and level.
+    let Some([x, y]) = inside else { return };
     let along = (x - plot_area.x) / plot_area.width;
     let frequency = zoom.range.0 * (zoom.range.1 / zoom.range.0).powf(along);
     let level = map(y, (plot_area.bottom(), plot_area.y), db_range.0, db_range.1);
@@ -385,7 +397,7 @@ fn draw_zoom(
 }
 
 /// "440 Hz" or "2.35 kHz".
-fn hertz(frequency: f32) -> String {
+pub(super) fn hertz(frequency: f32) -> String {
     if frequency < 1_000.0 {
         format!("{frequency:.0} Hz")
     } else {
@@ -396,7 +408,7 @@ fn hertz(frequency: f32) -> String {
 /// Grid marks across a zoomed frequency range: 1-2-5 per decade over a wide
 /// range, every whole number per decade over a narrower one, and evenly
 /// spaced round steps over a narrow one.
-fn frequency_marks((low, high): (f32, f32)) -> Vec<(f32, String)> {
+pub(super) fn frequency_marks((low, high): (f32, f32)) -> Vec<(f32, String)> {
     let label = |f: f32, step: f32| {
         if f >= 1_000.0 {
             let decimals = if step >= 1_000.0 {
@@ -520,8 +532,11 @@ fn plot(
     let colours = [c.colour(Role::SpectrumLine), c.colour(Role::Accent)];
     let fill = c.colour(Role::SpectrumFill);
     let hold = c.colour(Role::SpectrumPeakHold);
-    // Steady harmonics glow toward the text colour.
-    let glow = mix(c.colour(Role::Accent), c.colour(Role::Text), 0.55);
+    // Steady harmonics glow in the colour picked for them, else toward the
+    // text colour.
+    let glow = settings
+        .harmonics_colour
+        .unwrap_or_else(|| mix(c.colour(Role::Accent), c.colour(Role::Text), 0.55));
     let frequencies = &spectrum.frequencies;
     for (trace, line) in spectrum.traces.iter().zip(colours) {
         let points = |levels: &[f32]| -> Vec<[f32; 2]> {

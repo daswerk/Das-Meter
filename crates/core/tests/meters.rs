@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use dasmeter_analysis::signals::{both, frames, sine, stereo};
+use dasmeter_analysis::signals::{both, frames, pink_noise, sine, stereo};
 use dasmeter_analysis::{ChannelView, SpectrumStyle, StereoView};
 use dasmeter_core::{
     AppCore, Decision, Event, Frame, LufsBar, MeterSettings, MeterState, MeterView, Role,
@@ -564,6 +564,47 @@ fn the_spectrogram_keeps_a_column_per_hop_and_goes_still_in_silence() {
 }
 
 #[test]
+fn a_box_dragged_over_the_spectrogram_zooms_into_its_frequencies() {
+    let mut app = App::playing();
+    app.send(Event::StartListening);
+    app.send(Event::SetMeter {
+        meter: SPECTRUM,
+        settings: MeterSettings::Spectrogram(dasmeter_core::SpectrogramMeterSettings::default()),
+    });
+    app.draw();
+    let window = WindowKey::Bar;
+    let at = |x: f32, y: f32| [0.25 + 0.25 * x, y];
+    app.send(Event::Click {
+        window,
+        at: at(0.2, 0.25),
+    });
+    app.send(Event::Pointer(Some((window, at(0.6, 0.5)))));
+    app.send(Event::Release {
+        window,
+        at: at(0.6, 0.5),
+    });
+    app.feed(&both(&sine(RATE, 1_000.0, -12.0, 0.0, frames(RATE, 1.0))));
+    let views = app.draw();
+    let MeterView::Spectrogram { zoom, .. } = &views[SPECTRUM] else {
+        panic!()
+    };
+    let zoom = zoom.as_ref().expect("a zoom window");
+    // 20 Hz to 20 kHz up: 0.5 down → 20 · 1000^0.5 ≈ 632 Hz, 0.25 ≈ 3557 Hz.
+    assert!((zoom.range.0 - 632.5).abs() < 1.0, "{:?}", zoom.range);
+    assert!((zoom.range.1 - 3557.0).abs() < 5.0, "{:?}", zoom.range);
+    // Three times slower than the Spectrogram's 10 s: about 34 columns a second.
+    let per_second = dasmeter_analysis::spectrogram::COLUMNS as f64 / 30.0;
+    assert!(
+        (zoom.columns.len() as f64 - per_second).abs() <= 1.0,
+        "{}",
+        zoom.columns.len()
+    );
+    // The 1 kHz tone is in it, as loud in the zoom as anywhere.
+    let newest = zoom.columns.last().unwrap();
+    assert!(newest.iter().any(|&level| level > 200), "{newest:?}");
+}
+
+#[test]
 fn a_box_dragged_over_the_spectrum_opens_a_zoom_window_that_closes() {
     let mut app = App::playing();
     app.send(Event::StartListening);
@@ -699,6 +740,79 @@ fn hovering_the_spectrum_marks_its_held_peaks_unless_turned_off() {
         panic!()
     };
     assert!(held_peaks.is_empty());
+}
+
+#[test]
+fn only_steady_peaks_are_marked_and_they_stay_put() {
+    let mut app = App::playing();
+    let held = |app: &mut App| {
+        let views = app.settle();
+        let MeterView::Spectrum { held_peaks, .. } = &views[SPECTRUM] else {
+            panic!()
+        };
+        held_peaks.clone()
+    };
+    // Audio as it plays, a frame drawn every block or so.
+    let play = |app: &mut App, audio: &[f32]| {
+        for block in audio.chunks(2048) {
+            app.feed(block);
+            app.settle();
+        }
+    };
+
+    // Noise alone (once the sine has died away): nothing stands out once
+    // averaged.
+    let n = frames(RATE, 4.0);
+    play(
+        &mut app,
+        &stereo(&pink_noise(n, -12.0, 1), &pink_noise(n, -12.0, 2)),
+    );
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
+    let n = frames(RATE, 2.0);
+    play(
+        &mut app,
+        &stereo(&pink_noise(n, -12.0, 5), &pink_noise(n, -12.0, 6)),
+    );
+    assert!(held(&mut app).is_empty(), "{:?}", held(&mut app));
+
+    // A 110 Hz tone with its harmonics over the noise: each is marked, and
+    // stays where it was found while the noise goes on.
+    let tone = |seconds: f64, seed: u64| {
+        let n = frames(RATE, seconds);
+        let noise = pink_noise(n, -30.0, seed);
+        let harmonics: Vec<Vec<f32>> = (1..=4)
+            .map(|k| {
+                sine(
+                    RATE,
+                    110.0 * f64::from(k),
+                    -12.0 - 4.0 * f64::from(k),
+                    0.0,
+                    n,
+                )
+            })
+            .collect();
+        let mono: Vec<f32> = (0..n)
+            .map(|i| noise[i] + harmonics.iter().map(|h| h[i]).sum::<f32>())
+            .collect();
+        both(&mono)
+    };
+    play(&mut app, &tone(3.0, 3));
+    let first = held(&mut app);
+    let notes: Vec<String> = first
+        .iter()
+        .map(|peak| peak.note.unwrap().name.to_owned())
+        .collect();
+    assert_eq!(notes, ["A", "A", "E", "A"], "{first:?}");
+    for (k, peak) in (1..).zip(&first) {
+        let ratio = peak.frequency / (110.0 * k as f32);
+        assert!(ratio.log2().abs() < 0.01, "{first:?}");
+    }
+    play(&mut app, &tone(1.0, 4));
+    let later = held(&mut app);
+    let frequencies = |peaks: &[dasmeter_core::CursorReadout]| -> Vec<f32> {
+        peaks.iter().map(|peak| peak.frequency).collect()
+    };
+    assert_eq!(frequencies(&later), frequencies(&first));
 }
 
 #[test]

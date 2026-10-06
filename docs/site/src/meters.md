@@ -23,6 +23,14 @@ other half of the Meter, showing the box's frequencies and levels larger, with
 its own scale and a finer frequency resolution (the largest FFT size). Its ×
 closes it. A tone keeps its level in the zoom window, but noise looks lower
 there, since each point covers fewer frequencies.
+While the mouse is over the Spectrum it falls slower and holds its peaks
+(**Slow down under the mouse**), and the peaks that keep sounding get a dot
+with their note; the one nearest the mouse also shows its frequency and level.
+Only peaks that stand out for a couple of seconds are marked, and a dot stays
+where it was found. The zoom window marks its peaks the same way.
+**Colour ▸ Steady harmonics** makes harmonics that keep sounding glow brighter.
+**Harmonics colour** and **Peak dots colour** pick their colours; off, they
+follow the Theme (the dots take the Spectrum's line colour).
 
 ## Loudness Meter
 
@@ -33,7 +41,7 @@ short-term). By default it shows numbers only: two big numbers, the
 loudness (short-term LUFS unless **Big reading** picks momentary, integrated or
 true peak) and the sample peak in dBFS, with the other readings as plain rows.
 **Thin bars** adds a thin bar beside each big number. Turn on **Show bars** for
-the peak and RMS bars instead. Where there's room, the **loudness
+the peak and RMS bars beside (or under) the numbers. Where there's room, the **loudness
 graph** shows the LUFS reading over the last 10 to 120 s, with the target
 and integrated lines. Settings: a **Target** loudness, **Show true peak**,
 **Show LRA**, **Show PLR and PSR**, **Loudness graph** and its span, the RMS
@@ -68,6 +76,9 @@ left with the newest audio at the right edge, and louder shown brighter, in
 the Theme's Spectrum colours up to its text colour. Settings: **Span** (5, 10,
 20 or 30 s), **Frequency scale**, and in the settings panel the FFT size,
 window, slope and the frequency and level ranges.
+Drag a box over it to zoom into the box's frequencies: a zoom window opens in
+the other half of the Meter at the finest frequency resolution, scrolling three
+times slower so the detail shows. Its × closes it.
 
 To show it, right-click a Meter and choose **Show ▸ Spectrogram**, or
 **Add Meter ▸ Spectrogram**.

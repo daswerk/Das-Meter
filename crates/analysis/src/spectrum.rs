@@ -353,6 +353,14 @@ impl SpectrumAnalyser {
         self.steady_peak
     }
 
+    /// Each point's level averaged over a couple of seconds, for `trace`:
+    /// what its steadiness is measured on. Empty for a trace there isn't.
+    pub fn steady_levels(&self, trace: usize) -> &[f32] {
+        self.ballistics
+            .get(trace)
+            .map_or(&[], |b| b.steady.as_slice())
+    }
+
     /// The last draw buffer, without analysing again.
     pub fn spectrum(&self) -> &Spectrum {
         &self.spectrum
