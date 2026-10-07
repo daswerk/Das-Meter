@@ -923,7 +923,10 @@ fn fits(main: &[f32], overlay: &[f32], rate: f64, now: f32) -> Vec<Fit> {
         .collect();
     // The smallest move within a hair of the best, as is and flipped.
     let best = |sign: f32| -> (i64, f32) {
-        let top = shifted.iter().map(|&(_, r)| sign * r).fold(f32::MIN, f32::max);
+        let top = shifted
+            .iter()
+            .map(|&(_, r)| sign * r)
+            .fold(f32::MIN, f32::max);
         shifted
             .iter()
             .filter(|&&(_, r)| sign * r >= top - 0.02)
@@ -973,9 +976,15 @@ pub(crate) fn advice(fit: &Fit, main: &str, other: &str) -> String {
         Fit::Move { ms, flip, then } => {
             let way = if ms > 0.0 { "later" } else { "earlier" };
             let flip = if flip { "Flip and move" } else { "Move" };
-            format!("{flip} {other} {:.1} ms {way} (Offset {ms:+.1}): {then:+.2}", ms.abs())
+            format!(
+                "{flip} {other} {:.1} ms {way} (Offset {ms:+.1}): {then:+.2}",
+                ms.abs()
+            )
         }
-        Fit::Pitch { main: a, overlay: b } => {
+        Fit::Pitch {
+            main: a,
+            overlay: b,
+        } => {
             let note = |hz: f32| {
                 dasmeter_analysis::note_name(hz).map_or_else(String::new, |n| format!(" ({n})"))
             };
@@ -998,7 +1007,12 @@ fn shifted_correlation(main: &[f32], overlay: &[f32], k: i64) -> f32 {
     if to - from < 2 {
         return 0.0;
     }
-    let pairs = (from..to).map(|i| (f64::from(main[i as usize]), f64::from(overlay[(i + k) as usize])));
+    let pairs = (from..to).map(|i| {
+        (
+            f64::from(main[i as usize]),
+            f64::from(overlay[(i + k) as usize]),
+        )
+    });
     let count = (to - from) as f64;
     let [x, y, xy, xx, yy] = pairs.fold([0.0; 5], |s, (x, y)| {
         [s[0] + x, s[1] + y, s[2] + x * y, s[3] + x * x, s[4] + y * y]
@@ -1035,17 +1049,18 @@ fn pitch(lows: &[f32], rate: f64) -> Option<f32> {
         })
         .collect();
     let mean = power.iter().sum::<f64>() / power.len() as f64;
-    let (i, &top) = power
-        .iter()
-        .enumerate()
-        .max_by(|a, b| a.1.total_cmp(b.1))?;
+    let (i, &top) = power.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1))?;
     // A clear peak, not noise or silence.
     if mean <= 0.0 || top < mean * FIT_PITCH_PROMINENCE || i == 0 || i == steps {
         return None;
     }
     let (a, b, c) = (power[i - 1], top, power[i + 1]);
     let bend = a - 2.0 * b + c;
-    let refine = if bend.abs() > 0.0 { 0.5 * (a - c) / bend } else { 0.0 };
+    let refine = if bend.abs() > 0.0 {
+        0.5 * (a - c) / bend
+    } else {
+        0.0
+    };
     Some(frequency(i as f64 + refine.clamp(-0.5, 0.5)) as f32)
 }
 

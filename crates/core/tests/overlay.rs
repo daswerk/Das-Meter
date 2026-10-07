@@ -4,8 +4,9 @@
 use std::time::Duration;
 
 use dasmeter_core::{
-    AppCore, Colour, Event, ListenTo, MeterKind, MeterScene, MeterSettings, MeterState, MeterView,
-    Fit, PhaseScopeMeterSettings, PhaseScopeView, ScopeTrace, SendPlugin, SendPluginState, Timing,
+    AppCore, Colour, Event, Fit, ListenTo, MeterKind, MeterScene, MeterSettings, MeterState,
+    MeterView, PhaseScopeMeterSettings, PhaseScopeView, ScopeTrace, SendPlugin, SendPluginState,
+    Timing,
 };
 
 const RATE: u32 = 48_000;
@@ -444,14 +445,21 @@ fn suggestions_show_only_when_turned_on() {
     let kick = sine(55.0, 0.3);
     app.play_both(4.0, &kick, |f| -kick(f));
     let overlay = app.scope().overlay.unwrap();
-    assert!(matches!(overlay.fits.as_slice(), [Fit::Flip { .. }]), "{:?}", overlay.fits);
+    assert!(
+        matches!(overlay.fits.as_slice(), [Fit::Flip { .. }]),
+        "{:?}",
+        overlay.fits
+    );
     assert!(overlay.advice.is_empty(), "off by default");
 
     app.set(|s| s.suggestions = true);
     app.play_both(1.0, &kick, |f| -kick(f));
     let advice = app.scope().overlay.unwrap().advice;
     assert_eq!(advice.len(), 1, "{advice:?}");
-    assert!(advice[0].contains("Flip") && advice[0].contains("Bass"), "{advice:?}");
+    assert!(
+        advice[0].contains("Flip") && advice[0].contains("Bass"),
+        "{advice:?}"
+    );
 }
 
 #[test]
@@ -472,7 +480,11 @@ fn a_late_bass_is_told_how_far_to_move() {
     app.set(|s| s.overlay_offset = ms);
     app.play_both(4.0, &kick, delayed(&kick, 144));
     let overlay = app.scope().overlay.unwrap();
-    assert!(overlay.correlation.unwrap() > 0.9, "{:?}", overlay.correlation);
+    assert!(
+        overlay.correlation.unwrap() > 0.9,
+        "{:?}",
+        overlay.correlation
+    );
     assert!(overlay.fits.is_empty(), "{:?}", overlay.fits);
 }
 
@@ -494,7 +506,10 @@ fn lows_at_different_pitches_are_told_to_tune() {
     app.set(|s| s.suggestions = true);
     app.play_both(1.0, sine(55.0, 0.3), sine(58.27, 0.3));
     let advice = app.scope().overlay.unwrap().advice;
-    assert!(advice.iter().any(|a| a.contains("A1") && a.contains("A#1")), "{advice:?}");
+    assert!(
+        advice.iter().any(|a| a.contains("A1") && a.contains("A#1")),
+        "{advice:?}"
+    );
 }
 
 #[test]

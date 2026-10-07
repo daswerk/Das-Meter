@@ -513,7 +513,11 @@ fn the_cepstrum_shows_the_pitch_under_the_pointer() {
     let at = at.expect("a readout under the pointer");
     let frequency = 2.0 / (short + long);
     assert!((at.x - 0.5).abs() < 1e-6);
-    assert!((at.frequency - frequency).abs() < 0.1, "{} vs {frequency}", at.frequency);
+    assert!(
+        (at.frequency - frequency).abs() < 0.1,
+        "{} vs {frequency}",
+        at.frequency
+    );
     assert_eq!(at.note, dasmeter_analysis::note_name(at.frequency));
 
     // Over another Meter: none.

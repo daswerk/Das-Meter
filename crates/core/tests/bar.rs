@@ -439,7 +439,11 @@ fn the_bar_can_be_moved_anywhere_and_docks_again() {
     assert_eq!((frame.x, frame.y), (200.0, 400.0));
     assert_eq!((frame.width, frame.height), (docked.width, docked.height));
     assert!(!bar.reserve_space);
-    assert_eq!(bar.edge, Some(Edge::Top), "still lies along a top or bottom");
+    assert_eq!(
+        bar.edge,
+        Some(Edge::Top),
+        "still lies along a top or bottom"
+    );
 
     // It can be resized where it is, from its inner edge.
     app.send(Event::SetBarThickness(frame.bottom() + 40.0 - frame.y));
@@ -458,9 +462,14 @@ fn the_bar_can_be_moved_anywhere_and_docks_again() {
     assert!(near(shortened.y, 400.0));
 
     // Never off the display.
-    app.send(Event::MoveBar { to: [5_000.0, -300.0] });
+    app.send(Event::MoveBar {
+        to: [5_000.0, -300.0],
+    });
     let frame = app.bar().frame.unwrap();
-    assert!(frame.right() <= DISPLAY.frame.right() && frame.y >= DISPLAY.frame.y, "{frame:?}");
+    assert!(
+        frame.right() <= DISPLAY.frame.right() && frame.y >= DISPLAY.frame.y,
+        "{frame:?}"
+    );
 
     // Picking an edge docks it there again.
     app.send(Event::SetEdge(Edge::Top));

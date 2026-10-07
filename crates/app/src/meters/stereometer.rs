@@ -267,8 +267,22 @@ fn upright_bar(
         grid,
     );
     let middle = track.x + track_width / 2.0;
-    c.text(labels[2], middle, area.y + c.px(1.0), 9.0, dim, Align::Centre);
-    c.text(labels[0], middle, track.bottom() + c.px(2.0), 9.0, dim, Align::Centre);
+    c.text(
+        labels[2],
+        middle,
+        area.y + c.px(1.0),
+        9.0,
+        dim,
+        Align::Centre,
+    );
+    c.text(
+        labels[0],
+        middle,
+        track.bottom() + c.px(2.0),
+        9.0,
+        dim,
+        Align::Centre,
+    );
     c.text(
         labels[1],
         track.right() + c.px(4.0),
@@ -359,7 +373,10 @@ mod tests {
         }
         // The half circle grows upward into the room it has, as far as it
         // still reads as one, and sits in the middle of it.
-        assert!((l.radius[1] / l.radius[0] - MAX_STRETCH).abs() < 1e-3, "{l:?}");
+        assert!(
+            (l.radius[1] / l.radius[0] - MAX_STRETCH).abs() < 1e-3,
+            "{l:?}"
+        );
         assert!(l.radius[0] * 2.0 <= l.scope.width);
         let middle = l.centre[1] - l.radius[1] / 2.0;
         assert!((middle - l.scope.height / 2.0).abs() < 10.0, "{l:?}");
@@ -377,7 +394,10 @@ mod tests {
             assert!(bar.x >= l.scope.right());
         }
         // Wider than high, as far as it still reads as one.
-        assert!((l.radius[0] / l.radius[1] - MAX_STRETCH).abs() < 1e-3, "{l:?}");
+        assert!(
+            (l.radius[0] / l.radius[1] - MAX_STRETCH).abs() < 1e-3,
+            "{l:?}"
+        );
     }
 
     #[test]
@@ -396,6 +416,10 @@ mod tests {
     #[test]
     fn a_square_meter_keeps_the_circle_about_round() {
         let l = layout(area(300.0, 340.0), 1.0, StereoView::Lissajous, 1);
-        assert!((l.radius[0] / l.radius[1] - 1.0).abs() < 0.05, "{:?}", l.radius);
+        assert!(
+            (l.radius[0] / l.radius[1] - 1.0).abs() < 0.05,
+            "{:?}",
+            l.radius
+        );
     }
 }

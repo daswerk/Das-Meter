@@ -659,7 +659,12 @@ fn point_level(bins: &[f32], point: &PointBins) -> f32 {
         let last = bins.len() - 1;
         let below = (point.centre.floor() as usize).min(last);
         let at = |i: usize| bins[i.min(last)];
-        let (p0, p1, p2, p3) = (at(below.saturating_sub(1)), at(below), at(below + 1), at(below + 2));
+        let (p0, p1, p2, p3) = (
+            at(below.saturating_sub(1)),
+            at(below),
+            at(below + 1),
+            at(below + 2),
+        );
         let t = point.centre - below as f32;
         let (t2, t3) = (t * t, t * t * t);
         let level = 0.5

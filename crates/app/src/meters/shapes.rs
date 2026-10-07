@@ -362,7 +362,10 @@ mod tests {
             assert!(curve.contains(&p), "{p:?} kept");
         }
         for pair in curve.windows(2) {
-            assert!(pair[1][0] - pair[0][0] <= 2.0 + 1e-4, "no gap wider than asked");
+            assert!(
+                pair[1][0] - pair[0][0] <= 2.0 + 1e-4,
+                "no gap wider than asked"
+            );
             assert!(pair[1][0] > pair[0][0], "still left to right");
         }
         // Rounded between the points, and never past the peak or the floor.
@@ -370,7 +373,12 @@ mod tests {
         assert!(between[1] < 5.0, "bends toward the peak: {between:?}");
         assert!(curve.iter().all(|p| (0.0..=10.0).contains(&p[1])));
         // A flat run stays flat.
-        assert!(curve.iter().filter(|p| p[0] > 16.0).all(|p| (p[1] - 10.0).abs() < 1e-4));
+        assert!(
+            curve
+                .iter()
+                .filter(|p| p[0] > 16.0)
+                .all(|p| (p[1] - 10.0).abs() < 1e-4)
+        );
     }
 
     #[test]

@@ -555,7 +555,10 @@ fn a_cycle_draws_as_it_plays_not_a_cycle_later() {
     // rest still shows the last one.
     app.feed(&vec![0.0; beat * 6 / 10]);
     let scope = app.scope();
-    assert!(scope.traces[0].max[column(1_000.0 / 24_000.0)] < 0.05, "swept");
+    assert!(
+        scope.traces[0].max[column(1_000.0 / 24_000.0)] < 0.05,
+        "swept"
+    );
     assert!(scope.traces[0].max[column(0.8)] > 0.5, "not yet reached");
 }
 
