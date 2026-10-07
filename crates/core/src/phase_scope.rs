@@ -33,6 +33,8 @@ const MARGIN_SECONDS: f64 = 0.03;
 const JUMP_BEATS: f64 = 0.05;
 /// What auto gain scales the loudest point to.
 const AUTO_GAIN_PEAK: f32 = 0.9;
+/// How slowly auto gain lets the peak fall, as a time constant in seconds.
+const AUTO_GAIN_RELEASE: f32 = 3.0;
 
 /// One trace across the Cycle: each column's lowest and highest value, −1 to
 /// 1 after gain, rounded to 0.01.
@@ -304,10 +306,30 @@ pub(crate) struct PhaseScope {
     settings: PhaseScopeMeterSettings,
     main: Track,
     overlay: Option<Overlay>,
-    /// The newest Cycle cut, by its number on the grid.
-    shown: Option<i64>,
-    /// Newest last.
+    /// The Cycle being cut as it plays.
+    sweep: Option<Sweep>,
+    /// Whole Cycles, newest last.
     history: VecDeque<Cut>,
+    /// The peak auto gain fills the Meter to: the loudest shown, or falling
+    /// from it slowly, so a fade-out fades rather than being scaled back up.
+    auto_peak: f32,
+}
+
+/// A Cycle being cut column by column as its audio arrives, so the newest
+/// trace is drawn as it plays (like a scope's beam) rather than a whole
+/// Cycle at a time.
+struct Sweep {
+    /// Its number on the grid.
+    number: i64,
+    /// Where it starts and how long it is, in quarter notes.
+    start: f64,
+    length: f64,
+    /// The next column to cut, and the frame it starts at.
+    next: usize,
+    from: f64,
+    /// The columns cut so far; the rest are zero.
+    cut: Cut,
+    overlay: Option<OverlayPass>,
 }
 
 impl PhaseScope {
@@ -317,8 +339,9 @@ impl PhaseScope {
             settings,
             main: Track::new(rate),
             overlay: None,
-            shown: None,
+            sweep: None,
             history: VecDeque::new(),
+            auto_peak: 0.0,
         }
     }
 
@@ -335,7 +358,7 @@ impl PhaseScope {
             || old.overlay_offset != settings.overlay_offset
         {
             self.history.clear();
-            self.shown = None;
+            self.sweep = None;
         }
     }
 
@@ -346,7 +369,7 @@ impl PhaseScope {
             arrival: None,
         });
         self.history.clear();
-        self.shown = None;
+        self.sweep = None;
     }
 
     /// Takes the Overlay Source's audio, which shows with the next Cycle.
@@ -366,87 +389,182 @@ impl PhaseScope {
         overlay.track.push(frames, timing, free);
     }
 
-    /// Takes the main Source's audio. Returns whether a new Cycle came in.
+    /// Takes the main Source's audio. Returns whether the picture moved on.
     pub fn process(&mut self, frames: &[f32], timing: Option<Timing>) -> bool {
         if self
             .main
             .push(frames, timing, f64::from(self.settings.tempo))
         {
             // Cycles are counted afresh from where the clock locked on.
-            self.shown = None;
+            self.sweep = None;
         }
-        self.cut_ready()
+        let swept = self.sweep_on();
+        let seconds = (frames.len() / 2) as f32 / self.rate as f32;
+        let peak = self.peak();
+        let falling = self.auto_peak * (-seconds / AUTO_GAIN_RELEASE).exp();
+        self.auto_peak = if peak >= falling { peak } else { falling };
+        swept
     }
 
-    /// Cuts every whole Cycle that's arrived since the last.
-    fn cut_ready(&mut self) -> bool {
+    /// Cuts the columns whose audio has arrived, Cycle after Cycle. Returns
+    /// whether any were cut.
+    fn sweep_on(&mut self) -> bool {
         let Some(ready) = self.main.ready_beats() else {
             return false;
         };
         let grid = self.main.grid;
         let length = grid.cycle(self.settings.cycle);
-        let newest = ((ready - grid.origin) / length).floor() as i64 - 1;
-        if self.shown.is_some_and(|shown| shown >= newest) {
-            return false;
-        }
-        let start = grid.origin + newest as f64 * length;
-        let Some(cut) = self.cut(start, length) else {
-            return false;
+        let mut cut_any = false;
+        let mut sweep = match self.sweep.take() {
+            Some(sweep) => sweep,
+            None => {
+                let number = ((ready - grid.origin) / length).floor() as i64;
+                match self.begin(number, length) {
+                    Some(sweep) => sweep,
+                    None => return false,
+                }
+            }
         };
-        self.shown = Some(newest);
-        self.history.push_back(cut);
-        while self.history.len() > AVERAGED.max(TRAIL + 1) {
-            self.history.pop_front();
+        loop {
+            while sweep.next < COLUMNS {
+                let end = sweep.start + sweep.length * (sweep.next + 1) as f64 / COLUMNS as f64;
+                if end > ready {
+                    self.sweep = Some(sweep);
+                    return cut_any;
+                }
+                if self.cut_column(&mut sweep, end).is_none() {
+                    // The clock or the ring no longer covers it: start afresh.
+                    return cut_any;
+                }
+                cut_any = true;
+            }
+            let Sweep {
+                number,
+                mut cut,
+                overlay,
+                ..
+            } = sweep;
+            cut.overlay = overlay.map(OverlayPass::finish);
+            self.history.push_back(cut);
+            while self.history.len() > AVERAGED.max(TRAIL + 1) {
+                self.history.pop_front();
+            }
+            match self.begin(number + 1, length) {
+                Some(next) => sweep = next,
+                None => return cut_any,
+            }
         }
-        true
     }
 
-    /// The Cycle from `start` (quarter notes), `length` long, if the ring
-    /// still holds all of it since the clock last locked on.
-    fn cut(&self, start: f64, length: f64) -> Option<Cut> {
+    /// Cycle `number` (from the grid's origin), `length` quarter notes
+    /// long, ready to cut, if the ring still holds its start since the
+    /// clock last locked on.
+    fn begin(&self, number: i64, length: f64) -> Option<Sweep> {
+        let start = self.main.grid.origin + number as f64 * length;
+        let first = self.main.frame_at(start)?;
+        if first < self.main.oldest() as f64 {
+            return None;
+        }
+        let count = self.channel_view().traces();
+        Some(Sweep {
+            number,
+            start,
+            length,
+            next: 0,
+            from: first,
+            cut: Cut {
+                traces: vec![(vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]); count],
+                overlay: None,
+            },
+            overlay: self
+                .overlay
+                .as_ref()
+                .map(|o| OverlayPass::new(self, o, start, first)),
+        })
+    }
+
+    /// Cuts `sweep`'s next column, which ends at song position `end`.
+    fn cut_column(&self, sweep: &mut Sweep, end: f64) -> Option<()> {
         let track = &self.main;
-        let first = track.frame_at(start)?;
-        if first < track.oldest() as f64 {
+        let column = sweep.next;
+        let beats = sweep.start + sweep.length * column as f64 / COLUMNS as f64;
+        let to = track.frame_at(end)?;
+        let from = sweep.from;
+        let (a, b) = (
+            from.floor() as u64,
+            (to.floor() as u64).max(from.floor() as u64 + 1),
+        );
+        if a < track.oldest() {
             return None;
         }
         let view = self.channel_view();
-        let count = view.traces();
-        let mut traces = vec![(vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]); count];
-        let mut overlay = self
-            .overlay
-            .as_ref()
-            .map(|o| OverlayPass::new(self, o, start, first));
-        let mut from = first;
-        for column in 0..COLUMNS {
-            let beats = start + length * column as f64 / COLUMNS as f64;
-            let to = track.frame_at(start + length * (column + 1) as f64 / COLUMNS as f64)?;
-            let (a, b) = (
-                from.floor() as u64,
-                (to.floor() as u64).max(from.floor() as u64 + 1),
-            );
-            let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
-            for frame in a..b {
-                let [l, r] = track.sample(frame);
-                let split = view.split(l, r);
-                for t in 0..count {
-                    low[t] = low[t].min(split[t]);
-                    high[t] = high[t].max(split[t]);
-                }
+        let count = sweep.cut.traces.len();
+        let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for frame in a..b {
+            let [l, r] = track.sample(frame);
+            let split = view.split(l, r);
+            for t in 0..count {
+                low[t] = low[t].min(split[t]);
+                high[t] = high[t].max(split[t]);
             }
-            for (t, (min, max)) in traces.iter_mut().enumerate() {
-                min[column] = low[t];
-                max[column] = high[t];
-            }
-            if let Some(pass) = &mut overlay {
-                let shift = self.overlay_frame(beats, a).map(|o| o - a as i64);
-                pass.column(self, column, a..b, shift);
-            }
-            from = to;
         }
-        Some(Cut {
-            traces,
-            overlay: overlay.map(OverlayPass::finish),
-        })
+        for (t, (min, max)) in sweep.cut.traces.iter_mut().enumerate() {
+            min[column] = low[t];
+            max[column] = high[t];
+        }
+        if let Some(pass) = &mut sweep.overlay {
+            let shift = self.overlay_frame(beats, a).map(|o| o - a as i64);
+            pass.column(self, column, a..b, shift);
+        }
+        sweep.from = to;
+        sweep.next += 1;
+        Some(())
+    }
+
+    /// The newest Cycle as drawn: the one being cut up to where it has got,
+    /// the last whole one after that.
+    fn newest(&self) -> Option<Cut> {
+        let last = self.history.back();
+        let Some(sweep) = &self.sweep else {
+            return last.cloned();
+        };
+        let mut newest = sweep.cut.clone();
+        let reached = sweep.next;
+        let (Some(last), true) = (last, reached < COLUMNS) else {
+            if let Some(pass) = &sweep.overlay {
+                newest.overlay = Some(pass.so_far(reached, None));
+            }
+            return Some(newest);
+        };
+        if last.traces.len() == newest.traces.len() {
+            for (now, before) in newest.traces.iter_mut().zip(&last.traces) {
+                now.0[reached..].copy_from_slice(&before.0[reached..]);
+                now.1[reached..].copy_from_slice(&before.1[reached..]);
+            }
+        }
+        if let Some(pass) = &sweep.overlay {
+            newest.overlay = Some(pass.so_far(reached, last.overlay.as_ref()));
+        }
+        Some(newest)
+    }
+
+    /// The loudest value auto gain would fit in now: over the newest Cycle
+    /// as drawn and the trail behind it.
+    fn peak(&self) -> f32 {
+        let newest = self.newest();
+        peak_of(newest.iter().chain(self.trail()))
+    }
+
+    /// The whole Cycles drawn fading behind the newest, oldest first; none
+    /// when averaging.
+    fn trail(&self) -> Vec<&Cut> {
+        match self.settings.steadiness {
+            Steadiness::Trail => {
+                let skip = self.history.len().saturating_sub(TRAIL);
+                self.history.iter().skip(skip).collect()
+            }
+            Steadiness::Average => Vec::new(),
+        }
     }
 
     /// Why no Cycle can show: one longer than the audio kept.
@@ -487,17 +605,13 @@ impl PhaseScope {
     pub fn view(&self) -> PhaseScopeView {
         let s = &self.settings;
         let grid = self.main.grid;
-        let cycles: Vec<&Cut> = self.history.iter().collect();
-        let (newest, trail): (Option<Cut>, Vec<&Cut>) = match s.steadiness {
-            Steadiness::Trail => {
-                let newest = cycles.last().map(|&c| c.clone());
-                let skip = cycles.len().saturating_sub(TRAIL + 1);
-                let trail = cycles[skip..cycles.len().saturating_sub(1)].to_vec();
-                (newest, trail)
-            }
+        let trail = self.trail();
+        let newest = match s.steadiness {
+            Steadiness::Trail => self.newest(),
             Steadiness::Average => {
+                let cycles: Vec<&Cut> = self.history.iter().collect();
                 let skip = cycles.len().saturating_sub(AVERAGED);
-                (average(&cycles[skip..]), Vec::new())
+                average(&cycles[skip..])
             }
         };
         let count = self.channel_view().traces();
@@ -505,15 +619,12 @@ impl PhaseScope {
             traces: vec![(vec![0.0; COLUMNS], vec![0.0; COLUMNS]); count],
             overlay: None,
         });
-        let all = std::iter::once(&newest).chain(trail.iter().copied());
         let gain = if s.auto_gain {
-            let peak = all
-                .flat_map(|c| {
-                    let overlay = c.overlay.iter().flat_map(|o| [&o.trace, &o.sum]);
-                    c.traces.iter().chain(overlay)
-                })
-                .flat_map(|(min, max)| min.iter().chain(max))
-                .fold(0.0f32, |peak, v| peak.max(v.abs()));
+            let peak = match s.steadiness {
+                // Averaged, it moves a Cycle at a time anyway: fit it as it is.
+                Steadiness::Average => peak_of([&newest]),
+                Steadiness::Trail => self.auto_peak.max(self.peak()),
+            };
             if peak > 1e-6 {
                 AUTO_GAIN_PEAK / peak
             } else {
@@ -663,35 +774,90 @@ impl OverlayPass {
     }
 
     fn finish(mut self) -> OverlayCut {
-        // Pearson: about each Source's mean, so a DC offset or a lopsided
-        // kick doesn't count as agreement.
-        let [x, y, xy, xx, yy] = self.sums.map(|v| v / self.frames.max(1) as f64);
-        let (vx, vy) = (xx - x * x, yy - y * y);
-        // Either silent below the cut-off: no number.
-        self.cut.correlation = (vx.min(vy) > SILENT_POWER)
-            .then(|| ratio(((xy - x * y) / (vx * vy).sqrt()).clamp(-1.0, 1.0)));
-        // The phase lane: around each column, over one period of the
-        // cut-off, how the two lows move. 1 where they're the same, −1
-        // where one is the other upside down, 0 where either is silent.
-        let per_column = self.frames.max(1) as f64 / COLUMNS as f64;
-        let reach = (self.window / per_column / 2.0).ceil() as usize;
+        self.cut.correlation = self.correlation();
         for column in 0..COLUMNS {
-            let around =
-                &self.local[column.saturating_sub(reach)..(column + reach + 1).min(COLUMNS)];
-            let [xy, xx, yy, n] = around.iter().fold([0.0; 4], |mut total, part| {
-                for (t, v) in total.iter_mut().zip(part) {
-                    *t += v;
-                }
-                total
-            });
-            self.cut.phase[column] = if xx.min(yy) / n.max(1.0) > SILENT_POWER {
-                ratio((xy / (xx * yy).sqrt()).clamp(-1.0, 1.0))
-            } else {
-                0.0
-            };
+            self.cut.phase[column] = self.phase(column, COLUMNS);
         }
         self.cut
     }
+
+    /// The Cycle so far: the columns before `reached` cut, the rest from
+    /// `last`, the whole Cycle before; the correlation is the last whole
+    /// Cycle's, or what there is so far before there's one.
+    fn so_far(&self, reached: usize, last: Option<&OverlayCut>) -> OverlayCut {
+        let mut cut = self.cut.clone();
+        // A column's phase needs the columns around it.
+        let settled = reached.saturating_sub(self.reach());
+        for column in 0..settled {
+            cut.phase[column] = self.phase(column, reached);
+        }
+        if let Some(last) = last {
+            let rest = |now: &mut Vec<f32>, before: &Vec<f32>, from: usize| {
+                now[from..].copy_from_slice(&before[from..]);
+            };
+            rest(&mut cut.trace.0, &last.trace.0, reached);
+            rest(&mut cut.trace.1, &last.trace.1, reached);
+            rest(&mut cut.sum.0, &last.sum.0, reached);
+            rest(&mut cut.sum.1, &last.sum.1, reached);
+            rest(&mut cut.phase, &last.phase, settled);
+            cut.correlation = last.correlation;
+        } else {
+            cut.correlation = self.correlation();
+        }
+        cut
+    }
+
+    /// Pearson over the frames so far: about each Source's mean, so a DC
+    /// offset or a lopsided kick doesn't count as agreement. `None` if
+    /// either is silent below the cut-off.
+    fn correlation(&self) -> Option<f32> {
+        let [x, y, xy, xx, yy] = self.sums.map(|v| v / self.frames.max(1) as f64);
+        let (vx, vy) = (xx - x * x, yy - y * y);
+        (vx.min(vy) > SILENT_POWER)
+            .then(|| ratio(((xy - x * y) / (vx * vy).sqrt()).clamp(-1.0, 1.0)))
+    }
+
+    /// How many columns either side the phase lane looks: one period of
+    /// the cut-off.
+    fn reach(&self) -> usize {
+        let per_column = (self.frames.max(1) as f64 / self.columns_cut().max(1) as f64).max(1.0);
+        (self.window / per_column / 2.0).ceil() as usize
+    }
+
+    fn columns_cut(&self) -> usize {
+        self.local.iter().filter(|l| l[3] > 0.0).count()
+    }
+
+    /// The phase lane at `column`, looking only at columns before `end`:
+    /// around it, over one period of the cut-off, how the two lows move. 1
+    /// where they're the same, −1 where one is the other upside down, 0
+    /// where either is silent.
+    fn phase(&self, column: usize, end: usize) -> f32 {
+        let reach = self.reach();
+        let around = &self.local[column.saturating_sub(reach)..(column + reach + 1).min(end)];
+        let [xy, xx, yy, n] = around.iter().fold([0.0; 4], |mut total, part| {
+            for (t, v) in total.iter_mut().zip(part) {
+                *t += v;
+            }
+            total
+        });
+        if xx.min(yy) / n.max(1.0) > SILENT_POWER {
+            ratio((xy / (xx * yy).sqrt()).clamp(-1.0, 1.0))
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The loudest value in `cuts`, overlay and sum included.
+fn peak_of<'a>(cuts: impl IntoIterator<Item = &'a Cut>) -> f32 {
+    cuts.into_iter()
+        .flat_map(|c| {
+            let overlay = c.overlay.iter().flat_map(|o| [&o.trace, &o.sum]);
+            c.traces.iter().chain(overlay)
+        })
+        .flat_map(|(min, max)| min.iter().chain(max))
+        .fold(0.0f32, |peak, v| peak.max(v.abs()))
 }
 
 /// A ratio rounded to 0.01, so a still picture stays exactly the same.

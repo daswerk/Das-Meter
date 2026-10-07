@@ -653,11 +653,21 @@ fn smoothing_factor(time: Duration, elapsed: f64) -> f32 {
 
 fn point_level(bins: &[f32], point: &PointBins) -> f32 {
     if point.first >= point.end {
-        // Narrower than a bin: interpolate between the bins around the point.
-        let below = (point.centre.floor() as usize).min(bins.len() - 1);
-        let above = (below + 1).min(bins.len() - 1);
+        // Narrower than a bin: a curve through the bins around the point
+        // (Catmull-Rom), so the low end bends smoothly from bin to bin
+        // instead of in straight runs, kept within those bins' range.
+        let last = bins.len() - 1;
+        let below = (point.centre.floor() as usize).min(last);
+        let at = |i: usize| bins[i.min(last)];
+        let (p0, p1, p2, p3) = (at(below.saturating_sub(1)), at(below), at(below + 1), at(below + 2));
         let t = point.centre - below as f32;
-        return bins[below] + (bins[above] - bins[below]) * t;
+        let (t2, t3) = (t * t, t * t * t);
+        let level = 0.5
+            * (2.0 * p1
+                + (p2 - p0) * t
+                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+                + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3);
+        return level.clamp(p1.min(p2), p1.max(p2));
     }
     let span = &bins[point.first..point.end];
     if point.average {

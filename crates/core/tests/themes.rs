@@ -104,6 +104,22 @@ fn a_file_missing_values_takes_them_from_dark_and_keeps_ranges() {
 }
 
 #[test]
+fn the_spectrums_second_trace_has_its_own_colour() {
+    // A file from before the role existed keeps its accent there, as it drew.
+    let older = Theme::from_toml("name = \"Older\"\n[colours]\naccent = \"#00ff00\"\n").unwrap();
+    assert_eq!(
+        older.palette[Role::SpectrumSecond],
+        Colour::rgb(0x00, 0xff, 0x00)
+    );
+    let own = Theme::from_toml(
+        "name = \"Own\"\n[colours]\naccent = \"#00ff00\"\nspectrum_second = \"#123456\"\n",
+    )
+    .unwrap();
+    assert_eq!(own.palette[Role::SpectrumSecond], Colour::rgb(0x12, 0x34, 0x56));
+    assert_eq!(own.palette[Role::Accent], Colour::rgb(0x00, 0xff, 0x00));
+}
+
+#[test]
 fn the_built_ins_are_listed_and_read_only() {
     let mut app = App::new();
     let scene = app.scene();

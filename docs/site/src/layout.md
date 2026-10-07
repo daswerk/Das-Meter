@@ -26,7 +26,7 @@ its right-click menu; **Dock back** (or closing the window) returns it.
 
 All Meters in one ordinary window, split into panes. Drag the dividers to
 resize panes; **Add Meter**, **Split side by side**, **Split stacked** and
-**Close pane** are in a Meter's right-click menu.
+**Remove Meter** are in a Meter's right-click menu.
 **Always on top** is in the settings.
 
 ## Fullscreen apps

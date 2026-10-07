@@ -314,6 +314,9 @@ fn duration_slider(
             .text(label)
             .suffix(suffix)
             .logarithmic(high > low * 20)
+            // From zero, a log scale would spend half its travel below
+            // 1 ms; start the curve at one step of what's shown instead.
+            .smallest_positive(if unit_seconds { 0.1 } else { 1.0 })
             .max_decimals(if unit_seconds { 1 } else { 0 }),
         )
         .changed();
@@ -1196,7 +1199,7 @@ fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actio
     add_meter_item(ui, meter, actions);
     let panes = scene.windows.first().map_or(0, |w| w.meters.len());
     if ui
-        .add_enabled(panes > 1, egui::Button::new("Close pane"))
+        .add_enabled(panes > 1, egui::Button::new("Remove Meter"))
         .clicked()
     {
         actions.push(Event::ClosePane { meter });
@@ -1713,6 +1716,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::SpectrumPeakHold,
             Role::SpectrumPeakDots,
             Role::SpectrumHarmonics,
+            Role::SpectrumSecond,
         ],
         MeterSettings::Loudness(_) => &[
             Role::LoudnessBar,

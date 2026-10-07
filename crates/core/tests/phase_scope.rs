@@ -471,14 +471,17 @@ fn averaging_steadies_a_pattern_and_smooths_a_one_off() {
     }
     let one_off = column(0.7);
 
+    // Half into the eleventh beat: the Cycle with the extra click is the
+    // last whole one, and the sweep hasn't reached 0.7 of the next yet.
+    let audio = &audio[..beat * 10 + beat / 2];
     let mut sharp = App::new();
-    sharp.feed(&audio);
+    sharp.feed(audio);
     let scope = sharp.scope();
     assert!(scope.traces[0].max[one_off] > 0.8, "shown sharp");
 
     let mut steady = App::new();
     steady.set(|s| s.steadiness = dasmeter_core::Steadiness::Average);
-    steady.feed(&audio);
+    steady.feed(audio);
     let scope = steady.scope();
     assert!(scope.trail.is_empty());
     let regular = scope.traces[0].max[loudest_column(&scope)];
@@ -534,4 +537,47 @@ fn a_cycle_too_long_to_keep_says_so() {
     app.feed(&clicks(1_000, 24_000, 24_000 * 2, 0.5));
     let note = app.scope().note.expect("a note");
     assert!(note.contains("too long"), "{note}");
+}
+
+#[test]
+fn a_cycle_draws_as_it_plays_not_a_cycle_later() {
+    let mut app = App::new();
+    let beat = 24_000;
+    // A click just after each beat and one 0.8 into it.
+    let mut audio = clicks(1_000, beat, beat * 4, 0.5);
+    for (sample, late) in audio.iter_mut().zip(clicks(19_200, beat, beat * 4, 0.5)) {
+        *sample += late;
+    }
+    app.feed(&audio);
+    let scope = app.scope();
+    assert!(scope.traces[0].max[column(1_000.0 / 24_000.0)] > 0.5);
+    // 0.6 of a beat of silence: the start of the Cycle has gone quiet, the
+    // rest still shows the last one.
+    app.feed(&vec![0.0; beat * 6 / 10]);
+    let scope = app.scope();
+    assert!(scope.traces[0].max[column(1_000.0 / 24_000.0)] < 0.05, "swept");
+    assert!(scope.traces[0].max[column(0.8)] > 0.5, "not yet reached");
+}
+
+#[test]
+fn a_slow_fade_out_fades_smoothly() {
+    let mut app = App::new();
+    // A 100 Hz tone fading out by 20 dB over 12 beats, after 4 steady ones.
+    let beat = 24_000;
+    let tone = |i: usize| {
+        let fade = (i.saturating_sub(beat * 4) as f32 / (beat * 12) as f32).min(1.0);
+        0.5 * 10f32.powf(-fade) * (i as f32 * 100.0 * std::f32::consts::TAU / RATE as f32).sin()
+    };
+    let audio: Vec<f32> = (0..beat * 16).map(tone).collect();
+    let peak = |scope: &PhaseScopeView| scope.traces[0].max.iter().copied().fold(0.0, f32::max);
+    app.feed(&audio[..beat * 4]);
+    let steady = peak(&app.scope());
+    let mut last = steady;
+    for block in audio[beat * 4..].chunks(512) {
+        app.feed(block);
+        let now = peak(&app.scope());
+        assert!((now - last).abs() < 0.05, "a step from {last} to {now}");
+        last = now;
+    }
+    assert!(last < steady * 0.7, "it does fade: {steady} to {last}");
 }

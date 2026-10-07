@@ -8,6 +8,8 @@ use crate::gpu::{Gpu, linear};
 /// Floats per instance: top-left, top-right, bottom-left, bottom-right corners, then two colours.
 const FLOATS: usize = 16;
 const STRIDE: u64 = (FLOATS * size_of::<f32>()) as u64;
+/// How far a line's edge fades out, in physical pixels.
+const FEATHER: f32 = 1.0;
 
 /// A rectangle in physical pixels, top-left origin.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -210,27 +212,39 @@ impl Shapes {
         self.quad([[x0, y0], [x1, y0], [x0, y1], [x1, y1]], top, bottom);
     }
 
-    /// A line from `from` to `to`, `thickness` pixels wide.
+    /// A line from `from` to `to`, `thickness` pixels wide, its long edges
+    /// fading out over a pixel so it doesn't stair-step (there's no MSAA).
     pub fn line(&mut self, from: [f32; 2], to: [f32; 2], thickness: f32, colour: Colour) {
         let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
         let length = (dx * dx + dy * dy).sqrt();
         if length == 0.0 {
             return;
         }
-        let (nx, ny) = (
-            -dy / length * thickness / 2.0,
-            dx / length * thickness / 2.0,
-        );
-        self.quad(
+        // A solid core one pixel narrower than asked, and a pixel of fade
+        // each side: the same ink as a hard line of `thickness`. Thinner than
+        // a pixel, no core, just a fainter fade.
+        let core = (thickness - FEATHER).max(0.0);
+        let colour = if thickness < FEATHER {
+            colour.faded(thickness / FEATHER)
+        } else {
+            colour
+        };
+        let (ux, uy) = (-dy / length, dx / length);
+        let side = |d: f32| {
             [
-                [from[0] + nx, from[1] + ny],
-                [to[0] + nx, to[1] + ny],
-                [from[0] - nx, from[1] - ny],
-                [to[0] - nx, to[1] - ny],
-            ],
-            colour,
-            colour,
-        );
+                [from[0] + ux * d, from[1] + uy * d],
+                [to[0] + ux * d, to[1] + uy * d],
+            ]
+        };
+        let (inner, outer) = (core / 2.0, core / 2.0 + FEATHER);
+        let clear = colour.faded(0.0);
+        let ([a, b], [c, d]) = (side(inner), side(-inner));
+        if core > 0.0 {
+            self.quad([a, b, c, d], colour, colour);
+        }
+        let ([e, f], [g, h]) = (side(outer), side(-outer));
+        self.quad([e, f, a, b], clear, colour);
+        self.quad([c, d, g, h], colour, clear);
     }
 
     /// Lines through `points`, in order.
@@ -283,4 +297,69 @@ fn instance_buffer(gpu: &Gpu, capacity: u64) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
+}
+
+/// The curve through `points` (left to right) with a point added at least
+/// every `step` pixels, rounded between them (Catmull-Rom on the heights)
+/// so a line through few points reads as a curve, not a chain of corners.
+/// Never goes past the highest or lowest of the four points around a span,
+/// so peaks don't overshoot.
+pub fn smooth(points: &[[f32; 2]], step: f32) -> Vec<[f32; 2]> {
+    let Some(&last) = points.last() else {
+        return Vec::new();
+    };
+    let mut curve = Vec::with_capacity(points.len() * 2);
+    for i in 0..points.len() - 1 {
+        let (a, b) = (points[i], points[i + 1]);
+        let before = points[i.saturating_sub(1)][1];
+        let after = points.get(i + 2).map_or(b[1], |p| p[1]);
+        let (low, high) = (
+            a[1].min(b[1]).min(before).min(after),
+            a[1].max(b[1]).max(before).max(after),
+        );
+        let steps = ((b[0] - a[0]).abs() / step.max(0.1)).ceil().max(1.0) as usize;
+        curve.push(a);
+        for k in 1..steps {
+            let t = k as f32 / steps as f32;
+            let (t2, t3) = (t * t, t * t * t);
+            let y = 0.5
+                * (2.0 * a[1]
+                    + (b[1] - before) * t
+                    + (2.0 * before - 5.0 * a[1] + 4.0 * b[1] - after) * t2
+                    + (3.0 * a[1] - before - 3.0 * b[1] + after) * t3);
+            curve.push([a[0] + (b[0] - a[0]) * t, y.clamp(low, high)]);
+        }
+    }
+    curve.push(last);
+    curve
+}
+
+#[cfg(test)]
+mod tests {
+    use super::smooth;
+
+    #[test]
+    fn a_smoothed_curve_keeps_its_points_and_fills_the_gaps() {
+        let points = [[0.0, 10.0], [8.0, 0.0], [16.0, 10.0], [24.0, 10.0]];
+        let curve = smooth(&points, 2.0);
+        for p in points {
+            assert!(curve.contains(&p), "{p:?} kept");
+        }
+        for pair in curve.windows(2) {
+            assert!(pair[1][0] - pair[0][0] <= 2.0 + 1e-4, "no gap wider than asked");
+            assert!(pair[1][0] > pair[0][0], "still left to right");
+        }
+        // Rounded between the points, and never past the peak or the floor.
+        let between = curve.iter().find(|p| p[0] == 4.0).unwrap();
+        assert!(between[1] < 5.0, "bends toward the peak: {between:?}");
+        assert!(curve.iter().all(|p| (0.0..=10.0).contains(&p[1])));
+        // A flat run stays flat.
+        assert!(curve.iter().filter(|p| p[0] > 16.0).all(|p| (p[1] - 10.0).abs() < 1e-4));
+    }
+
+    #[test]
+    fn close_points_are_left_alone() {
+        let points = [[0.0, 0.0], [1.0, 5.0], [2.0, 0.0]];
+        assert_eq!(smooth(&points, 2.0), points.to_vec());
+    }
 }

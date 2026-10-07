@@ -9,7 +9,7 @@ use dasmeter_analysis::{Spectrum, SpectrumStyle, note_name};
 use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings, SpectrumZoom};
 
 use super::labels::Align;
-use super::shapes::Area;
+use super::shapes::{Area, smooth};
 use super::{Canvas, map, mix};
 
 /// The readouts and marks over a Spectrum.
@@ -521,8 +521,8 @@ fn plot(
         db -= db_step;
     }
 
-    // Traces: the first in the line colour, a second (R or S) in the accent colour.
-    let colours = [c.colour(Role::SpectrumLine), c.colour(Role::Accent)];
+    // Traces: the first in the line colour, a second (R or S) in its own.
+    let colours = [c.colour(Role::SpectrumLine), c.colour(Role::SpectrumSecond)];
     let fill = c.colour(Role::SpectrumFill);
     let hold = c.colour(Role::SpectrumPeakHold);
     // Steady harmonics glow in their own colour.
@@ -538,7 +538,8 @@ fn plot(
         };
         match settings.analysis.style {
             SpectrumStyle::Line { .. } => {
-                let curve = points(&trace.levels);
+                let raw = points(&trace.levels);
+                let curve = smooth(&raw, c.px(2.0));
                 let fill_top = if spectrum.traces.len() > 1 {
                     line
                 } else {
@@ -551,9 +552,9 @@ fn plot(
                     fill_top.faded(0.05),
                 );
                 c.shapes.polyline(&curve, c.stroke(1.5), line);
-                if trace.steadiness.len() == curve.len() {
+                if trace.steadiness.len() == raw.len() {
                     let stroke = c.stroke(2.5);
-                    for (i, pair) in curve.windows(2).enumerate() {
+                    for (i, pair) in raw.windows(2).enumerate() {
                         let steady = (trace.steadiness[i] + trace.steadiness[i + 1]) / 2.0;
                         if steady < 0.05 {
                             continue;
@@ -569,8 +570,8 @@ fn plot(
                     }
                 }
                 if show_hold {
-                    c.shapes
-                        .polyline(&points(&trace.peak_hold), c.stroke(1.0), hold.faded(0.6));
+                    let held = smooth(&points(&trace.peak_hold), c.px(2.0));
+                    c.shapes.polyline(&held, c.stroke(1.0), hold.faded(0.6));
                 }
             }
             SpectrumStyle::Bars { .. } => {

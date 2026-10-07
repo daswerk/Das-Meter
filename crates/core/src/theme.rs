@@ -101,6 +101,8 @@ pub enum Role {
     SpectrumPeakHold,
     SpectrumPeakDots,
     SpectrumHarmonics,
+    /// The second trace, R or Side, when the Spectrum shows two.
+    SpectrumSecond,
     // Loudness Meter.
     LoudnessBar,
     LoudnessPeak,
@@ -136,6 +138,7 @@ impl Role {
             Role::SpectrumPeakHold => "spectrum_peak_hold",
             Role::SpectrumPeakDots => "spectrum_peak_dots",
             Role::SpectrumHarmonics => "spectrum_harmonics",
+            Role::SpectrumSecond => "spectrum_second",
             Role::LoudnessBar => "loudness_bar",
             Role::LoudnessPeak => "loudness_peak",
             Role::LoudnessOverTarget => "loudness_over_target",
@@ -166,6 +169,7 @@ impl Role {
             Role::SpectrumPeakHold => "Spectrum peak hold",
             Role::SpectrumPeakDots => "Spectrum peak dots",
             Role::SpectrumHarmonics => "Spectrum harmonics",
+            Role::SpectrumSecond => "Spectrum R / Side",
             Role::LoudnessBar => "Loudness bar",
             Role::LoudnessPeak => "Loudness peak",
             Role::LoudnessOverTarget => "Loudness over target",
@@ -180,7 +184,7 @@ impl Role {
         }
     }
 
-    pub const ALL: [Role; 24] = [
+    pub const ALL: [Role; 25] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -194,6 +198,7 @@ impl Role {
         Role::SpectrumPeakHold,
         Role::SpectrumPeakDots,
         Role::SpectrumHarmonics,
+        Role::SpectrumSecond,
         Role::LoudnessBar,
         Role::LoudnessPeak,
         Role::LoudnessOverTarget,
@@ -231,6 +236,7 @@ impl Palette {
             Role::SpectrumPeakHold => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::SpectrumPeakDots => Colour::rgb(0xc3, 0x9b, 0xff),
             Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd2, 0x6e),
+            Role::SpectrumSecond => Colour::rgb(0xff, 0xb3, 0x47),
             Role::LoudnessBar => Colour::rgb(0x2f, 0xbf, 0x71),
             Role::LoudnessPeak => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::LoudnessOverTarget => Colour::rgb(0xff, 0x8a, 0x3d),
@@ -266,6 +272,7 @@ impl Palette {
             Role::SpectrumPeakHold => Colour::rgb(0x4a, 0x50, 0x58),
             Role::SpectrumPeakDots => Colour::rgb(0x6b, 0x2f, 0xc7),
             Role::SpectrumHarmonics => Colour::rgb(0xd9, 0x7a, 0x00),
+            Role::SpectrumSecond => Colour::rgb(0xd9, 0x7a, 0x00),
             Role::LoudnessBar => Colour::rgb(0x1f, 0x9d, 0x5a),
             Role::LoudnessPeak => Colour::rgb(0x2a, 0x2e, 0x33),
             Role::LoudnessOverTarget => Colour::rgb(0xe0, 0x6a, 0x10),
@@ -300,6 +307,7 @@ impl Palette {
             Role::SpectrumPeakHold => Colour::rgb(0xff, 0xd6, 0x00),
             Role::SpectrumPeakDots => Colour::rgb(0xff, 0xff, 0xff),
             Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd6, 0x00),
+            Role::SpectrumSecond => Colour::rgb(0xff, 0xd6, 0x00),
             Role::LoudnessBar => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::LoudnessPeak => Colour::rgb(0xff, 0xff, 0xff),
             Role::LoudnessOverTarget => Colour::rgb(0xff, 0x9f, 0x1c),
@@ -510,6 +518,15 @@ impl Theme {
             ..Theme::dark()
         };
         if let Some(colours) = file.get("colours").and_then(toml::Value::as_table) {
+            // Before it had its own role the second trace drew in the accent.
+            if !colours.contains_key(Role::SpectrumSecond.key())
+                && let Some(accent) = colours
+                    .get(Role::Accent.key())
+                    .and_then(toml::Value::as_str)
+                    .and_then(Colour::from_hex)
+            {
+                theme.palette[Role::SpectrumSecond] = accent;
+            }
             for role in Role::ALL {
                 if let Some(colour) = colours
                     .get(role.key())
