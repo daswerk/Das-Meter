@@ -71,7 +71,8 @@ note; noise and chords give "No pitch". Under the mouse it shows the pitch
 and note of the period there. Settings: **FFT size**, the lowest and
 highest pitch to look for (50 to 1000 Hz by default) and the smoothing.
 
-To show it, right-click a Meter and choose **Show ▸ Cepstrum**.
+To show it, right-click a Meter and choose **Change Meter ▸ Cepstrum**,
+or **Add Meter ▸ Cepstrum**.
 
 ## Spectrogram
 
@@ -84,8 +85,8 @@ Drag a box over it to zoom into the box's frequencies: a zoom window opens in
 the other half of the Meter at the finest frequency resolution, scrolling three
 times slower so the detail shows. Its × closes it.
 
-To show it, right-click a Meter and choose **Show ▸ Spectrogram**, or
-**Add Meter ▸ Spectrogram**.
+To show it, right-click a Meter and choose **Change Meter ▸ Spectrogram**,
+or **Add Meter ▸ Spectrogram**.
 
 ## Phase Scope
 
@@ -145,8 +146,8 @@ is shown the main trace is mono too.
 Text never sits on the traces. When it's small the suggestions go first,
 then the words beside the number, then the number, so the traces keep the room.
 
-To show it, right-click a Meter and choose **Show ▸ Phase Scope**, or
-**Add Meter ▸ Phase Scope**.
+To show it, right-click a Meter and choose **Change Meter ▸ Phase Scope**,
+or **Add Meter ▸ Phase Scope**.
 
 ## Small sizes
 

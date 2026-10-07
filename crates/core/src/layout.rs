@@ -450,7 +450,13 @@ impl BarLayout {
 
     /// Puts `new` into the Bar right after `after`, sharing its space half and half.
     pub fn add_after(&mut self, after: usize, new: usize) -> bool {
-        let Some(index) = self.meters.iter().position(|(m, _)| *m == after) else {
+        self.add_beside(after, new, false)
+    }
+
+    /// Puts `new` into the Bar next to `beside`, before or after it, sharing
+    /// its space half and half.
+    pub fn add_beside(&mut self, beside: usize, new: usize, before: bool) -> bool {
+        let Some(index) = self.meters.iter().position(|(m, _)| *m == beside) else {
             return false;
         };
         if self.meters.iter().any(|(m, _)| *m == new) {
@@ -458,7 +464,8 @@ impl BarLayout {
         }
         let half = self.meters[index].1 / 2.0;
         self.meters[index].1 = half;
-        self.meters.insert(index + 1, (new, half));
+        let at = if before { index } else { index + 1 };
+        self.meters.insert(at, (new, half));
         true
     }
 

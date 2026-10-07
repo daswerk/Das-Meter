@@ -44,8 +44,8 @@ pub use presets::{
     StoredSettings, ThemeRef,
 };
 pub use scene::{
-    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note,
-    OverlayScene, Scene, SendPluginItem, SourceItem, SourceLabel, WindowScene,
+    BarSettingsScene, ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene,
+    MeterState, Note, OverlayScene, Scene, SendPluginItem, SourceItem, SourceLabel, WindowScene,
 };
 pub use settings::AppSettings;
 pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState, Timing};
@@ -1445,19 +1445,31 @@ impl AppCore {
                 if meter >= self.meters.len() {
                     return;
                 }
+                // On the side nearest where the menu was opened; to the
+                // right otherwise.
+                let side = self.menu_side(meter).unwrap_or(Side::Right);
                 let added = match self.mode {
                     LayoutMode::Bar => {
                         if !self.layout.meters.iter().any(|(m, _)| *m == meter) {
                             return;
                         }
+                        // Before it when opened in its first half along the Bar.
+                        let along_x = matches!(self.layout.edge, Edge::Top | Edge::Bottom);
+                        let before = self.menu_half(meter, along_x).unwrap_or(false);
                         let new = self.spare_meter(meter);
-                        self.layout.add_after(meter, new).then_some(new)
+                        self.layout.add_beside(meter, new, before).then_some(new)
                     }
                     LayoutMode::Window => {
                         let new = self.spare_meter(meter);
+                        let (direction, first) = match side {
+                            Side::Left => (Direction::SideBySide, true),
+                            Side::Right => (Direction::SideBySide, false),
+                            Side::Above => (Direction::Stacked, true),
+                            Side::Below => (Direction::Stacked, false),
+                        };
                         self.window
                             .tree
-                            .split_pane(meter, Direction::SideBySide, new)
+                            .split_pane_beside(meter, direction, new, first)
                             .then_some(new)
                     }
                 };
@@ -1981,6 +1993,39 @@ impl AppCore {
         self.changed = true;
     }
 
+    /// Where in `meter` its open menu was opened, as fractions of the Meter.
+    fn menu_point(&self, meter: usize) -> Option<[f32; 2]> {
+        let menu = self.menu.filter(|m| m.meter == meter)?;
+        self.drawn_window(menu.window)?
+            .meters
+            .iter()
+            .find(|m| m.meter == meter)?
+            .frame
+            .locate(menu.at)
+    }
+
+    /// The edge of `meter` nearest where its menu was opened.
+    fn menu_side(&self, meter: usize) -> Option<Side> {
+        let [u, v] = self.menu_point(meter)?;
+        let edges = [
+            (u, Side::Left),
+            (1.0 - u, Side::Right),
+            (v, Side::Above),
+            (1.0 - v, Side::Below),
+        ];
+        edges
+            .into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, side)| side)
+    }
+
+    /// Whether the menu was opened in the first half of `meter` along x
+    /// (`along_x`) or y.
+    fn menu_half(&self, meter: usize, along_x: bool) -> Option<bool> {
+        let [u, v] = self.menu_point(meter)?;
+        Some(if along_x { u < 0.5 } else { v < 0.5 })
+    }
+
     fn meter_at(&self, window: WindowKey, point: [f32; 2]) -> Option<usize> {
         self.drawn_window(window)?
             .meters
@@ -2289,6 +2334,12 @@ impl AppCore {
             launch_at_login: self.presets.settings.launch_at_login,
             app: self.app,
             max_frame_rate_cap: self.max_frame_rate_cap(),
+            bar: scene::BarSettingsScene {
+                edge: self.layout.edge,
+                thickness: self.layout.thickness,
+                screen: self.layout.screen,
+                over_fullscreen: self.layout.show_over_fullscreen,
+            },
         }
     }
 
@@ -2372,4 +2423,13 @@ fn feed_silence(meter: &mut Meter, frames: usize) {
         meter.process(&silence[..2 * n]);
         left -= n;
     }
+}
+
+/// A side of a Meter, where Add Meter puts the new one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+    Above,
+    Below,
 }

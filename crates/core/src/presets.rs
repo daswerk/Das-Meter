@@ -315,7 +315,10 @@ enum Read {
 
 /// Reads a Preset file, migrating older versions step by step.
 fn read(text: &str) -> Read {
-    let Ok(mut table) = text.parse::<toml::Table>() else {
+    let Ok(mut table) = text
+        .parse::<toml::Table>()
+        .or_else(|_| wrap_large_ids(text).parse::<toml::Table>())
+    else {
         return Read::Broken;
     };
     let version = table
@@ -343,6 +346,30 @@ fn read(text: &str) -> Read {
     } else {
         Read::Current(data)
     }
+}
+
+/// Earlier versions wrote Send Plugin IDs past TOML's integer range
+/// (`id = 18446744073709551608`), which no TOML reader accepts: such an ID
+/// is written as the signed number with the same bits, as [`Pick`] now
+/// writes it.
+pub(crate) fn wrap_large_ids(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let Some((key, value)) = line.split_once('=') else {
+                return line.to_owned();
+            };
+            if key.trim() != "id" {
+                return line.to_owned();
+            }
+            match value.trim().parse::<u64>() {
+                Ok(id) if i64::try_from(id).is_err() => {
+                    format!("{key}= {}", i64::from_ne_bytes(id.to_ne_bytes()))
+                }
+                _ => line.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Version 0 (pre-release files, no `version` key) called the layout mode

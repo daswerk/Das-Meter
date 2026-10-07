@@ -130,7 +130,7 @@ const GRAB: f32 = 6.0;
 /// (It opens at 1 × 1 px and takes its content's size on its first frame, so
 /// nothing bigger flashes up.)
 const MENU_SIZE: (f32, f32) = (300.0, 420.0);
-const SETTINGS_SIZE: (f32, f32) = (460.0, 640.0);
+const SETTINGS_SIZE: (f32, f32) = (760.0, 720.0);
 
 struct AppWindow {
     role: Role,
@@ -280,6 +280,7 @@ fn ui_view(scene: &Scene) -> Scene {
         launch_at_login: scene.launch_at_login,
         app: scene.app,
         max_frame_rate_cap: scene.max_frame_rate_cap,
+        bar: scene.bar,
     }
 }
 

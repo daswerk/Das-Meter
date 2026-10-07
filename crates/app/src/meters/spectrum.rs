@@ -535,14 +535,18 @@ fn plot(
                 } else {
                     fill
                 };
-                c.fill_under(
-                    &curve,
-                    area.bottom(),
-                    fill_top.faded(0.45),
-                    fill_top.faded(0.05),
-                );
-                c.glow(&curve, line);
-                c.shapes.polyline(&curve, c.stroke(1.5), line);
+                let base = area.bottom();
+                c.edge_faded(area, &curve, |c, piece, strength| {
+                    let top = fill_top.faded(0.45 * strength);
+                    c.fill_under(piece, base, top, fill_top.faded(0.05 * strength));
+                });
+                c.edge_faded(area, &curve, |c, piece, strength| {
+                    c.glow(piece, line.faded(strength));
+                });
+                c.edge_faded(area, &curve, |c, piece, strength| {
+                    c.shapes
+                        .polyline(piece, c.stroke(1.5), line.faded(strength));
+                });
                 if trace.steadiness.len() == raw.len() {
                     let stroke = c.stroke(2.5);
                     for (i, pair) in raw.windows(2).enumerate() {
@@ -551,18 +555,22 @@ fn plot(
                             continue;
                         }
                         let ([x0, y0], [x1, y1]) = (pair[0], pair[1]);
+                        let edge = c.edge_strength(area, (x0 + x1) / 2.0);
                         c.shapes.quad(
                             [[x0, y0], [x1, y1], [x0, area.bottom()], [x1, area.bottom()]],
-                            glow.faded(0.7 * steady),
-                            glow.faded(0.08 * steady),
+                            glow.faded(0.7 * steady * edge),
+                            glow.faded(0.08 * steady * edge),
                         );
-                        c.shapes
-                            .line(pair[0], pair[1], stroke, mix(line, glow, steady));
+                        let colour = mix(line, glow, steady).faded(edge);
+                        c.shapes.line(pair[0], pair[1], stroke, colour);
                     }
                 }
                 if show_hold {
                     let held = smooth(&points(&trace.peak_hold), c.px(2.0));
-                    c.shapes.polyline(&held, c.stroke(1.0), hold.faded(0.6));
+                    c.edge_faded(area, &held, |c, piece, strength| {
+                        c.shapes
+                            .polyline(piece, c.stroke(1.0), hold.faded(0.6 * strength));
+                    });
                 }
             }
             SpectrumStyle::Bars { .. } => {

@@ -1214,7 +1214,7 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
         changed |= ui
             .add_enabled(
                 settings.show_sum,
-                egui::Checkbox::new(&mut settings.split_sum, "Sum in its own row"),
+                Toggle::new(&mut settings.split_sum, "Sum in its own row"),
             )
             .on_hover_text("The two on top, their sum under them")
             .changed();
@@ -1231,16 +1231,63 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
     }
 }
 
-/// "Add Meter": a Meter of the picked kind next to this one.
-fn add_meter_item(ui: &mut egui::Ui, meter: usize, actions: &mut Actions) {
-    ui.menu_button("Add Meter", |ui| {
+/// "Add Meter": a new Meter of the picked kind, on the side of this one
+/// nearest where the menu was opened, which the item names.
+fn add_meter_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
+    let label = match add_side(scene, meter) {
+        Some(side) => format!("Add Meter {side}"),
+        None => "Add Meter".to_owned(),
+    };
+    ui.menu_button(label, |ui| {
         for kind in MeterKind::ALL {
             if ui.button(kind_label(kind)).clicked() {
                 actions.push(Event::AddMeter { meter, kind });
                 ui.close();
             }
         }
-    });
+    })
+    .response
+    .on_hover_text("Right-click nearer another edge of the Meter to add it there");
+}
+
+/// Where Add Meter puts the new Meter, as the core decides it: by the edge
+/// nearest the right-click in a pane, by the half along the Bar.
+fn add_side(scene: &Scene, meter: usize) -> Option<&'static str> {
+    let menu = scene.menu.filter(|m| m.meter == meter)?;
+    let [u, v] = scene
+        .windows
+        .iter()
+        .find(|w| w.key == menu.window)?
+        .meters
+        .iter()
+        .find(|m| m.meter == meter)?
+        .frame
+        .locate(menu.at)?;
+    if scene.mode == LayoutMode::Bar {
+        let edge = scene
+            .windows
+            .iter()
+            .find(|w| w.key == WindowKey::Bar)
+            .and_then(|w| w.edge);
+        let along_x = matches!(edge, Some(Edge::Top | Edge::Bottom) | None);
+        let before = if along_x { u < 0.5 } else { v < 0.5 };
+        return Some(match (along_x, before) {
+            (true, true) => "on the left",
+            (true, false) => "on the right",
+            (false, true) => "above",
+            (false, false) => "below",
+        });
+    }
+    let edges = [
+        (u, "on the left"),
+        (1.0 - u, "on the right"),
+        (v, "above"),
+        (1.0 - v, "below"),
+    ];
+    edges
+        .into_iter()
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, side)| side)
 }
 
 fn kind_label(kind: MeterKind) -> &'static str {
@@ -1255,16 +1302,26 @@ fn kind_label(kind: MeterKind) -> &'static str {
     }
 }
 
-/// Which kind of Meter this one is: switching gives it that kind's defaults.
+/// "Change Meter": what this Meter shows; switching gives it that kind's
+/// defaults.
 fn kind_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actions) {
     let Some(meter_scene) = meter_scene(scene, meter) else {
         return;
     };
-    let mut kind = meter_scene.settings.kind();
-    let kinds = MeterKind::ALL.map(|k| (k, kind_label(k)));
-    if choice(ui, "Show", &mut kind, &kinds) {
-        actions.push(Event::AssignMeter { meter, kind });
-    }
+    let current = meter_scene.settings.kind();
+    ui.menu_button(format!("Change Meter ({})", kind_label(current)), |ui| {
+        for kind in MeterKind::ALL {
+            if ui
+                .add(egui::Button::selectable(kind == current, kind_label(kind)))
+                .clicked()
+            {
+                if kind != current {
+                    actions.push(Event::AssignMeter { meter, kind });
+                }
+                ui.close();
+            }
+        }
+    });
 }
 
 /// A pane's items in Window mode: which Meter it shows, split and close.
@@ -1284,7 +1341,7 @@ fn pane_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Actio
             });
         }
     });
-    add_meter_item(ui, meter, actions);
+    add_meter_item(ui, scene, meter, actions);
     let panes = scene.windows.first().map_or(0, |w| w.meters.len());
     if ui
         .add_enabled(panes > 1, egui::Button::new("Remove Meter"))
@@ -1321,7 +1378,7 @@ fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut 
                 .iter()
                 .find(|w| w.key == WindowKey::Bar)
                 .map_or(0, |w| w.meters.len());
-            add_meter_item(ui, meter, actions);
+            add_meter_item(ui, scene, meter, actions);
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(in_bar > 1, egui::Button::new("Pop out"))
@@ -1551,10 +1608,18 @@ fn meter_menu(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
 
 /// The Bar's settings: edge, thickness, screen button, fullscreen apps.
 fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
-    let Some(bar) = scene.windows.iter().find(|w| w.key == WindowKey::Bar) else {
-        return;
-    };
-    if let Some(mut edge) = bar.edge {
+    let in_bar = scene.mode == LayoutMode::Bar;
+    if !in_bar {
+        ui.label(RichText::new("These apply in Bar mode.").weak());
+        if ui.button("Switch to Bar mode").clicked() {
+            actions.push(Event::SetMode(LayoutMode::Bar));
+        }
+        ui.add_space(6.0);
+    }
+    let bar = scene.windows.iter().find(|w| w.key == WindowKey::Bar);
+    let settings = scene.bar;
+    ui.add_enabled_ui(in_bar, |ui| {
+        let mut edge = settings.edge;
         let edges = [
             (Edge::Top, "Top"),
             (Edge::Bottom, "Bottom"),
@@ -1564,12 +1629,11 @@ fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         if choice(ui, "Edge", &mut edge, &edges) {
             actions.push(Event::SetEdge(edge));
         }
-    }
-    if let (Some(frame), Some(edge)) = (bar.frame, bar.edge) {
-        let mut thickness = if edge.horizontal() {
-            frame.height
-        } else {
-            frame.width
+        // What the Bar is drawn at (capped to the display), else as set.
+        let mut thickness = match bar.and_then(|b| b.frame) {
+            Some(frame) if settings.edge.horizontal() => frame.height,
+            Some(frame) => frame.width,
+            None => settings.thickness,
         };
         if ui
             .add(
@@ -1581,8 +1645,7 @@ fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         {
             actions.push(Event::SetBarThickness(thickness));
         }
-    }
-    if let Some(mode) = bar.screen {
+        let mode = settings.screen;
         ui.horizontal(|ui| {
             ui.label("Screen");
             let mut hover = format!("Click for {}.", mode.next(Platform::current()).label());
@@ -1593,14 +1656,14 @@ fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                 actions.push(Event::CycleScreenMode);
             }
         });
-    }
-    let mut over = bar.over_fullscreen;
-    if ui
-        .add(Toggle::new(&mut over, "Show over fullscreen apps"))
-        .changed()
-    {
-        actions.push(Event::ShowOverFullscreen(over));
-    }
+        let mut over = settings.over_fullscreen;
+        if ui
+            .add(Toggle::new(&mut over, "Show over fullscreen apps"))
+            .changed()
+        {
+            actions.push(Event::ShowOverFullscreen(over));
+        }
+    });
 }
 
 /// A colour button for `colour`; returns the new colour when it's changed.
@@ -2056,14 +2119,37 @@ fn meter_colours(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: 
 fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     let presets = &scene.presets;
     let count = presets.list.len();
+    let modifier = if Platform::current() == Platform::MacOs {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
     for (i, preset) in presets.list.iter().enumerate() {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            // Order first, so a long name never pushes them out of sight.
+            if ui
+                .add_enabled(i > 0, egui::Button::new("↑").small())
+                .on_hover_text("Move up")
+                .clicked()
+            {
+                actions.push(Event::MovePreset { from: i, to: i - 1 });
+            }
+            if ui
+                .add_enabled(i + 1 < count, egui::Button::new("↓").small())
+                .on_hover_text("Move down")
+                .clicked()
+            {
+                actions.push(Event::MovePreset { from: i, to: i + 1 });
+            }
             let shortcut = if i < 9 {
-                format!("⌘{} ", i + 1)
+                format!("{modifier}+{}", i + 1)
             } else {
-                "    ".to_owned()
+                String::new()
             };
-            ui.label(RichText::new(shortcut).weak().monospace());
+            ui.add_sized(
+                [52.0, 18.0],
+                egui::Label::new(RichText::new(shortcut).weak().small()),
+            );
             let current = presets.current == Some(i);
             let label = if preset.built_in {
                 format!("{} (built-in)", preset.name)
@@ -2079,20 +2165,6 @@ fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                     file_name: preset.file_name.clone(),
                 });
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(i + 1 < count, egui::Button::new("↓").small())
-                    .clicked()
-                {
-                    actions.push(Event::MovePreset { from: i, to: i + 1 });
-                }
-                if ui
-                    .add_enabled(i > 0, egui::Button::new("↑").small())
-                    .clicked()
-                {
-                    actions.push(Event::MovePreset { from: i, to: i - 1 });
-                }
-            });
         });
     }
     let Some(current) = presets.current else {
@@ -2174,31 +2246,6 @@ fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     }
 }
 
-/// App settings, the Theme, the Bar, then every setting of every Meter,
-/// under headers that open and close (Classic; Smooth has a sidebar).
-fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
-    missing_displays_note(ui, scene, actions);
-    egui::CollapsingHeader::new("Presets")
-        .default_open(true)
-        .show(ui, |ui| preset_settings(ui, scene, actions));
-    egui::CollapsingHeader::new("App")
-        .default_open(true)
-        .show(ui, |ui| app_settings(ui, scene, actions));
-    egui::CollapsingHeader::new("Theme")
-        .default_open(false)
-        .show(ui, |ui| theme_settings(ui, scene, actions));
-    egui::CollapsingHeader::new("Bar")
-        .default_open(false)
-        .show(ui, |ui| bar_settings(ui, scene, actions));
-    for meter_scene in all_meters(scene) {
-        let meter = meter_scene.meter;
-        egui::CollapsingHeader::new(meter_title(meter_scene))
-            .id_salt(("meter settings", meter))
-            .default_open(false)
-            .show(ui, |ui| meter_settings(ui, scene, meter_scene, actions));
-    }
-}
-
 fn meter_title(meter_scene: &MeterScene) -> String {
     format!(
         "{} · {}",
@@ -2215,10 +2262,13 @@ enum Page {
     Theme,
     Bar,
     Meter(usize),
+    /// A kind no Meter shows now: its settings, greyed, and Add.
+    Kind(MeterKind),
 }
 
-/// The settings in Smooth: a sidebar of pages at the left, the chosen
-/// page at the right, scrolling on its own.
+/// The settings: a sidebar of pages at the left, the chosen page at the
+/// right, scrolling on its own. Every kind of Meter is listed: the ones
+/// shown now by number, the others marked as not added.
 fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     let id = egui::Id::new("settings page");
     let meters = all_meters(scene);
@@ -2228,6 +2278,16 @@ fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         && !meters.iter().any(|s| s.meter == m)
     {
         page = Page::Presets;
+    }
+    let unused: Vec<MeterKind> = MeterKind::ALL
+        .into_iter()
+        .filter(|&kind| !meters.iter().any(|m| m.settings.kind() == kind))
+        .collect();
+    // Just added: its page is the new Meter's.
+    if let Page::Kind(kind) = page
+        && let Some(m) = meters.iter().find(|m| m.settings.kind() == kind)
+    {
+        page = Page::Meter(m.meter);
     }
     egui::Panel::left("settings sidebar")
         .resizable(false)
@@ -2252,6 +2312,19 @@ fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                     &meter_title(meter_scene),
                 );
             }
+            for &kind in &unused {
+                let dim = ui.visuals().weak_text_color();
+                let text = RichText::new(format!("○ {}", kind_label(kind))).color(dim);
+                let button = egui::Button::selectable(page == Page::Kind(kind), text)
+                    .min_size(egui::vec2(ui.available_width(), 24.0));
+                if ui
+                    .add(button)
+                    .on_hover_text("Not added: open to see its settings and add it")
+                    .clicked()
+                {
+                    page = Page::Kind(kind);
+                }
+            }
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.inner_margin(egui::Margin {
@@ -2263,7 +2336,11 @@ fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         .show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .id_salt(("settings page", page_key(page)))
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    // Wrap to the window, so a narrower one reflows the
+                    // page instead of cutting it off.
+                    ui.set_max_width(ui.available_width());
                     missing_displays_note(ui, scene, actions);
                     match page {
                         Page::Presets => preset_settings(ui, scene, actions),
@@ -2275,6 +2352,7 @@ fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
                                 meter_settings(ui, scene, meter_scene, actions);
                             }
                         }
+                        Page::Kind(kind) => unused_kind(ui, scene, &meters, kind, actions),
                     }
                 });
         });
@@ -2288,7 +2366,38 @@ fn page_key(page: Page) -> usize {
         Page::Theme => usize::MAX - 2,
         Page::Bar => usize::MAX - 3,
         Page::Meter(meter) => meter,
+        Page::Kind(kind) => usize::MAX - 10 - kind as usize,
     }
+}
+
+/// A kind of Meter no Meter shows: Add puts one after the last Meter, and
+/// its default settings show, greyed, for what it offers.
+fn unused_kind(
+    ui: &mut egui::Ui,
+    scene: &Scene,
+    meters: &[&MeterScene],
+    kind: MeterKind,
+    actions: &mut Actions,
+) {
+    ui.label(RichText::new(format!("{} isn't added.", kind_label(kind))).weak());
+    let last = meters.iter().map(|m| m.meter).max();
+    let added = scene.mode == LayoutMode::Window
+        || scene.windows.iter().any(|w| {
+            w.key == WindowKey::Bar && last.is_some_and(|l| w.meters.iter().any(|m| m.meter == l))
+        });
+    if let Some(meter) = last.filter(|_| added)
+        && ui.button(format!("Add {}", kind_label(kind))).clicked()
+    {
+        actions.push(Event::AddMeter { meter, kind });
+    }
+    ui.add_space(6.0);
+    ui.add_enabled_ui(false, |ui| {
+        let mut ignored = Actions::new();
+        let settings = MeterSettings::default_of(kind);
+        basic(ui, usize::MAX, settings, &mut ignored);
+        ui.separator();
+        advanced(ui, usize::MAX, settings, &mut ignored);
+    });
 }
 
 fn page_button(ui: &mut egui::Ui, page: &mut Page, choice: Page, name: &str) {
@@ -2382,13 +2491,7 @@ fn meter_settings(
 
 /// The settings panel filling its own window.
 fn settings_window(root: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
-    egui::CentralPanel::default().show(root, |ui| {
-        if widgets::is_smooth(ui.ctx()) {
-            sidebar_contents(ui, scene, actions);
-        } else {
-            egui::ScrollArea::vertical().show(ui, |ui| panel_contents(ui, scene, actions));
-        }
-    });
+    egui::CentralPanel::default().show(root, |ui| sidebar_contents(ui, scene, actions));
 }
 
 /// The settings panel over the Meters (snapshots).
@@ -2402,23 +2505,10 @@ fn settings_panel(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size(egui::vec2(
-            if widgets::is_smooth(ctx) {
-                560.0
-            } else {
-                420.0
-            },
-            (screen.height() - 24.0).max(200.0),
-        ))
+        .default_size(egui::vec2(640.0, (screen.height() - 24.0).max(200.0)))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
-        .vscroll(!widgets::is_smooth(ctx))
-        .show(ctx, |ui| {
-            if widgets::is_smooth(ui.ctx()) {
-                sidebar_contents(ui, scene, actions);
-            } else {
-                panel_contents(ui, scene, actions);
-            }
-        });
+        .vscroll(false)
+        .show(ctx, |ui| sidebar_contents(ui, scene, actions));
     if !open {
         actions.push(Event::ShowSettings(false));
     }

@@ -627,3 +627,80 @@ fn a_phase_scopes_overlay_and_offset_are_saved() {
     };
     assert_eq!(settings.overlay_offset, 7.0);
 }
+
+#[test]
+fn every_built_in_can_be_read_back_after_a_relaunch() {
+    let mut app = App::first_launch();
+    // Open and change each so each is saved by this version.
+    let count = app.scene().presets.list.len();
+    for index in 0..count {
+        app.send(Event::SwitchPreset { index });
+        app.wait(AUTOSAVE_DELAY * 2);
+    }
+    let mut app = app.relaunch();
+    let broken: Vec<String> = app
+        .scene()
+        .presets
+        .list
+        .iter()
+        .filter(|p| p.broken)
+        .map(|p| p.name.clone())
+        .collect();
+    assert!(broken.is_empty(), "{broken:?}");
+}
+
+#[test]
+fn each_built_in_reads_back_as_written() {
+    for built_in in dasmeter_core::BuiltIn::ALL {
+        let text = PresetData::built_in(built_in).to_toml();
+        let back: Result<PresetData, _> = toml::from_str(&text);
+        assert!(
+            back.is_ok(),
+            "{}: {:?}\n{text}",
+            built_in.name(),
+            back.err()
+        );
+    }
+}
+
+#[test]
+fn a_preset_with_a_large_send_plugin_id_reads_back() {
+    let mut app = App::first_launch();
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let big = u64::MAX - 7;
+    let plugins = [plugin(big, "Kick")];
+    app.send(Event::SendPlugins(&plugins));
+    app.send(Event::PickSendPlugin { meter: 0, id: big });
+    let mut app = app.relaunch();
+    let broken: Vec<String> = app
+        .scene()
+        .presets
+        .list
+        .iter()
+        .filter(|p| p.broken)
+        .map(|p| p.name.clone())
+        .collect();
+    assert!(broken.is_empty(), "{broken:?}");
+}
+
+#[test]
+fn a_file_saved_with_a_too_large_id_is_repaired_on_reading() {
+    let mut app = App::first_launch();
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let big = u64::MAX - 7;
+    app.send(Event::SendPlugins(&[plugin(big, "Kick")]));
+    app.send(Event::PickSendPlugin { meter: 0, id: big });
+    app.wait(AUTOSAVE_DELAY * 2);
+    // Earlier versions wrote the ID past TOML's integer range, which no
+    // TOML reader accepts.
+    let mut disk = app.disk.clone();
+    let text = disk.files["bar.toml"].replace("id = -8", "id = 18446744073709551608");
+    assert!(text.contains("18446744073709551608"), "{text}");
+    disk.files.insert("bar.toml".into(), text);
+
+    let mut app = App::launch(disk);
+    app.send(Event::SendPlugins(&[plugin(big, "Kick")]));
+    let scene = app.scene();
+    assert!(scene.presets.list.iter().all(|p| !p.broken));
+    assert_eq!(scene.windows[0].meters[0].picked, Some(big));
+}

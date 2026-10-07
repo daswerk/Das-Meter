@@ -125,6 +125,43 @@ impl Canvas<'_> {
         self.shapes.fill_under(points, base, top, bottom);
     }
 
+    /// Draws the curve through `points` with `draw`, given each piece and
+    /// how strongly to draw it. Smooth: piece by piece, fading out toward
+    /// `plot`'s left and right ends as the grid does. Classic: all of it at
+    /// once at full strength.
+    pub fn edge_faded(
+        &mut self,
+        plot: Area,
+        points: &[[f32; 2]],
+        mut draw: impl FnMut(&mut Self, &[[f32; 2]], f32),
+    ) {
+        if !self.smooth() {
+            draw(self, points, 1.0);
+            return;
+        }
+        for i in 0..points.len().saturating_sub(1) {
+            let x = (points[i][0] + points[i + 1][0]) / 2.0;
+            let strength = self.edge_strength(plot, x);
+            if strength > 0.0 {
+                draw(self, &points[i..i + 2], strength);
+            }
+        }
+    }
+
+    /// How strongly a trace shows at `x` across `plot`: fading out toward
+    /// the left and right ends in Smooth, as the grid does; fully in Classic.
+    pub fn edge_strength(&self, plot: Area, x: f32) -> f32 {
+        if !self.smooth() {
+            return 1.0;
+        }
+        edge_fade(
+            x - plot.x,
+            plot.right() - x,
+            plot.width,
+            self.styling.grid_fade,
+        )
+    }
+
     /// `text` with a soft glow behind it in Smooth. Classic draws plain text.
     pub fn glowing_text(
         &mut self,
@@ -136,8 +173,8 @@ impl Canvas<'_> {
     ) {
         let glow = self.styling.glow;
         if self.smooth() && glow > 0.0 {
-            // Nested soft shapes, smaller toward the middle of the digits:
-            // together they fade out from the centre in every direction.
+            // An oval fading out from the middle of the digits, wider
+            // than it is tall: no corners for the eye to catch.
             let tall = self.px(size) * self.styling.text_scale;
             let wide = 0.6 * tall * text.chars().count() as f32;
             let left = match align {
@@ -145,21 +182,10 @@ impl Canvas<'_> {
                 Align::Centre => x - wide / 2.0,
                 Align::Right => x - wide,
             };
-            let (cx, cy) = (left + wide / 2.0, y + tall * 0.55);
-            let halo = self.halo(colour);
-            for k in 0..TEXT_GLOW_LAYERS {
-                // Fainter outside, so no layer's edge shows.
-                let layer = halo.faded(0.005 * (k + 1) as f32 * glow);
-                let f = k as f32 / TEXT_GLOW_LAYERS as f32;
-                let (w, h) = (wide * (0.75 - 0.6 * f), tall * (0.45 - 0.4 * f));
-                let core = Area {
-                    x: cx - w / 2.0,
-                    y: cy - h / 2.0,
-                    width: w,
-                    height: h,
-                };
-                self.shapes.soft_rect(core, tall * 0.5, layer);
-            }
+            let centre = [left + wide / 2.0, y + tall * 0.55];
+            let radius = [wide / 2.0 + tall * 0.6, tall * 0.9];
+            let halo = self.halo(colour).faded(TEXT_GLOW_ALPHA * glow);
+            self.shapes.soft_oval(centre, radius, halo);
         }
         self.text(text, x, y, size, colour, align);
     }
@@ -204,8 +230,8 @@ fn edge_fade(before: f32, after: f32, length: f32, fade: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Layers a glow behind text is built from.
-const TEXT_GLOW_LAYERS: usize = 5;
+/// How strong the glow behind big numbers is at its middle, at full glow.
+const TEXT_GLOW_ALPHA: f32 = 0.08;
 
 /// Rings the vignette is built from: each a little further in, lighter.
 const VIGNETTE_RINGS: usize = 20;

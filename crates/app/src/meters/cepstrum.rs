@@ -67,9 +67,17 @@ pub fn draw(
         .collect();
     let curve = smooth(&points, c.px(2.0));
     let fill = trace.faded(0.35);
-    c.fill_under(&curve, base, fill, fill);
-    c.glow(&curve, trace);
-    c.shapes.polyline(&curve, c.stroke(1.5), trace);
+    c.edge_faded(plot, &curve, |c, piece, strength| {
+        let fill = fill.faded(strength);
+        c.fill_under(piece, base, fill, fill);
+    });
+    c.edge_faded(plot, &curve, |c, piece, strength| {
+        c.glow(piece, trace.faded(strength));
+    });
+    c.edge_faded(plot, &curve, |c, piece, strength| {
+        c.shapes
+            .polyline(piece, c.stroke(1.5), trace.faded(strength));
+    });
 
     if let Some(hover) = hover {
         hover_readout(c, plot, hover);

@@ -46,6 +46,19 @@ pub struct Scene {
     pub app: AppSettings,
     /// The highest frame-rate cap the settings panel offers.
     pub max_frame_rate_cap: u32,
+    /// The Bar's settings, also in Window mode, where the settings show
+    /// them for when the Bar is back.
+    pub bar: BarSettingsScene,
+}
+
+/// The Bar's settings as the settings panel shows them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarSettingsScene {
+    pub edge: Edge,
+    /// Logical pixels across the Bar.
+    pub thickness: f32,
+    pub screen: ScreenMode,
+    pub over_fullscreen: bool,
 }
 
 /// An open Meter menu: whose it is and where it was opened.

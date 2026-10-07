@@ -278,3 +278,45 @@ fn only_the_shown_meters_are_fed() {
     };
     assert!(traces.iter().all(|t| t.is_empty()));
 }
+
+/// Right-clicks `meter` at (`u`, `v`) inside its pane and adds a Cepstrum
+/// from the menu. Returns the new pane's frame.
+fn add_from_menu(app: &mut App, meter: usize, [u, v]: [f32; 2]) -> Frame {
+    let before: Vec<usize> = app.panes().into_iter().map(|(m, _)| m).collect();
+    let f = app.frame_of(meter);
+    app.send(Event::OpenMenu {
+        window: WindowKey::Main,
+        at: [f.x + u * f.width, f.y + v * f.height],
+    });
+    app.send(Event::AddMeter {
+        meter,
+        kind: MeterKind::Cepstrum,
+    });
+    app.panes()
+        .into_iter()
+        .find(|(m, _)| !before.contains(m))
+        .expect("a pane was added")
+        .1
+}
+
+#[test]
+fn add_meter_goes_on_the_side_of_the_pane_that_was_right_clicked() {
+    // The Spectrum is the top half, full width.
+    let mut app = App::window_mode();
+    let new = add_from_menu(&mut app, SPECTRUM, [0.5, 0.1]);
+    assert!(near(new.y, 0.0) && near(new.height, 0.25) && near(new.width, 1.0));
+    assert!(near(app.frame_of(SPECTRUM).y, 0.25));
+
+    let mut app = App::window_mode();
+    let new = add_from_menu(&mut app, SPECTRUM, [0.5, 0.9]);
+    assert!(near(new.y, 0.25) && near(new.height, 0.25));
+
+    let mut app = App::window_mode();
+    let new = add_from_menu(&mut app, SPECTRUM, [0.95, 0.5]);
+    assert!(near(new.x, 0.5) && near(new.width, 0.5) && near(new.height, 0.5));
+
+    let mut app = App::window_mode();
+    let new = add_from_menu(&mut app, SPECTRUM, [0.05, 0.5]);
+    assert!(near(new.x, 0.0) && near(new.width, 0.5));
+    assert!(near(app.frame_of(SPECTRUM).x, 0.5));
+}

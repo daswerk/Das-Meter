@@ -445,6 +445,42 @@ impl Shapes {
         }
     }
 
+    /// A soft oval glow centred on `centre`, `radius` wide and high, in
+    /// `colour` at the middle fading out to nothing at its rim.
+    pub fn soft_oval(&mut self, centre: [f32; 2], radius: [f32; 2], colour: Colour) {
+        if colour.a == 0 || radius[0] <= 0.0 || radius[1] <= 0.0 {
+            return;
+        }
+        const RINGS: usize = 10;
+        const SEGMENTS: usize = 40;
+        // Flat in the middle, easing out to nothing at the rim: no ring's
+        // edge shows, even blended in linear light.
+        let opacity = |t: f32| (1.0 - t * t).powf(SOFT_EASE);
+        let point = |t: f32, i: usize| {
+            let angle = std::f32::consts::TAU * i as f32 / SEGMENTS as f32;
+            [
+                centre[0] + t * radius[0] * angle.cos(),
+                centre[1] + t * radius[1] * angle.sin(),
+            ]
+        };
+        for ring in 0..RINGS {
+            let (t0, t1) = (ring as f32 / RINGS as f32, (ring + 1) as f32 / RINGS as f32);
+            let (inner, outer) = (colour.faded(opacity(t0)), colour.faded(opacity(t1)));
+            for i in 0..SEGMENTS {
+                self.quad(
+                    [
+                        point(t1, i),
+                        point(t1, i + 1),
+                        point(t0, i),
+                        point(t0, i + 1),
+                    ],
+                    outer,
+                    inner,
+                );
+            }
+        }
+    }
+
     /// Uploads the staged shapes.
     pub fn prepare(&mut self, gpu: &Gpu) {
         let count = (self.staged.len() / FLOATS) as u64;
