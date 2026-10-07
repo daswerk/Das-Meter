@@ -491,6 +491,37 @@ fn a_cepstrum_meter_finds_the_pitch_of_a_harmonic_tone() {
 }
 
 #[test]
+fn the_cepstrum_shows_the_pitch_under_the_pointer() {
+    let mut app = App::playing();
+    app.send(Event::SetMeter {
+        meter: SPECTRUM,
+        settings: MeterSettings::default_of(dasmeter_core::MeterKind::Cepstrum),
+    });
+    let hover = |views: &[MeterView]| match &views[SPECTRUM] {
+        MeterView::Cepstrum {
+            hover,
+            quefrency_range,
+            ..
+        } => (*hover, *quefrency_range),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(hover(&app.settle()).0, None);
+
+    // Halfway across: the period halfway between the edges.
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
+    let (at, (short, long)) = hover(&app.draw());
+    let at = at.expect("a readout under the pointer");
+    let frequency = 2.0 / (short + long);
+    assert!((at.x - 0.5).abs() < 1e-6);
+    assert!((at.frequency - frequency).abs() < 0.1, "{} vs {frequency}", at.frequency);
+    assert_eq!(at.note, dasmeter_analysis::note_name(at.frequency));
+
+    // Over another Meter: none.
+    app.send(Event::Pointer(Some((WindowKey::Bar, [0.9, 0.5]))));
+    assert_eq!(hover(&app.draw()).0, None);
+}
+
+#[test]
 fn cepstrum_settings_are_kept_within_their_limits() {
     let mut app = App::playing();
     let mut settings = dasmeter_core::CepstrumMeterSettings::default();

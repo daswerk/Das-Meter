@@ -524,6 +524,8 @@ pub enum MeterView {
         /// The detected pitch, when it's on and there is one: where its
         /// period sits (0–1 across), its frequency and its note.
         pitch: Option<CursorReadout>,
+        /// While the pointer is over it: the pitch of the period under it.
+        hover: Option<CursorReadout>,
     },
     Spectrogram {
         settings: SpectrogramMeterSettings,
@@ -982,9 +984,13 @@ impl Meter {
         }
     }
 
-    /// The cursor moved over this Meter (or left it): only the Spectrum shows it.
+    /// The cursor moved over this Meter (or left it): only the Spectrum and
+    /// the Cepstrum show it.
     pub fn pointer_changed(&mut self) {
-        if matches!(self.settings, MeterSettings::Spectrum(_)) {
+        if matches!(
+            self.settings,
+            MeterSettings::Spectrum(_) | MeterSettings::Cepstrum(_)
+        ) {
             self.view = None;
         }
     }
@@ -1254,11 +1260,21 @@ fn build_view(
                     note: note_name(pitch.frequency),
                     level: None,
                 });
+            let hover = pointer.map(|[x, _]| {
+                let frequency = 1.0 / (short + x * (long - short));
+                CursorReadout {
+                    x,
+                    frequency,
+                    note: note_name(frequency),
+                    level: None,
+                }
+            });
             MeterView::Cepstrum {
                 settings,
                 values: cepstrum.values.iter().map(|&v| round_to(v, 0.01)).collect(),
                 quefrency_range: cepstrum.quefrency_range,
                 pitch,
+                hover,
             }
         }
         (Analyser::Spectrogram(a), MeterSettings::Spectrogram(settings)) => {

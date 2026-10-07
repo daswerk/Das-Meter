@@ -309,6 +309,7 @@ impl MeterRenderer {
                     values,
                     quefrency_range,
                     pitch,
+                    hover,
                 } => cepstrum::draw(
                     &mut c,
                     inner,
@@ -316,6 +317,7 @@ impl MeterRenderer {
                     values,
                     *quefrency_range,
                     pitch.as_ref(),
+                    hover.as_ref(),
                 ),
                 MeterView::Spectrogram {
                     settings,

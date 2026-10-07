@@ -272,7 +272,8 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             }
             core.handle(Event::Pointer(Some((WindowKey::Bar, [0.3, 0.5]))), now);
         }
-        // The Cepstrum in the Spectrum's place, on a 220 Hz harmonic tone.
+        // The Cepstrum in the Spectrum's place, on a 220 Hz harmonic tone,
+        // with the pointer over it.
         Some("cepstrum") => {
             let settings =
                 dasmeter_core::MeterSettings::default_of(dasmeter_core::MeterKind::Cepstrum);
@@ -295,6 +296,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 core.handle(Event::Audio(block), now);
                 core.decide(now);
             }
+            core.handle(Event::Pointer(Some((WindowKey::Bar, [0.4, 0.5]))), now);
         }
         // The Phase Scope in the Spectrum's place, on a kick and a bass at
         // 120 BPM: the typed-in tempo, a beat or (`phase-scope-bar`) a bar,
