@@ -349,6 +349,11 @@ pub struct PhaseScopeMeterSettings {
     pub cutoff: f32,
     /// How far the Overlay Source is moved, in ms: later if positive.
     pub overlay_offset: f32,
+    /// Whether the sum of the two Sources is drawn over them. Default on.
+    pub show_sum: bool,
+    /// Whether it says what would make the two fit better (flip, move,
+    /// tune). Default off.
+    pub suggestions: bool,
 }
 
 impl Default for PhaseScopeMeterSettings {
@@ -363,6 +368,8 @@ impl Default for PhaseScopeMeterSettings {
             steadiness: Steadiness::Trail,
             cutoff: 150.0,
             overlay_offset: 0.0,
+            show_sum: true,
+            suggestions: false,
         }
     }
 }

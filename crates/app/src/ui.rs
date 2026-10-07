@@ -1134,6 +1134,14 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
             )
             .on_hover_text("How well the two agree below this frequency, −1 to +1")
             .changed();
+        changed |= ui
+            .checkbox(&mut settings.show_sum, "Show sum")
+            .on_hover_text("The two added together: what's left in the mix")
+            .changed();
+        changed |= ui
+            .checkbox(&mut settings.suggestions, "Suggestions")
+            .on_hover_text("What would make them fit: flip, move or pitch one")
+            .changed();
         if changed {
             actions.push(Event::SetMeter {
                 meter,

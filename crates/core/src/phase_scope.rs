@@ -96,6 +96,24 @@ pub struct ScopeOverlay {
     pub correlation: Option<f32>,
     /// The picked Send Plugin isn't there: "Waiting for <name>".
     pub waiting: Option<String>,
+    /// What would make the two fit better, best first; none when they do.
+    pub fits: Vec<Fit>,
+    /// The fits in words, when suggestions are turned on.
+    pub advice: Vec<String>,
+}
+
+/// Something that would make the Overlay Source fit the main one better
+/// below the cut-off.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Fit {
+    /// Flip the Overlay Source's polarity: the correlation `then`.
+    Flip { then: f32 },
+    /// Move the Overlay Source `ms` (later if positive, as the Offset
+    /// does), flipped too if `flip`: the correlation `then`.
+    Move { ms: f32, flip: bool, then: f32 },
+    /// Their lows sit at different pitches (Hz), so they drift in and out
+    /// of phase and no move helps: tune one to the other.
+    Pitch { main: f32, overlay: f32 },
 }
 
 /// A song position at a frame.
@@ -283,6 +301,7 @@ struct OverlayCut {
     phase: Vec<f32>,
     /// How well the two agree below the cut-off; `None` if either is silent there.
     correlation: Option<f32>,
+    fits: Vec<Fit>,
 }
 
 /// Below this mean square (−80 dBFS) a stretch counts as silent: no
@@ -644,6 +663,7 @@ impl PhaseScope {
                 sum: one(&o.sum),
                 phase: o.phase.clone(),
                 correlation: o.correlation,
+                fits: o.fits.clone(),
                 ..ScopeOverlay::default()
             },
             None => ScopeOverlay {
@@ -688,6 +708,13 @@ struct OverlayPass {
     /// The phase lane looks at least this many frames around each column:
     /// one period of the cut-off.
     window: f64,
+    /// The low-passed Sources, every `every`th frame, for the fits.
+    lows: [Vec<f32>; 2],
+    every: u64,
+    /// Frames until the next one is kept.
+    countdown: u64,
+    /// Frames a second.
+    rate: f64,
 }
 
 impl OverlayPass {
@@ -701,12 +728,17 @@ impl OverlayPass {
                 sum: empty(),
                 phase: vec![0.0; COLUMNS],
                 correlation: None,
+                fits: Vec::new(),
             },
             filters: [filter, filter],
             sums: [0.0; 5],
             frames: 0,
             local: vec![[0.0; 4]; COLUMNS],
             window: f64::from(scope.rate) / f64::from(cutoff),
+            lows: [Vec::new(), Vec::new()],
+            every: ((scope.rate as f32 / (cutoff * FIT_PER_PERIOD)) as u64).max(1),
+            countdown: 0,
+            rate: f64::from(scope.rate),
         };
         // Settle the filters on the audio just before the Cycle.
         let a = first.floor() as u64;
@@ -754,6 +786,12 @@ impl OverlayPass {
             }
             sum = [sum[0].min(m + o), sum[1].max(m + o)];
             let (x, y) = (self.filters[0].run(m), self.filters[1].run(o));
+            if self.countdown == 0 {
+                self.lows[0].push(x);
+                self.lows[1].push(y);
+                self.countdown = self.every;
+            }
+            self.countdown -= 1;
             let (x, y) = (f64::from(x), f64::from(y));
             for (sum, v) in self.sums.iter_mut().zip([x, y, x * y, x * x, y * y]) {
                 *sum += v;
@@ -778,6 +816,10 @@ impl OverlayPass {
         for column in 0..COLUMNS {
             self.cut.phase[column] = self.phase(column, COLUMNS);
         }
+        if let Some(now) = self.cut.correlation {
+            let rate = self.rate / self.every as f64;
+            self.cut.fits = fits(&self.lows[0], &self.lows[1], rate, now);
+        }
         self.cut
     }
 
@@ -801,6 +843,7 @@ impl OverlayPass {
             rest(&mut cut.sum.1, &last.sum.1, reached);
             rest(&mut cut.phase, &last.phase, settled);
             cut.correlation = last.correlation;
+            cut.fits = last.fits.clone();
         } else {
             cut.correlation = self.correlation();
         }
@@ -847,6 +890,163 @@ impl OverlayPass {
             0.0
         }
     }
+}
+
+/// The fit suggestions keep the lows this many times a period of the cut-off.
+const FIT_PER_PERIOD: f32 = 16.0;
+/// The farthest a Move suggestion looks, in seconds.
+const FIT_REACH: f64 = 0.02;
+/// Tracks agreeing this well get no suggestion.
+const FIT_FINE: f32 = 0.9;
+/// A move or flip is suggested only if it lifts the correlation this much,
+/// to at least `FIT_GOOD`.
+const FIT_GAIN: f32 = 0.15;
+const FIT_GOOD: f32 = 0.8;
+/// Lows this far apart (semitones) are told to tune.
+const FIT_SEMITONES: f32 = 0.5;
+/// The lowest pitch looked for, in Hz.
+const FIT_LOWEST_HZ: f64 = 25.0;
+/// A pitch counts when its spectrum peaks this many times above its mean.
+const FIT_PITCH_PROMINENCE: f64 = 6.0;
+
+/// What would make `overlay` fit `main` (both low-passed, `rate` a second)
+/// better, now correlated `now`.
+fn fits(main: &[f32], overlay: &[f32], rate: f64, now: f32) -> Vec<Fit> {
+    let mut fits = Vec::new();
+    if now >= FIT_FINE {
+        return fits;
+    }
+    // How well they'd agree with the overlay `k` steps earlier, for each k.
+    let reach = (FIT_REACH * rate).ceil() as i64;
+    let shifted: Vec<(i64, f32)> = (-reach..=reach)
+        .map(|k| (k, shifted_correlation(main, overlay, k)))
+        .collect();
+    // The smallest move within a hair of the best, as is and flipped.
+    let best = |sign: f32| -> (i64, f32) {
+        let top = shifted.iter().map(|&(_, r)| sign * r).fold(f32::MIN, f32::max);
+        shifted
+            .iter()
+            .filter(|&&(_, r)| sign * r >= top - 0.02)
+            .min_by_key(|&&(k, _)| k.abs())
+            .map(|&(k, r)| (k, sign * r))
+            .unwrap_or((0, now))
+    };
+    let flipped_now = -now;
+    let (straight, flipped) = (best(1.0), best(-1.0));
+    // Flipping only when it's clearly better: on a steady tone a move does
+    // as well.
+    let (k, then, flip) = if flipped.1 > straight.1 + 0.05 {
+        (flipped.0, flipped.1, true)
+    } else {
+        (straight.0, straight.1, false)
+    };
+    let then = ratio(f64::from(then));
+    if flipped_now >= then - 0.05 && flipped_now >= FIT_GOOD {
+        // Flipping alone does it, with nothing to move.
+        fits.push(Fit::Flip {
+            then: ratio(f64::from(flipped_now)),
+        });
+    } else if then >= FIT_GOOD && then - now >= FIT_GAIN {
+        // The overlay `k` steps earlier lines up: moved by −k.
+        let ms = (-(k as f64) / rate * 1_000.0 * 10.0).round() / 10.0;
+        fits.push(Fit::Move {
+            ms: ms as f32,
+            flip,
+            then,
+        });
+    }
+    if let (Some(a), Some(b)) = (pitch(main, rate), pitch(overlay, rate))
+        && (12.0 * (b / a).log2()).abs() >= FIT_SEMITONES
+    {
+        fits.push(Fit::Pitch {
+            main: a,
+            overlay: b,
+        });
+    }
+    fits
+}
+
+/// A fit in words, for the main Source `main` and the Overlay Source `other`.
+pub(crate) fn advice(fit: &Fit, main: &str, other: &str) -> String {
+    match *fit {
+        Fit::Flip { then } => format!("Flip {other}'s polarity: {then:+.2}"),
+        Fit::Move { ms, flip, then } => {
+            let way = if ms > 0.0 { "later" } else { "earlier" };
+            let flip = if flip { "Flip and move" } else { "Move" };
+            format!("{flip} {other} {:.1} ms {way} (Offset {ms:+.1}): {then:+.2}", ms.abs())
+        }
+        Fit::Pitch { main: a, overlay: b } => {
+            let note = |hz: f32| {
+                dasmeter_analysis::note_name(hz).map_or_else(String::new, |n| format!(" ({n})"))
+            };
+            let semitones = 12.0 * (a / b).log2();
+            let way = if semitones > 0.0 { "up" } else { "down" };
+            format!(
+                "{main} {a:.0} Hz{}, {other} {b:.0} Hz{}: pitch {other} {way} {:.1} semitones",
+                note(a),
+                note(b),
+                semitones.abs()
+            )
+        }
+    }
+}
+
+/// Pearson between `main` and `overlay` read `k` steps on, where they overlap.
+fn shifted_correlation(main: &[f32], overlay: &[f32], k: i64) -> f32 {
+    let n = main.len().min(overlay.len()) as i64;
+    let (from, to) = ((-k).max(0), (n - k).min(n));
+    if to - from < 2 {
+        return 0.0;
+    }
+    let pairs = (from..to).map(|i| (f64::from(main[i as usize]), f64::from(overlay[(i + k) as usize])));
+    let count = (to - from) as f64;
+    let [x, y, xy, xx, yy] = pairs.fold([0.0; 5], |s, (x, y)| {
+        [s[0] + x, s[1] + y, s[2] + x * y, s[3] + x * x, s[4] + y * y]
+    });
+    let (x, y, xy, xx, yy) = (x / count, y / count, xy / count, xx / count, yy / count);
+    let (vx, vy) = (xx - x * x, yy - y * y);
+    if vx.min(vy) <= SILENT_POWER {
+        return 0.0;
+    }
+    ((xy - x * y) / (vx * vy).sqrt()).clamp(-1.0, 1.0) as f32
+}
+
+/// The pitch of a low-passed Source, in Hz, if it has a clear one: where
+/// its spectrum peaks, looked at every quarter semitone (Goertzel) and
+/// refined between them. A kick's sweep is brief, so its tail wins.
+fn pitch(lows: &[f32], rate: f64) -> Option<f32> {
+    const STEPS_PER_OCTAVE: f64 = 48.0;
+    // Up to twice the cut-off: above it the lows are mostly filtered out.
+    let highest = (rate / f64::from(FIT_PER_PERIOD) * 2.0).min(rate / 2.0);
+    let steps = (STEPS_PER_OCTAVE * (highest / FIT_LOWEST_HZ).log2()).floor() as usize;
+    if steps < 3 || lows.len() < 16 {
+        return None;
+    }
+    let frequency = |step: f64| FIT_LOWEST_HZ * 2f64.powf(step / STEPS_PER_OCTAVE);
+    let power: Vec<f64> = (0..=steps)
+        .map(|step| {
+            let coefficient = 2.0 * (std::f64::consts::TAU * frequency(step as f64) / rate).cos();
+            let (mut s1, mut s2) = (0.0, 0.0);
+            for &x in lows {
+                let s0 = f64::from(x) + coefficient * s1 - s2;
+                (s2, s1) = (s1, s0);
+            }
+            s1 * s1 + s2 * s2 - coefficient * s1 * s2
+        })
+        .collect();
+    let mean = power.iter().sum::<f64>() / power.len() as f64;
+    let (i, &top) = power
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))?;
+    // A clear peak, not noise or silence.
+    if mean <= 0.0 || top < mean * FIT_PITCH_PROMINENCE || i == 0 || i == steps {
+        return None;
+    }
+    let (a, b, c) = (power[i - 1], top, power[i + 1]);
+    let bend = a - 2.0 * b + c;
+    let refine = if bend.abs() > 0.0 { 0.5 * (a - c) / bend } else { 0.0 };
+    Some(frequency(i as f64 + refine.clamp(-0.5, 0.5)) as f32)
 }
 
 /// The loudest value in `cuts`, overlay and sum included.
@@ -906,6 +1106,7 @@ fn average(cuts: &[&Cut]) -> Option<Cut> {
             correlation: (!correlations.is_empty()).then(|| {
                 ratio(f64::from(correlations.iter().sum::<f32>()) / correlations.len() as f64)
             }),
+            fits: o.last().map(|c| c.fits.clone()).unwrap_or_default(),
         }
     });
     Some(Cut { traces, overlay })

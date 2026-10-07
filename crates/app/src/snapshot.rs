@@ -325,10 +325,15 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             }
         }
         // The Phase Scope on a Kick Send Plugin with the Bass from the same
-        // DAW as its Overlay Source, both following the DAW at 120 BPM.
+        // DAW as its Overlay Source, both following the DAW at 120 BPM,
+        // with suggestions on.
         Some("phase-scope-overlay") => {
-            let settings =
-                dasmeter_core::MeterSettings::default_of(dasmeter_core::MeterKind::PhaseScope);
+            let settings = dasmeter_core::MeterSettings::PhaseScope(
+                dasmeter_core::PhaseScopeMeterSettings {
+                    suggestions: true,
+                    ..Default::default()
+                },
+            );
             core.handle(Event::SetMeter { meter: 1, settings }, now);
             core.handle(
                 Event::SetListenTo(dasmeter_core::ListenTo::SendPlugins),

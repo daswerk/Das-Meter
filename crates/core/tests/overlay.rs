@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dasmeter_core::{
     AppCore, Colour, Event, ListenTo, MeterKind, MeterScene, MeterSettings, MeterState, MeterView,
-    PhaseScopeMeterSettings, PhaseScopeView, ScopeTrace, SendPlugin, SendPluginState, Timing,
+    Fit, PhaseScopeMeterSettings, PhaseScopeView, ScopeTrace, SendPlugin, SendPluginState, Timing,
 };
 
 const RATE: u32 = 48_000;
@@ -431,4 +431,75 @@ fn with_an_overlay_the_main_trace_is_mono() {
     app.set(|s| s.channel_view = dasmeter_analysis::ChannelView::LeftRight);
     app.play_both(3.0, sine(55.0, 0.3), sine(55.0, 0.3));
     assert_eq!(app.scope().traces.len(), 1);
+}
+
+/// `audio` `frames` later.
+fn delayed(audio: impl Fn(u64) -> f32, frames: u64) -> impl Fn(u64) -> f32 {
+    move |f| f.checked_sub(frames).map_or(0.0, &audio)
+}
+
+#[test]
+fn suggestions_show_only_when_turned_on() {
+    let mut app = App::with_bass();
+    let kick = sine(55.0, 0.3);
+    app.play_both(4.0, &kick, |f| -kick(f));
+    let overlay = app.scope().overlay.unwrap();
+    assert!(matches!(overlay.fits.as_slice(), [Fit::Flip { .. }]), "{:?}", overlay.fits);
+    assert!(overlay.advice.is_empty(), "off by default");
+
+    app.set(|s| s.suggestions = true);
+    app.play_both(1.0, &kick, |f| -kick(f));
+    let advice = app.scope().overlay.unwrap().advice;
+    assert_eq!(advice.len(), 1, "{advice:?}");
+    assert!(advice[0].contains("Flip") && advice[0].contains("Bass"), "{advice:?}");
+}
+
+#[test]
+fn a_late_bass_is_told_how_far_to_move() {
+    let mut app = App::with_bass();
+    let kick = sine(55.0, 0.3);
+    // 3 ms late: about a sixth of a period out.
+    app.play_both(4.0, &kick, delayed(&kick, 144));
+    let overlay = app.scope().overlay.unwrap();
+    let Some(&Fit::Move { ms, flip, then }) = overlay.fits.first() else {
+        panic!("{:?}", overlay.fits)
+    };
+    assert!((ms + 3.0).abs() < 0.6, "{ms} ms");
+    assert!(!flip);
+    assert!(then > 0.9, "{then}");
+
+    // Moved as told, the two line up and there's nothing more to say.
+    app.set(|s| s.overlay_offset = ms);
+    app.play_both(4.0, &kick, delayed(&kick, 144));
+    let overlay = app.scope().overlay.unwrap();
+    assert!(overlay.correlation.unwrap() > 0.9, "{:?}", overlay.correlation);
+    assert!(overlay.fits.is_empty(), "{:?}", overlay.fits);
+}
+
+#[test]
+fn lows_at_different_pitches_are_told_to_tune() {
+    let mut app = App::with_bass();
+    // A semitone apart: they drift in and out of phase, so no move helps.
+    app.play_both(4.0, sine(55.0, 0.3), sine(58.27, 0.3));
+    let overlay = app.scope().overlay.unwrap();
+    let pitch = overlay.fits.iter().find_map(|fit| match *fit {
+        Fit::Pitch { main, overlay } => Some((main, overlay)),
+        _ => None,
+    });
+    let (main, other) = pitch.unwrap_or_else(|| panic!("{:?}", overlay.fits));
+    assert!((main - 55.0).abs() < 1.5, "{main}");
+    assert!((other - 58.27).abs() < 1.5, "{other}");
+    assert!(!overlay.fits.iter().any(|f| matches!(f, Fit::Move { .. })));
+
+    app.set(|s| s.suggestions = true);
+    app.play_both(1.0, sine(55.0, 0.3), sine(58.27, 0.3));
+    let advice = app.scope().overlay.unwrap().advice;
+    assert!(advice.iter().any(|a| a.contains("A1") && a.contains("A#1")), "{advice:?}");
+}
+
+#[test]
+fn tracks_in_phase_get_no_suggestion() {
+    let mut app = App::with_bass();
+    app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.2));
+    assert!(app.scope().overlay.unwrap().fits.is_empty());
 }

@@ -1,9 +1,11 @@
 //! The Phase Scope: the waveform over one Cycle, the newest sharp and the
 //! few before it fading behind, with a centre line, the beat lines of a bar,
 //! and the tempo it follows. An Overlay Source is drawn over it in its own
-//! colour with the dashed sum of both; a phase lane under the Cycle shows
+//! colour; a phase lane under the Cycle shows
 //! where the two push together (green) and where they cancel (red), and the
-//! low end's correlation sits large in the top right.
+//! low end's correlation sits large in the top right. The sum of both is
+//! drawn as its own waveform on top, and suggestions for a better fit are
+//! listed under the readout when asked for.
 
 use dasmeter_core::{
     Colour, PhaseScopeMeterSettings, PhaseScopeView, Role, ScopeOverlay, ScopeTrace,
@@ -101,8 +103,8 @@ pub fn draw(
             overlay_trace(c, band, overlay, colour);
         }
         trace_line(c, band, trace, colour, settings.filled);
-        if let Some(overlay) = overlay {
-            sum_line(c, band, overlay);
+        if let Some(overlay) = overlay.filter(|_| settings.show_sum) {
+            sum_wave(c, band, overlay);
         }
     }
 
@@ -142,6 +144,39 @@ pub fn draw(
         && let Some(correlation) = scope.overlay.as_ref().and_then(|o| o.correlation)
     {
         correlation_readout(c, plot, correlation, settings.cutoff);
+        if let Some(overlay) = &scope.overlay {
+            advice(c, plot, &overlay.advice);
+        }
+    }
+}
+
+/// The suggestions under the correlation readout, as many as fit: each on
+/// one line, or broken after its colon when that's too wide.
+fn advice(c: &mut Canvas, plot: Area, suggestions: &[String]) {
+    let text = c.colour(Role::Text);
+    let right = plot.right() - c.px(4.0);
+    let room = plot.width - c.px(8.0);
+    // About how wide the monospace labels are.
+    let fits = |c: &Canvas, line: &str| c.px(9.0 * 0.6) * line.chars().count() as f32 <= room;
+    let mut y = plot.y + c.px(37.0);
+    for suggestion in suggestions {
+        let lines: Vec<&str> = if fits(c, suggestion) {
+            vec![suggestion.as_str()]
+        } else {
+            match suggestion.split_once(": ") {
+                Some((what, then)) => vec![what, then],
+                None => vec![suggestion.as_str()],
+            }
+        };
+        if lines.iter().any(|line| !fits(c, line))
+            || y + c.px(12.0) * lines.len() as f32 > plot.bottom()
+        {
+            break;
+        }
+        for line in lines {
+            c.text(line, right, y, 9.0, text, Align::Right);
+            y += c.px(12.0);
+        }
     }
 }
 
@@ -203,24 +238,27 @@ fn overlay_trace(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colou
     trace_line(c, band, &overlay.trace, colour.faded(0.85), false);
 }
 
-/// The sum of both, what's actually left, as a thin dashed line on top.
-fn sum_line(c: &mut Canvas, band: Area, overlay: &ScopeOverlay) {
-    let at = place(band, overlay.sum.max.len());
-    let points: Vec<[f32; 2]> = overlay
-        .sum
-        .min
-        .iter()
-        .zip(&overlay.sum.max)
-        .enumerate()
-        .map(|(i, (&low, &high))| at(i, (low + high) / 2.0))
-        .collect();
-    let (colour, stroke) = (c.colour(Role::PhaseScopeSum).faded(0.8), c.stroke(1.0));
-    // Dashes: four columns drawn, four left out.
-    for (i, pair) in points.windows(2).enumerate() {
-        if i % 8 < 4 {
-            c.overlay.line(pair[0], pair[1], stroke, colour);
-        }
+/// The sum of both, what's actually left in the mix, as a waveform of its
+/// own drawn over them: a soft band with a bright outline.
+fn sum_wave(c: &mut Canvas, band: Area, overlay: &ScopeOverlay) {
+    let colour = c.colour(Role::PhaseScopeSum);
+    let columns = overlay.sum.max.len();
+    if columns < 2 {
+        return;
     }
+    let at = place(band, columns);
+    let edge = |values: &[f32]| -> Vec<[f32; 2]> {
+        values.iter().enumerate().map(|(i, &v)| at(i, v)).collect()
+    };
+    let (high, low) = (edge(&overlay.sum.max), edge(&overlay.sum.min));
+    let fill = colour.faded(0.35);
+    for i in 0..columns - 1 {
+        c.overlay
+            .quad([high[i], high[i + 1], low[i], low[i + 1]], fill, fill);
+    }
+    let stroke = c.stroke(1.5);
+    c.overlay.polyline(&high, stroke, colour);
+    c.overlay.polyline(&low, stroke, colour);
 }
 
 /// A strip under the Cycle, one cell per column: green where the two push

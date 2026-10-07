@@ -37,7 +37,7 @@ pub use meters::{
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
-pub use phase_scope::{PhaseScopeView, ScopeOverlay, ScopeTrace};
+pub use phase_scope::{Fit, PhaseScopeView, ScopeOverlay, ScopeTrace};
 pub use presets::{
     BuiltIn, MeterPreset, PresetData, PresetFile, PresetInfo, PresetOp, PresetScene, RoleColour,
     StoredSettings, ThemeRef,
@@ -2136,10 +2136,24 @@ impl AppCore {
                         let mut state = self.live_state(i, frame, pointer, now);
                         if let MeterState::Live(MeterView::PhaseScope { scope, .. }) = &mut state {
                             scope.colour = Some(colour(rgb));
+                            let suggestions = matches!(
+                                self.meters[i].meter.settings(),
+                                MeterSettings::PhaseScope(s) if s.suggestions
+                            );
                             match overlay {
                                 Some((colour, None)) => {
                                     if let Some(shown) = &mut scope.overlay {
                                         shown.colour = colour;
+                                        if suggestions {
+                                            let other = self
+                                                .overlay_plugin(i)
+                                                .map_or_else(String::new, |p| p.name.clone());
+                                            shown.advice = shown
+                                                .fits
+                                                .iter()
+                                                .map(|fit| phase_scope::advice(fit, &name, &other))
+                                                .collect();
+                                        }
                                     }
                                 }
                                 Some((_, waiting)) => {
