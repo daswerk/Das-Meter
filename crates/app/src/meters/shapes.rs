@@ -57,6 +57,22 @@ impl Area {
         let (rest, bottom) = self.split_top(self.height - height.clamp(0.0, self.height));
         (rest, bottom)
     }
+
+    /// Splits off the right `width` pixels: (rest, right).
+    pub fn split_right(&self, width: f32) -> (Area, Area) {
+        let width = width.clamp(0.0, self.width);
+        (
+            Area {
+                width: self.width - width,
+                ..*self
+            },
+            Area {
+                x: self.right() - width,
+                width,
+                ..*self
+            },
+        )
+    }
 }
 
 pub struct Shapes {
