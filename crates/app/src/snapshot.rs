@@ -189,7 +189,13 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 ..Styling::default()
             };
             let copy = dasmeter_core::Theme::built_ins().len();
-            core.handle(Event::SetThemeStyling { theme: copy, styling }, now);
+            core.handle(
+                Event::SetThemeStyling {
+                    theme: copy,
+                    styling,
+                },
+                now,
+            );
             core.take_writes();
         }
         // Right-click the Loudness Meter, as a user would.

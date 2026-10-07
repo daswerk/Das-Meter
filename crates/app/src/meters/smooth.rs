@@ -6,6 +6,7 @@
 use dasmeter_core::{Colour, Look, Role};
 
 use super::Canvas;
+use super::labels::Align;
 use super::shapes::Area;
 
 /// How much fainter a Smooth grid line is than a Classic one.
@@ -80,6 +81,16 @@ impl Canvas<'_> {
             .faded_vline(plot.y, plot.bottom(), x, thin, colour, fade);
     }
 
+    /// A grid colour for lines that don't fade along their length (arcs,
+    /// diagonals): as given in Classic, fainter in Smooth.
+    pub fn grid_colour(&self, colour: Colour) -> Colour {
+        if self.smooth() {
+            colour.faded(self.grid_strength(false))
+        } else {
+            colour
+        }
+    }
+
     fn grid_strength(&self, reference: bool) -> f32 {
         let mut strength = GRID_STRENGTH;
         if reference {
@@ -98,8 +109,8 @@ impl Canvas<'_> {
             return;
         }
         let width = self.px(GLOW_WIDTH) * (0.5 + 0.5 * glow);
-        self.shapes
-            .glow_polyline(points, width, colour.faded(GLOW_ALPHA * glow));
+        let colour = self.halo(colour).faded(GLOW_ALPHA * glow);
+        self.shapes.glow_polyline(points, width, colour);
     }
 
     /// The fill under the curve through `points` down to `base`, shaded
@@ -114,15 +125,58 @@ impl Canvas<'_> {
         self.shapes.fill_under(points, base, top, bottom);
     }
 
-    /// A soft glow behind text or a reading in `area`, Smooth only.
-    pub fn text_glow(&mut self, area: Area, colour: Colour) {
+    /// `text` with a soft glow behind it in Smooth. Classic draws plain text.
+    pub fn glowing_text(
+        &mut self,
+        text: &str,
+        [x, y]: [f32; 2],
+        size: f32,
+        colour: Colour,
+        align: Align,
+    ) {
         let glow = self.styling.glow;
-        if !self.smooth() || glow <= 0.0 {
-            return;
+        if self.smooth() && glow > 0.0 {
+            // Nested soft shapes, smaller toward the middle of the digits:
+            // together they fade out from the centre in every direction.
+            let tall = self.px(size) * self.styling.text_scale;
+            let wide = 0.6 * tall * text.chars().count() as f32;
+            let left = match align {
+                Align::Left => x,
+                Align::Centre => x - wide / 2.0,
+                Align::Right => x - wide,
+            };
+            let (cx, cy) = (left + wide / 2.0, y + tall * 0.55);
+            let halo = self.halo(colour);
+            for k in 0..TEXT_GLOW_LAYERS {
+                // Fainter outside, so no layer's edge shows.
+                let layer = halo.faded(0.005 * (k + 1) as f32 * glow);
+                let f = k as f32 / TEXT_GLOW_LAYERS as f32;
+                let (w, h) = (wide * (0.75 - 0.6 * f), tall * (0.45 - 0.4 * f));
+                let core = Area {
+                    x: cx - w / 2.0,
+                    y: cy - h / 2.0,
+                    width: w,
+                    height: h,
+                };
+                self.shapes.soft_rect(core, tall * 0.5, layer);
+            }
         }
-        let spread = self.px(14.0);
-        self.shapes
-            .soft_rect(area.inset(self.px(4.0)), spread, colour.faded(0.1 * glow));
+        self.text(text, x, y, size, colour, align);
+    }
+
+    /// Whether the Theme is light: its effects are shadows, not glows.
+    pub fn light(&self) -> bool {
+        luminance(self.colour(Role::Background)) > 0.5
+    }
+
+    /// The colour a glow around `colour` takes: itself on a dark Theme, a
+    /// soft shadow of it on a light one.
+    fn halo(&self, colour: Colour) -> Colour {
+        if self.light() {
+            super::mix(colour, Colour::rgb(0, 0, 0), 0.6).faded(0.7)
+        } else {
+            colour
+        }
     }
 
     /// A soft rounded backdrop under a readout over the traces, Smooth only.
@@ -137,6 +191,11 @@ impl Canvas<'_> {
     }
 }
 
+/// Rough perceived brightness, 0 to 1.
+fn luminance(c: Colour) -> f32 {
+    (0.2126 * f32::from(c.r) + 0.7152 * f32::from(c.g) + 0.0722 * f32::from(c.b)) / 255.0
+}
+
 /// 0 at a plot's edge rising smoothly to 1 at `fade` of `length` in from it,
 /// for a line `before` from one edge and `after` from the other.
 fn edge_fade(before: f32, after: f32, length: f32, fade: f32) -> f32 {
@@ -145,8 +204,11 @@ fn edge_fade(before: f32, after: f32, length: f32, fade: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// Layers a glow behind text is built from.
+const TEXT_GLOW_LAYERS: usize = 5;
+
 /// Rings the vignette is built from: each a little further in, lighter.
-const VIGNETTE_RINGS: usize = 8;
+const VIGNETTE_RINGS: usize = 20;
 
 /// The floating panel behind a Meter in the Smooth Look: a gradient a
 /// little lighter at the top, darker toward its edges (vignette), and a
@@ -159,7 +221,8 @@ pub fn panel(c: &mut Canvas, area: Area, radius: f32, opacity: f32) {
     let bottom = super::mix(panel, black, 0.22 * s.gradient).faded(opacity);
     // Darker at the edge, then rings of the panel's own shading laid over
     // it further and further in: the middle ends up the panel colour.
-    let edge = 0.45 * s.vignette;
+    // On a light Theme the darkening shows far more: kept gentler there.
+    let edge = if c.light() { 0.2 } else { 0.45 } * s.vignette;
     let darken = |colour: Colour| super::mix(colour, black.faded(colour.a as f32 / 255.0), edge);
     c.shapes
         .rounded_gradient(area, radius, darken(top), darken(bottom));
@@ -174,7 +237,7 @@ pub fn panel(c: &mut Canvas, area: Area, radius: f32, opacity: f32) {
                 super::mix(top, bottom, (inner.bottom() - area.y) / area.height),
             );
             c.shapes
-                .rounded_gradient(inner, ring_radius, t.faded(0.3), b.faded(0.3));
+                .rounded_gradient(inner, ring_radius, t.faded(0.13), b.faded(0.13));
         }
     }
     let line = Area {

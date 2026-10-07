@@ -33,18 +33,12 @@ pub fn draw(
         c.colour(Role::WaveformHigh),
     ];
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
-    let thin = c.px(1.0).max(1.0);
 
     for (lane, columns) in traces.iter().enumerate() {
         let top = area.y + lane_height * lane as f32;
         let centre = top + lane_height / 2.0;
         let half = lane_height / 2.0 - c.px(2.0);
-        let axis = Area {
-            y: centre - thin / 2.0,
-            height: thin,
-            ..area
-        };
-        c.shapes.rect(axis, grid);
+        c.grid_h(area, centre, grid, true);
         if let Some(name) = names.get(lane).filter(|n| !n.is_empty()) {
             c.text(name, area.x, top, 10.0, dim, Align::Left);
         }

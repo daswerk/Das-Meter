@@ -126,7 +126,7 @@ pub fn draw(
                 let age = (older - i) as f32 + scope.progress;
                 let fade = TRAIL_STRENGTH * (1.0 - (age - 1.0) / older as f32);
                 if fade > 0.01 {
-                    trace_line(c, band, old, colour.faded(fade), false);
+                    trace_line(c, band, old, colour.faded(fade), false, false);
                 }
             }
         }
@@ -134,7 +134,7 @@ pub fn draw(
         if let Some(overlay) = overlay {
             overlay_trace(c, band, overlay, colour);
         }
-        trace_line(c, band, trace, colour, settings.filled);
+        trace_line(c, band, trace, colour, settings.filled, true);
         if let Some(overlay) = overlay.filter(|_| settings.show_sum && sum_row.is_none()) {
             sum_wave(c, band, overlay, false);
         }
@@ -221,32 +221,17 @@ fn text_width(c: &Canvas, text: &str, size: f32) -> f32 {
 
 /// The beat lines inside a Cycle, across `area`.
 fn beat_lines(c: &mut Canvas, area: Area, scope: &PhaseScopeView) {
-    let (grid, thin) = (c.colour(Role::PhaseScopeGrid), c.px(1.0).max(1.0));
+    let grid = c.colour(Role::PhaseScopeGrid);
     for &x in &scope.beat_lines {
         let x = area.x + x * area.width;
-        c.shapes.rect(
-            Area {
-                x: x - thin / 2.0,
-                width: thin,
-                ..area
-            },
-            grid.faded(0.6),
-        );
+        c.grid_v(area, x, grid.faded(0.6), false);
     }
 }
 
 /// The centre line across a band.
 fn centre_line(c: &mut Canvas, band: Area) {
-    let (grid, thin) = (c.colour(Role::PhaseScopeGrid), c.px(1.0).max(1.0));
-    let centre = band.y + band.height / 2.0;
-    c.shapes.rect(
-        Area {
-            y: centre - thin / 2.0,
-            height: thin,
-            ..band
-        },
-        grid,
-    );
+    let grid = c.colour(Role::PhaseScopeGrid);
+    c.grid_h(band, band.y + band.height / 2.0, grid, true);
 }
 
 /// One suggestion line, as drawn.
@@ -346,7 +331,14 @@ fn place(band: Area, columns: usize) -> impl Fn(usize, f32) -> [f32; 2] {
 /// where the column holds one, and as a band from its lowest to highest
 /// value where it holds many (dense, fast content). Filled to the centre
 /// line if asked.
-fn trace_line(c: &mut Canvas, band: Area, trace: &ScopeTrace, colour: Colour, filled: bool) {
+fn trace_line(
+    c: &mut Canvas,
+    band: Area,
+    trace: &ScopeTrace,
+    colour: Colour,
+    filled: bool,
+    glow: bool,
+) {
     let columns = trace.max.len();
     if columns < 2 {
         return;
@@ -372,12 +364,16 @@ fn trace_line(c: &mut Canvas, band: Area, trace: &ScopeTrace, colour: Colour, fi
             .map(|(h, l)| [h[0], (h[1] + l[1]) / 2.0])
             .collect();
         let fill = colour.faded(0.3);
-        c.shapes.fill_under(&mid, centre, fill, fill);
+        c.fill_under(&mid, centre, fill, fill);
     }
     // The space between the highest and lowest values, solid.
     for i in 0..columns - 1 {
         c.shapes
             .quad([high[i], high[i + 1], low[i], low[i + 1]], colour, colour);
+    }
+    if glow {
+        c.glow(&high, colour);
+        c.glow(&low, colour);
     }
     let stroke = c.stroke(1.5);
     c.shapes.polyline(&high, stroke, colour);
@@ -389,7 +385,7 @@ fn overlay_trace(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colou
     let colour = overlay
         .colour
         .unwrap_or_else(|| super::mix(main, c.colour(Role::Text), 0.6));
-    trace_line(c, band, &overlay.trace, colour.faded(0.85), false);
+    trace_line(c, band, &overlay.trace, colour.faded(0.85), false, false);
 }
 
 /// The sum of both, what's actually left in the mix, as a waveform of its

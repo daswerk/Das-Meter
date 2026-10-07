@@ -16,7 +16,7 @@ use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
     BigReading, Card, CepstrumMeterSettings, Colour, CycleLength, Direction, Edge, Event,
-    LayoutMode, LineWeight, ListenTo, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
+    LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
     MeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role, Scene, ScreenMode,
     SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings, Steadiness, StereoDrawing,
     StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
@@ -1586,7 +1586,11 @@ fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     {
         // Following: Light and Dark; not: the Theme in use for both.
         let (light, dark) = if follow {
-            (1, 0)
+            let named = |name: &str| theme.themes.iter().position(|t| t.name == name);
+            (
+                named(dasmeter_core::theme::LIGHT).unwrap_or(1),
+                named(dasmeter_core::theme::NOCTURNE).unwrap_or(0),
+            )
         } else {
             let current = theme.current.unwrap_or(0);
             (current, current)
@@ -1628,13 +1632,23 @@ fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         actions.push(Event::DuplicateTheme { theme: current });
     }
     let editable = theme.current.is_some_and(|i| !theme.themes[i].built_in);
-    if !editable {
+    if editable {
+        rename_theme(ui, actions, theme, current);
+    } else {
         ui.label(
-            RichText::new("Built-in Themes can't be edited. Duplicate one to make your own.")
-                .weak(),
+            RichText::new("Changing a built-in Theme saves your changes as a copy of it.").weak(),
         );
-        return;
     }
+    theme_styling(ui, scene, actions, current);
+}
+
+/// The name field for one of the folder's Themes.
+fn rename_theme(
+    ui: &mut egui::Ui,
+    actions: &mut Actions,
+    theme: &dasmeter_core::ThemeScene,
+    current: usize,
+) {
     // Rename: the typed name is kept in egui's memory until it's applied.
     let id = egui::Id::new(("theme name", current));
     let mut name = ui
@@ -1659,9 +1673,33 @@ fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         }
         ui.data_mut(|d| d.insert_temp(id, name.clone()));
     });
-    // Styling.
-    let mut styling = theme.styling;
-    let mut changed = ui
+}
+
+/// The Theme's styling and colours. Edits to a built-in go to a copy.
+fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, current: usize) {
+    let mut styling = scene.theme.styling;
+    let mut changed = choice(
+        ui,
+        "Look",
+        &mut styling.look,
+        &[(Look::Smooth, "Smooth"), (Look::Classic, "Classic")],
+    );
+    if styling.look == Look::Smooth {
+        let percent =
+            |ui: &mut egui::Ui,
+             value: &mut f32,
+             range: std::ops::RangeInclusive<f32>,
+             text: &str| { ui.add(Slider::new(value, range).text(text)).changed() };
+        changed |= percent(ui, &mut styling.glow, 0.0..=1.0, "Glow");
+        let (lo, hi) = dasmeter_core::theme::GRID_FADE_RANGE;
+        changed |= percent(ui, &mut styling.grid_fade, lo..=hi, "Grid fade");
+        changed |= percent(ui, &mut styling.gradient, 0.0..=1.0, "Gradient");
+        changed |= percent(ui, &mut styling.vignette, 0.0..=1.0, "Vignette");
+        changed |= ui
+            .checkbox(&mut styling.dim_when_silent, "Dim when silent")
+            .changed();
+    }
+    changed |= ui
         .add(Slider::new(&mut styling.background_opacity, 0.0..=1.0).text("Background opacity"))
         .changed();
     changed |= choice(

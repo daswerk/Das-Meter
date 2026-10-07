@@ -87,6 +87,10 @@ pub struct Shapes {
     scissor: Option<(u32, u32, u32, u32)>,
 }
 
+/// Bands a soft edge is drawn in, and how fast its opacity eases out.
+const SOFT_BANDS: usize = 6;
+const SOFT_EASE: f32 = 2.4;
+
 impl Shapes {
     pub fn new(gpu: &Gpu) -> Shapes {
         let shader = gpu
@@ -411,62 +415,6 @@ impl Shapes {
         }
     }
 
-    /// Shading `width` pixels in from each edge of `area`, `colour` at the
-    /// edge fading to nothing inward: an inner shadow or a vignette. The
-    /// first `radius` pixels of each edge are left out for rounded corners.
-    pub fn inner_shade(&mut self, area: Area, radius: f32, width: f32, colour: Colour) {
-        let width = width.min(area.width / 2.0).min(area.height / 2.0);
-        if width <= 0.0 || colour.a == 0 {
-            return;
-        }
-        let clear = colour.faded(0.0);
-        let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());
-        let (inner_x0, inner_x1) = (x0 + radius, x1 - radius);
-        let (inner_y0, inner_y1) = (y0 + radius, y1 - radius);
-        // Top and bottom, as trapezoids so the corners meet the sides.
-        self.quad(
-            [
-                [inner_x0, y0],
-                [inner_x1, y0],
-                [x0 + width.max(radius), y0 + width],
-                [x1 - width.max(radius), y0 + width],
-            ],
-            colour,
-            clear,
-        );
-        self.quad(
-            [
-                [x0 + width.max(radius), y1 - width],
-                [x1 - width.max(radius), y1 - width],
-                [inner_x0, y1],
-                [inner_x1, y1],
-            ],
-            clear,
-            colour,
-        );
-        // Left and right, on their sides.
-        self.quad(
-            [
-                [x0, inner_y0],
-                [x0, inner_y1],
-                [x0 + width, y0 + width.max(radius)],
-                [x0 + width, y1 - width.max(radius)],
-            ],
-            colour,
-            clear,
-        );
-        self.quad(
-            [
-                [x1 - width, y0 + width.max(radius)],
-                [x1 - width, y1 - width.max(radius)],
-                [x1, inner_y0],
-                [x1, inner_y1],
-            ],
-            clear,
-            colour,
-        );
-    }
-
     /// `area` in `colour`, with `spread` pixels of soft edge fading out
     /// around it: a glow behind text, or a shadow under a panel.
     pub fn soft_rect(&mut self, area: Area, spread: f32, colour: Colour) {
@@ -477,13 +425,24 @@ impl Shapes {
         if spread <= 0.0 {
             return;
         }
-        let clear = colour.faded(0.0);
-        let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());
-        let (ox0, oy0, ox1, oy1) = (x0 - spread, y0 - spread, x1 + spread, y1 + spread);
-        self.quad([[ox0, oy0], [ox1, oy0], [x0, y0], [x1, y0]], clear, colour);
-        self.quad([[x0, y1], [x1, y1], [ox0, oy1], [ox1, oy1]], colour, clear);
-        self.quad([[ox0, oy0], [ox0, oy1], [x0, y0], [x0, y1]], clear, colour);
-        self.quad([[x1, y0], [x1, y1], [ox1, oy0], [ox1, oy1]], colour, clear);
+        // Blending happens in linear light, where a straight fade to clear
+        // ends in a visible edge; bands easing out much faster hide it.
+        let opacity = |t: f32| (1.0 - t).powf(SOFT_EASE);
+        for band in 0..SOFT_BANDS {
+            let (t0, t1) = (
+                band as f32 / SOFT_BANDS as f32,
+                (band + 1) as f32 / SOFT_BANDS as f32,
+            );
+            let (inner, outer) = (colour.faded(opacity(t0)), colour.faded(opacity(t1)));
+            let (a, b) = (spread * t0, spread * t1);
+            let (x0, y0, x1, y1) = (area.x - a, area.y - a, area.right() + a, area.bottom() + a);
+            let (ox0, oy0, ox1, oy1) =
+                (area.x - b, area.y - b, area.right() + b, area.bottom() + b);
+            self.quad([[ox0, oy0], [ox1, oy0], [x0, y0], [x1, y0]], outer, inner);
+            self.quad([[x0, y1], [x1, y1], [ox0, oy1], [ox1, oy1]], inner, outer);
+            self.quad([[ox0, oy0], [ox0, oy1], [x0, y0], [x0, y1]], outer, inner);
+            self.quad([[x1, y0], [x1, y1], [ox1, oy0], [ox1, oy1]], inner, outer);
+        }
     }
 
     /// Uploads the staged shapes.

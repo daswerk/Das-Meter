@@ -59,7 +59,9 @@ impl Canvas<'_> {
 
     /// Secondary text: labels, units, scales.
     pub fn dim(&self) -> Colour {
-        self.palette[Role::Text].faded(0.55)
+        // Smooth labels sit quieter so the traces lead.
+        let dim = if self.smooth() { 0.45 } else { 0.55 };
+        self.palette[Role::Text].faded(dim)
     }
 
     /// Whether text at `x`, `y` would run into the covered area.

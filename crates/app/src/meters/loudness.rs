@@ -561,7 +561,8 @@ fn draw_big(c: &mut Canvas, area: Area, settings: &LoudnessMeterSettings, big: B
     let caption_size = (size * 0.22).clamp(9.0, 16.0);
     let top = area.y + ((area.height - block) / 2.0).max(0.0);
     let centre = room.x + room.width / 2.0;
-    c.text(&number(level), centre, top, size, colour, Align::Centre);
+    let text = number(level);
+    c.glowing_text(&text, [centre, top], size, colour, Align::Centre);
     // Only the unit when the whole caption doesn't fit.
     let fits = |text: &str| text.chars().count() as f32 * 0.6 * caption_size * scale <= room.width;
     let caption = if fits(caption) {
@@ -643,7 +644,10 @@ fn draw_graph(
     display: &LoudnessDisplay,
 ) {
     let dim = c.dim();
-    c.shapes.rect(area, c.colour(Role::Grid).faded(0.2));
+    // Smooth: the panel shows through, the grid alone marks the graph.
+    if !c.smooth() {
+        c.shapes.rect(area, c.colour(Role::Grid).faded(0.2));
+    }
     let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
     let y_of = |db: f64| map(db as f32, range, area.bottom(), area.y).clamp(area.y, area.bottom());
     let thin = c.px(1.0).max(1.0);
@@ -653,14 +657,7 @@ fn draw_graph(
     while db > range.0 {
         let y = y_of(f64::from(db));
         if y - area.y > c.px(10.0) && area.bottom() - y > c.px(4.0) {
-            c.shapes.rect(
-                Area {
-                    y,
-                    height: thin,
-                    ..area
-                },
-                grid,
-            );
+            c.grid_h(area, y + thin / 2.0, grid, false);
             c.text(
                 &format!("{db}"),
                 area.x + c.px(3.0),
@@ -674,12 +671,13 @@ fn draw_graph(
     }
     if let Some(target) = settings.target {
         let y = y_of(target);
-        c.shapes.line(
-            [area.x, y],
-            [area.right(), y],
-            c.stroke(1.0),
-            c.colour(Role::Text).faded(0.6),
-        );
+        let colour = c.colour(Role::Text).faded(0.6);
+        if c.smooth() {
+            c.grid_h(area, y, colour, true);
+        } else {
+            c.shapes
+                .line([area.x, y], [area.right(), y], c.stroke(1.0), colour);
+        }
     }
     if let Some(integrated) = display.integrated.db() {
         let y = y_of(integrated);
@@ -703,6 +701,20 @@ fn draw_graph(
     let stroke = c.stroke(1.5);
     let newest = display.history.len();
     let x_of = |i: usize| area.right() - (newest - 1 - i) as f32 * dx;
+    // The glow follows each unbroken run of the reading.
+    if c.smooth() {
+        let mut run: Vec<[f32; 2]> = Vec::new();
+        for (i, level) in display.history.iter().enumerate() {
+            match level.db() {
+                Some(db) => run.push([x_of(i), y_of(db)]),
+                None => {
+                    c.glow(&run, normal);
+                    run.clear();
+                }
+            }
+        }
+        c.glow(&run, normal);
+    }
     for (i, pair) in display.history.windows(2).enumerate() {
         let (Some(a), Some(b)) = (pair[0].db(), pair[1].db()) else {
             continue;

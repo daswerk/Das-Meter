@@ -199,6 +199,7 @@ fn held_marks(
             });
         let Some(spot) = spot else { continue };
         placed.push(spot);
+        c.backdrop(spot);
         let colour = if Some(i) == nearest {
             text
         } else {
@@ -643,6 +644,13 @@ fn peak_readout(
     let top = area.y + c.px(4.0);
     let width = match fitting {
         Some((width, readout)) => {
+            let pad = c.px(3.0);
+            c.backdrop(Area {
+                x: right - width - pad,
+                y: top - pad,
+                width: width + 2.0 * pad,
+                height: c.px(11.0) * c.styling.text_scale + 2.0 * pad,
+            });
             c.text(&readout, right, top, 11.0, text, Align::Right);
             width
         }
@@ -724,5 +732,12 @@ fn marker(c: &mut Canvas, area: Area, at: &CursorReadout, line_colour: Colour, r
     // Under the peak readout when there is one.
     let text = c.colour(Role::Text);
     let y = area.y + c.px(12.0) + row as f32 * c.px(16.0);
+    let pad = c.px(3.0);
+    c.backdrop(Area {
+        x: start - pad,
+        y: y - pad,
+        width: width + 2.0 * pad,
+        height: c.px(11.0) * c.styling.text_scale + 2.0 * pad,
+    });
     c.text(&readout, start, y, 11.0, text, Align::Left);
 }

@@ -46,14 +46,7 @@ pub fn draw(
             continue;
         }
         let x = x_of_period(period);
-        c.shapes.rect(
-            Area {
-                x: x - thin / 2.0,
-                width: thin,
-                ..plot
-            },
-            grid.faded(0.6),
-        );
+        c.grid_v(plot, x, grid.faded(0.6), false);
         let half = c.px(9.0 * 0.6) * name.len() as f32 / 2.0;
         if last_label.is_none_or(|last| x - half > last + c.px(4.0)) {
             c.text(name, x, axis.y + c.px(2.0), 9.0, dim, Align::Centre);
@@ -74,7 +67,8 @@ pub fn draw(
         .collect();
     let curve = smooth(&points, c.px(2.0));
     let fill = trace.faded(0.35);
-    c.shapes.fill_under(&curve, base, fill, fill);
+    c.fill_under(&curve, base, fill, fill);
+    c.glow(&curve, trace);
     c.shapes.polyline(&curve, c.stroke(1.5), trace);
 
     if let Some(hover) = hover {
@@ -132,6 +126,13 @@ fn beside(c: &mut Canvas, plot: Area, x: f32, y: f32, size: f32, text: &str, col
     } else {
         (x - c.px(4.0) - width).max(plot.x)
     };
+    let pad = c.px(3.0);
+    c.backdrop(Area {
+        x: start - pad,
+        y: y - pad,
+        width: width + 2.0 * pad,
+        height: c.px(size) * c.styling.text_scale + 2.0 * pad,
+    });
     c.text(text, start, y, size, colour, Align::Left);
 }
 

@@ -116,6 +116,7 @@ pub fn draw(
             place([angle.cos(), angle.sin()])
         })
         .collect();
+    let grid = c.grid_colour(grid);
     c.shapes.polyline(&arc, thin, grid);
     let axes: &[(f32, &str)] = match settings.view {
         StereoView::Polar => &[(PI / 2.0, "M"), (PI - FRAC_PI_4, "L"), (FRAC_PI_4, "R")],
