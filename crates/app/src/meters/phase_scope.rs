@@ -161,19 +161,31 @@ fn draw_overlay(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colour
     let step = band.width / columns as f32;
     let half = band.height / 2.0 * 0.95;
     let centre = band.y + band.height / 2.0;
+    // Shading between the two where they push in opposite directions: the
+    // main Source's value is the sum less the overlay's.
     let cancel = c.colour(Role::PhaseScopeCancel);
+    let mid = |t: &ScopeTrace, i: usize| match (t.min.get(i), t.max.get(i)) {
+        (Some(low), Some(high)) => (low + high) / 2.0,
+        _ => 0.0,
+    };
     for (i, &amount) in overlay.cancel.iter().enumerate() {
-        if amount <= 0.0 {
+        if amount < 0.2 {
             continue;
         }
+        let other = mid(&overlay.trace, i);
+        let main = mid(&overlay.sum, i) - other;
+        let (top, bottom) = (
+            centre - main.max(other) * half,
+            centre - main.min(other) * half,
+        );
         c.shapes.rect(
             Area {
                 x: band.x + i as f32 * step,
-                y: band.y,
+                y: top,
                 width: step.max(1.0),
-                height: band.height,
+                height: bottom - top,
             },
-            cancel.faded(0.15 + 0.45 * amount.min(1.0)),
+            cancel.faded(0.6 * amount.min(1.0)),
         );
     }
     let colour = overlay

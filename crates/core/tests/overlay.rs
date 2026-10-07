@@ -290,3 +290,111 @@ fn on_system_capture_no_overlay_can_be_picked() {
     });
     assert_eq!(app.meter().overlay.unwrap().picked, None);
 }
+
+impl App {
+    /// Plays `seconds` of the DAW at 120 BPM with Kick and Bass both
+    /// listened to, each frame's samples given by `kick` and `bass`.
+    fn play_both(&mut self, seconds: f64, kick: impl Fn(u64) -> f32, bass: impl Fn(u64) -> f32) {
+        let blocks = (seconds * f64::from(RATE) / BLOCK as f64).round() as u64;
+        for b in 0..blocks {
+            let first = b * BLOCK;
+            let beats = first as f64 / f64::from(RATE) * 2.0;
+            let timing = Some(Timing {
+                tempo: 120.0,
+                beats,
+                bar_start: (beats / 4.0).floor() * 4.0,
+                signature: (4, 4),
+                playing: true,
+            });
+            self.now += Duration::from_secs_f64(BLOCK as f64 / f64::from(RATE));
+            for (id, audio) in [(KICK, &kick as &dyn Fn(u64) -> f32), (BASS, &bass)] {
+                let stereo: Vec<f32> = (first..first + BLOCK)
+                    .flat_map(|f| [audio(f), audio(f)])
+                    .collect();
+                self.send(Event::SendPluginAudio {
+                    id,
+                    frames: &stereo,
+                    timing,
+                });
+            }
+        }
+    }
+
+    fn with_bass() -> App {
+        let mut app = App::new();
+        app.send(Event::PickOverlay {
+            meter: 0,
+            id: Some(BASS),
+        });
+        app
+    }
+}
+
+fn sine(frequency: f64, level: f32) -> impl Fn(u64) -> f32 {
+    move |f| (std::f64::consts::TAU * frequency * f as f64 / f64::from(RATE)).sin() as f32 * level
+}
+
+#[test]
+fn identical_tracks_dont_cancel() {
+    let mut app = App::with_bass();
+    app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.3));
+    let scope = app.scope();
+    let overlay = scope.overlay.expect("the overlay");
+    assert!(overlay.cancel.iter().all(|&c| c == 0.0), "no shading");
+    let correlation = overlay.correlation.expect("a correlation");
+    assert!(correlation > 0.98, "{correlation}");
+    // The sum is the two traces added.
+    for i in 0..overlay.sum.max.len() {
+        let both = scope.traces[0].max[i] + overlay.trace.max[i];
+        assert!((overlay.sum.max[i] - both).abs() <= 0.03, "column {i}");
+    }
+}
+
+#[test]
+fn an_inverted_copy_cancels_completely() {
+    let mut app = App::with_bass();
+    let kick = sine(55.0, 0.3);
+    app.play_both(4.0, &kick, |f| -kick(f));
+    let scope = app.scope();
+    let overlay = scope.overlay.expect("the overlay");
+    let shaded = overlay.cancel.iter().filter(|&&c| c > 0.9).count();
+    assert!(
+        shaded > overlay.cancel.len() * 9 / 10,
+        "{shaded} columns shaded"
+    );
+    let correlation = overlay.correlation.expect("a correlation");
+    assert!(correlation < -0.98, "{correlation}");
+    assert!(
+        overlay.sum.max.iter().all(|&v| v.abs() <= 0.02),
+        "nothing left"
+    );
+}
+
+#[test]
+fn content_above_the_cutoff_doesnt_move_the_number() {
+    let mut app = App::with_bass();
+    let (low, high) = (sine(55.0, 0.3), sine(2_000.0, 0.3));
+    // The highs are inverted between the two, the lows aren't.
+    app.play_both(4.0, |f| low(f) + high(f), |f| low(f) - high(f));
+    let correlation = app.scope().overlay.unwrap().correlation.expect("a number");
+    assert!(correlation > 0.95, "{correlation}");
+
+    // At the lowest cut-off the 55 Hz sine is only partly let through, but
+    // it still decides the number.
+    let mut app = App::with_bass();
+    app.set(|s| s.cutoff = 40.0);
+    app.play_both(4.0, |f| low(f) + high(f), |f| low(f) - high(f));
+    let correlation = app.scope().overlay.unwrap().correlation.expect("a number");
+    assert!(correlation > 0.9, "{correlation}");
+}
+
+#[test]
+fn the_number_is_blank_in_silence_or_without_an_overlay() {
+    let mut app = App::with_bass();
+    app.play_both(4.0, sine(55.0, 0.3), |_| 0.0);
+    assert_eq!(app.scope().overlay.unwrap().correlation, None);
+
+    let mut app = App::new();
+    app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.3));
+    assert!(app.scope().overlay.is_none());
+}

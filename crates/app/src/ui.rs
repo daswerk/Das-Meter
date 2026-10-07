@@ -1115,7 +1115,7 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
     }
     if overlay.picked.is_some() {
         let (low, high) = limits::PHASE_SCOPE_OFFSET;
-        if ui
+        let mut changed = ui
             .add(
                 Slider::new(&mut settings.overlay_offset, low..=high)
                     .text("Offset")
@@ -1123,8 +1123,19 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
                     .max_decimals(1),
             )
             .on_hover_text("Nudges the overlay later (+) or earlier (−)")
-            .changed()
-        {
+            .changed();
+        let (low, high) = limits::PHASE_SCOPE_CUTOFF;
+        changed |= ui
+            .add(
+                Slider::new(&mut settings.cutoff, low..=high)
+                    .text("Correlation below")
+                    .suffix(" Hz")
+                    .logarithmic(true)
+                    .max_decimals(0),
+            )
+            .on_hover_text("How well the two agree below this frequency, −1 to +1")
+            .changed();
+        if changed {
             actions.push(Event::SetMeter {
                 meter,
                 settings: MeterSettings::PhaseScope(settings),

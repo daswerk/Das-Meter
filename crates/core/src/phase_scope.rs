@@ -11,7 +11,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use dasmeter_analysis::ChannelView;
+use dasmeter_analysis::{ChannelView, Lr4};
 
 use crate::meters::{CycleLength, PhaseScopeMeterSettings, Steadiness};
 use crate::sources::Timing;
@@ -266,9 +266,28 @@ impl Track {
 #[derive(Clone, Debug, PartialEq)]
 struct Cut {
     traces: Vec<(Vec<f32>, Vec<f32>)>,
-    /// With an Overlay Source: its mono trace, then the mono sum of both.
-    overlay: Option<[(Vec<f32>, Vec<f32>); 2]>,
+    overlay: Option<OverlayCut>,
 }
+
+/// The Overlay Source's part of a Cycle, before gain.
+#[derive(Clone, Debug, PartialEq)]
+struct OverlayCut {
+    /// Its mono trace.
+    trace: (Vec<f32>, Vec<f32>),
+    /// The mono sum of both.
+    sum: (Vec<f32>, Vec<f32>),
+    /// Per column, how strongly the two push in opposite directions, 0–1.
+    cancel: Vec<f32>,
+    /// How well the two agree below the cut-off; `None` if either is silent there.
+    correlation: Option<f32>,
+}
+
+/// Below this mean square (−80 dBFS) a stretch counts as silent: no
+/// shading, no correlation.
+const SILENT_POWER: f64 = 1e-8;
+/// How long the cut-off filters run before the Cycle, in periods of the
+/// cut-off frequency, so they've settled when it starts.
+const SETTLE_PERIODS: f32 = 4.0;
 
 /// An Overlay Source's audio and clock, and how its frames line up with the
 /// main Source's when neither says its song position.
@@ -392,12 +411,10 @@ impl PhaseScope {
         let view = self.settings.channel_view;
         let count = view.traces();
         let mut traces = vec![(vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]); count];
-        let mut overlay = self.overlay.as_ref().map(|_| {
-            [
-                (vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]),
-                (vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]),
-            ]
-        });
+        let mut overlay = self
+            .overlay
+            .as_ref()
+            .map(|o| OverlayPass::new(self, o, start, first));
         let mut from = first;
         for column in 0..COLUMNS {
             let beats = start + length * column as f64 / COLUMNS as f64;
@@ -406,13 +423,7 @@ impl PhaseScope {
                 from.floor() as u64,
                 (to.floor() as u64).max(from.floor() as u64 + 1),
             );
-            // Where the overlay's frames for this column start, if it has them.
-            let shifted = overlay
-                .as_ref()
-                .and_then(|_| self.overlay_frame(beats, a))
-                .map(|o| o - a as i64);
             let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
-            let (mut over, mut sum) = ([f32::MAX, f32::MIN], [f32::MAX, f32::MIN]);
             for frame in a..b {
                 let [l, r] = track.sample(frame);
                 let split = view.split(l, r);
@@ -420,38 +431,21 @@ impl PhaseScope {
                     low[t] = low[t].min(split[t]);
                     high[t] = high[t].max(split[t]);
                 }
-                if let (Some(shift), Some(o)) = (shifted, &self.overlay) {
-                    let [ol, or] =
-                        u64::try_from(frame as i64 + shift).map_or([0.0; 2], |f| o.track.sample(f));
-                    let x = (ol + or) / 2.0;
-                    let both = (l + r) / 2.0 + x;
-                    over = [over[0].min(x), over[1].max(x)];
-                    sum = [sum[0].min(both), sum[1].max(both)];
-                }
             }
             for (t, (min, max)) in traces.iter_mut().enumerate() {
                 min[column] = low[t];
                 max[column] = high[t];
             }
-            if let Some([o, s]) = &mut overlay {
-                if shifted.is_some() {
-                    (o.0[column], o.1[column]) = (over[0], over[1]);
-                    (s.0[column], s.1[column]) = (sum[0], sum[1]);
-                } else {
-                    // Nothing from the overlay here: the sum is the main alone.
-                    let mono = |frame| {
-                        let [l, r] = track.sample(frame);
-                        (l + r) / 2.0
-                    };
-                    let (lo, hi) = (a..b)
-                        .map(mono)
-                        .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
-                    (s.0[column], s.1[column]) = (lo, hi);
-                }
+            if let Some(pass) = &mut overlay {
+                let shift = self.overlay_frame(beats, a).map(|o| o - a as i64);
+                pass.column(self, column, a..b, shift);
             }
             from = to;
         }
-        Some(Cut { traces, overlay })
+        Some(Cut {
+            traces,
+            overlay: overlay.map(OverlayPass::finish),
+        })
     }
 
     /// The overlay frame that lines up with main frame `frame`, at song
@@ -496,7 +490,10 @@ impl PhaseScope {
         let all = std::iter::once(&newest).chain(trail.iter().copied());
         let gain = if s.auto_gain {
             let peak = all
-                .flat_map(|c| c.traces.iter().chain(c.overlay.iter().flatten()))
+                .flat_map(|c| {
+                    let overlay = c.overlay.iter().flat_map(|o| [&o.trace, &o.sum]);
+                    c.traces.iter().chain(overlay)
+                })
                 .flat_map(|(min, max)| min.iter().chain(max))
                 .fold(0.0f32, |peak, v| peak.max(v.abs()));
             if peak > 1e-6 {
@@ -512,16 +509,20 @@ impl PhaseScope {
             max: max.iter().map(|&v| level(v * gain)).collect(),
         };
         let scale = |cut: &Cut| -> Vec<ScopeTrace> { cut.traces.iter().map(one).collect() };
-        let overlay = self.overlay.as_ref().map(|_| {
-            let [trace, sum] = newest.overlay.as_ref().map_or_else(
-                || [ScopeTrace::silent(), ScopeTrace::silent()],
-                |[o, s]| [one(o), one(s)],
-            );
-            ScopeOverlay {
-                trace,
-                sum,
+        let overlay = self.overlay.as_ref().map(|_| match &newest.overlay {
+            Some(o) => ScopeOverlay {
+                trace: one(&o.trace),
+                sum: one(&o.sum),
+                cancel: o.cancel.clone(),
+                correlation: o.correlation,
                 ..ScopeOverlay::default()
-            }
+            },
+            None => ScopeOverlay {
+                trace: ScopeTrace::silent(),
+                sum: ScopeTrace::silent(),
+                cancel: vec![0.0; COLUMNS],
+                ..ScopeOverlay::default()
+            },
         });
         let beats = match s.cycle {
             CycleLength::Beat => 1,
@@ -542,6 +543,115 @@ impl PhaseScope {
             note: None,
         }
     }
+}
+
+/// Cutting the Overlay Source's part of one Cycle, column by column.
+struct OverlayPass {
+    cut: OverlayCut,
+    /// Both sources low-passed at the cut-off, run on from frame to frame.
+    filters: [Lr4; 2],
+    /// Σxy, Σx², Σy² of the low-passed sources, over `frames` frames.
+    sums: [f64; 3],
+    frames: u64,
+}
+
+impl OverlayPass {
+    fn new(scope: &PhaseScope, overlay: &Overlay, start: f64, first: f64) -> OverlayPass {
+        let cutoff = scope.settings.cutoff;
+        let filter = Lr4::new(scope.rate, cutoff, false);
+        let empty = || (vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]);
+        let mut pass = OverlayPass {
+            cut: OverlayCut {
+                trace: empty(),
+                sum: empty(),
+                cancel: vec![0.0; COLUMNS],
+                correlation: None,
+            },
+            filters: [filter, filter],
+            sums: [0.0; 3],
+            frames: 0,
+        };
+        // Settle the filters on the audio just before the Cycle.
+        let a = first.floor() as u64;
+        let settle = (SETTLE_PERIODS * scope.rate as f32 / cutoff) as u64;
+        if let Some(shift) = scope.overlay_frame(start, a).map(|o| o - a as i64) {
+            for frame in a.saturating_sub(settle)..a {
+                let (m, o) = pass.pair(scope, overlay, frame, shift);
+                pass.filters[0].run(m);
+                pass.filters[1].run(o);
+            }
+        }
+        pass
+    }
+
+    /// The main and overlay mono samples at main frame `frame`.
+    fn pair(&self, scope: &PhaseScope, overlay: &Overlay, frame: u64, shift: i64) -> (f32, f32) {
+        let mono = |[l, r]: [f32; 2]| (l + r) / 2.0;
+        let main = mono(scope.main.sample(frame));
+        let other =
+            u64::try_from(frame as i64 + shift).map_or(0.0, |f| mono(overlay.track.sample(f)));
+        (main, other)
+    }
+
+    /// One column, main frames `frames`, the overlay `shift` frames off (or
+    /// not there).
+    fn column(
+        &mut self,
+        scope: &PhaseScope,
+        column: usize,
+        frames: std::ops::Range<u64>,
+        shift: Option<i64>,
+    ) {
+        let Some(overlay) = &scope.overlay else {
+            return;
+        };
+        let (mut over, mut sum) = ([f32::MAX, f32::MIN], [f32::MAX, f32::MIN]);
+        let (mut product, mut power) = (0.0f64, 0.0f64);
+        for frame in frames.clone() {
+            // Nothing from the overlay here: the sum is the main alone.
+            let (m, o) = shift.map_or_else(
+                || (self.pair(scope, overlay, frame, 0).0, 0.0),
+                |shift| self.pair(scope, overlay, frame, shift),
+            );
+            if shift.is_some() {
+                over = [over[0].min(o), over[1].max(o)];
+            }
+            sum = [sum[0].min(m + o), sum[1].max(m + o)];
+            product += f64::from(m * o);
+            power += f64::from(m * m + o * o) / 2.0;
+            let (x, y) = (self.filters[0].run(m), self.filters[1].run(o));
+            self.sums[0] += f64::from(x * y);
+            self.sums[1] += f64::from(x * x);
+            self.sums[2] += f64::from(y * y);
+            self.frames += 1;
+        }
+        let cut = &mut self.cut;
+        if shift.is_some() {
+            (cut.trace.0[column], cut.trace.1[column]) = (over[0], over[1]);
+        }
+        (cut.sum.0[column], cut.sum.1[column]) = (sum[0], sum[1]);
+        // 1 where one is the exact opposite of the other, 0 where they don't fight.
+        let n = frames.end.saturating_sub(frames.start).max(1) as f64;
+        cut.cancel[column] = if power / n > SILENT_POWER {
+            ratio((-product / power).clamp(0.0, 1.0))
+        } else {
+            0.0
+        };
+    }
+
+    fn finish(mut self) -> OverlayCut {
+        let [xy, xx, yy] = self.sums;
+        // Either silent below the cut-off: no number.
+        let quietest = xx.min(yy) / self.frames.max(1) as f64;
+        self.cut.correlation =
+            (quietest > SILENT_POWER).then(|| ratio((xy / (xx * yy).sqrt()).clamp(-1.0, 1.0)));
+        self.cut
+    }
+}
+
+/// A ratio rounded to 0.01, so a still picture stays exactly the same.
+fn ratio(v: f64) -> f32 {
+    ((v * 100.0).round() / 100.0) as f32 + 0.0
 }
 
 /// Each column's lowest and highest values averaged over `cuts`.
@@ -567,22 +677,25 @@ fn average(cuts: &[&Cut]) -> Option<Cut> {
     let traces = (0..first.traces.len())
         .map(|t| (mean(t, true), mean(t, false)))
         .collect();
-    let overlay = cuts.iter().all(|c| c.overlay.is_some()).then(|| {
-        let mean = |i: usize, low: bool| -> Vec<f32> {
+    let overlays: Option<Vec<&OverlayCut>> = cuts.iter().map(|c| c.overlay.as_ref()).collect();
+    let overlay = overlays.map(|o| {
+        let mean = |f: &dyn Fn(&OverlayCut, usize) -> f32| -> Vec<f32> {
             (0..COLUMNS)
-                .map(|column| {
-                    let pick = |c: &&Cut| {
-                        let pair = &c.overlay.as_ref().expect("all have it")[i];
-                        if low { pair.0[column] } else { pair.1[column] }
-                    };
-                    cuts.iter().map(pick).sum::<f32>() / n
-                })
+                .map(|i| o.iter().map(|c| f(c, i)).sum::<f32>() / n)
                 .collect()
         };
-        [
-            (mean(0, true), mean(0, false)),
-            (mean(1, true), mean(1, false)),
-        ]
+        let correlations: Vec<f32> = o.iter().filter_map(|c| c.correlation).collect();
+        OverlayCut {
+            trace: (mean(&|c, i| c.trace.0[i]), mean(&|c, i| c.trace.1[i])),
+            sum: (mean(&|c, i| c.sum.0[i]), mean(&|c, i| c.sum.1[i])),
+            cancel: mean(&|c, i| c.cancel[i])
+                .into_iter()
+                .map(|v| ratio(f64::from(v)))
+                .collect(),
+            correlation: (!correlations.is_empty()).then(|| {
+                ratio(f64::from(correlations.iter().sum::<f32>()) / correlations.len() as f64)
+            }),
+        }
     });
     Some(Cut { traces, overlay })
 }

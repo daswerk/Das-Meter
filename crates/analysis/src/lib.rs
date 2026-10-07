@@ -29,4 +29,4 @@ pub use spectrum::{
 pub use stereometer::{
     StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,
 };
-pub use waveform::{WaveformAnalyser, WaveformColumn, WaveformScale, WaveformSettings};
+pub use waveform::{Lr4, WaveformAnalyser, WaveformColumn, WaveformScale, WaveformSettings};
