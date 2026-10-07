@@ -110,6 +110,18 @@ All its options are in its right-click menu:
   it, or the last few Cycles averaged, which holds a repeating pattern steady
   and smooths out a one-off.
 
+### Overlay Source
+
+While listening to Send Plugins, pick an **Overlay Source** in the Phase
+Scope's menu: a second Send Plugin from the same DAW, say the bass track
+under a Phase Scope on the kick. It's drawn over the main trace in its own
+Send Plugin's colour, placed by its own song position, so the two line up
+as they do in the song, with their sum dashed on top. **Offset** nudges it
+a few milliseconds later (+) or earlier (−). If its Send Plugin goes away,
+the Phase Scope says "Waiting for …" until it's back. The pick and offset
+are saved in Presets. With System Capture there's no second input, so the
+option is greyed out.
+
 When it's very small the readouts go first, so the traces keep the room.
 
 To show it, right-click a Meter and choose **Show ▸ Phase Scope**, or

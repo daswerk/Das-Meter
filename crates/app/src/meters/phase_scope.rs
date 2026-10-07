@@ -1,7 +1,7 @@
 //! The Phase Scope: the waveform over one Cycle, the newest sharp and the
 //! few before it fading behind, with a centre line, the beat lines of a bar,
 //! and the tempo it follows. An Overlay Source is drawn over it in its own
-//! colour, with the dotted sum of both and shading where they cancel.
+//! colour, with the dashed sum of both and shading where they cancel.
 
 use dasmeter_core::{
     Colour, PhaseScopeMeterSettings, PhaseScopeView, Role, ScopeOverlay, ScopeTrace,
@@ -92,6 +92,16 @@ pub fn draw(
         dim,
         Align::Left,
     );
+    if let Some(name) = scope.overlay.as_ref().and_then(|o| o.waiting.as_ref()) {
+        c.text(
+            &format!("Waiting for {name}"),
+            plot.x + c.px(2.0),
+            plot.y + c.px(2.0),
+            9.0,
+            dim,
+            Align::Left,
+        );
+    }
     if let Some(correlation) = scope.overlay.as_ref().and_then(|o| o.correlation) {
         let good = c.colour(Role::CorrelationPositive);
         let bad = c.colour(Role::CorrelationNegative);
@@ -145,7 +155,7 @@ fn envelope(c: &mut Canvas, band: Area, trace: &ScopeTrace, colour: Colour, fill
 }
 
 /// The Overlay Source in its band: shading where the two cancel, its trace,
-/// and the dotted sum.
+/// and the dashed sum.
 fn draw_overlay(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colour) {
     let columns = overlay.trace.max.len().max(1);
     let step = band.width / columns as f32;
@@ -170,20 +180,21 @@ fn draw_overlay(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colour
         .colour
         .unwrap_or_else(|| super::mix(main, c.colour(Role::Text), 0.6));
     envelope(c, band, &overlay.trace, colour.faded(0.85), false);
-    // The sum, dotted: every other few columns.
+    // The sum, dashed: drawn like a trace, in every other few columns.
     let sum = c.colour(Role::PhaseScopeSum);
     let dot = c.stroke(2.0);
     for (i, (&low, &high)) in overlay.sum.min.iter().zip(&overlay.sum.max).enumerate() {
-        if i % 6 >= 3 {
+        if i % 4 >= 2 {
             continue;
         }
-        let y = centre - (low + high) / 2.0 * half;
+        let (top, bottom) = (centre - high * half, centre - low * half);
+        let height = (bottom - top).max(dot);
         c.overlay.rect(
             Area {
                 x: band.x + i as f32 * step,
-                y: y - dot / 2.0,
+                y: (top + bottom) / 2.0 - height / 2.0,
                 width: step.max(1.0),
-                height: dot,
+                height,
             },
             sum,
         );

@@ -42,6 +42,15 @@ pub struct ScopeTrace {
     pub max: Vec<f32>,
 }
 
+impl ScopeTrace {
+    fn silent() -> ScopeTrace {
+        ScopeTrace {
+            min: vec![0.0; COLUMNS],
+            max: vec![0.0; COLUMNS],
+        }
+    }
+}
+
 /// What a Phase Scope shows.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct PhaseScopeView {
@@ -82,6 +91,8 @@ pub struct ScopeOverlay {
     /// How well the two agree below the cut-off, −1 to 1 to 0.01; `None` in
     /// silence.
     pub correlation: Option<f32>,
+    /// The picked Send Plugin isn't there: "Waiting for <name>".
+    pub waiting: Option<String>,
 }
 
 /// A song position at a frame.
@@ -255,6 +266,16 @@ impl Track {
 #[derive(Clone, Debug, PartialEq)]
 struct Cut {
     traces: Vec<(Vec<f32>, Vec<f32>)>,
+    /// With an Overlay Source: its mono trace, then the mono sum of both.
+    overlay: Option<[(Vec<f32>, Vec<f32>); 2]>,
+}
+
+/// An Overlay Source's audio and clock, and how its frames line up with the
+/// main Source's when neither says its song position.
+struct Overlay {
+    track: Track,
+    /// Main frame minus overlay frame, by arrival, once measured.
+    arrival: Option<i64>,
 }
 
 /// The Phase Scope's analysis.
@@ -262,6 +283,7 @@ pub(crate) struct PhaseScope {
     rate: u32,
     settings: PhaseScopeMeterSettings,
     main: Track,
+    overlay: Option<Overlay>,
     /// The newest Cycle cut, by its number on the grid.
     shown: Option<i64>,
     /// Newest last.
@@ -274,6 +296,7 @@ impl PhaseScope {
             rate,
             settings,
             main: Track::new(rate),
+            overlay: None,
             shown: None,
             history: VecDeque::new(),
         }
@@ -289,10 +312,38 @@ impl PhaseScope {
         if old.cycle != settings.cycle
             || old.tempo != settings.tempo
             || old.channel_view != settings.channel_view
+            || old.overlay_offset != settings.overlay_offset
         {
             self.history.clear();
             self.shown = None;
         }
+    }
+
+    /// Starts (afresh) or stops taking an Overlay Source.
+    pub fn set_overlay(&mut self, on: bool) {
+        self.overlay = on.then(|| Overlay {
+            track: Track::new(self.rate),
+            arrival: None,
+        });
+        self.history.clear();
+        self.shown = None;
+    }
+
+    /// Takes the Overlay Source's audio, which shows with the next Cycle.
+    pub fn process_overlay(&mut self, frames: &[f32], timing: Option<Timing>) {
+        let free = f64::from(self.settings.tempo);
+        let Some(overlay) = &mut self.overlay else {
+            return;
+        };
+        // Line up by arrival: this block came in about when the main
+        // Source's newest did. Measured once, again only after a big slip
+        // (a dropout), so the overlay doesn't jitter by a block.
+        let now = self.main.end as i64 - overlay.track.end as i64;
+        let slip = (self.rate / 10) as i64;
+        if overlay.arrival.is_none_or(|a| (a - now).abs() > slip) {
+            overlay.arrival = Some(now);
+        }
+        overlay.track.push(frames, timing, free);
     }
 
     /// Takes the main Source's audio. Returns whether a new Cycle came in.
@@ -341,14 +392,27 @@ impl PhaseScope {
         let view = self.settings.channel_view;
         let count = view.traces();
         let mut traces = vec![(vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]); count];
+        let mut overlay = self.overlay.as_ref().map(|_| {
+            [
+                (vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]),
+                (vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]),
+            ]
+        });
         let mut from = first;
         for column in 0..COLUMNS {
+            let beats = start + length * column as f64 / COLUMNS as f64;
             let to = track.frame_at(start + length * (column + 1) as f64 / COLUMNS as f64)?;
             let (a, b) = (
                 from.floor() as u64,
                 (to.floor() as u64).max(from.floor() as u64 + 1),
             );
+            // Where the overlay's frames for this column start, if it has them.
+            let shifted = overlay
+                .as_ref()
+                .and_then(|_| self.overlay_frame(beats, a))
+                .map(|o| o - a as i64);
             let (mut low, mut high) = ([f32::MAX; 2], [f32::MIN; 2]);
+            let (mut over, mut sum) = ([f32::MAX, f32::MIN], [f32::MAX, f32::MIN]);
             for frame in a..b {
                 let [l, r] = track.sample(frame);
                 let split = view.split(l, r);
@@ -356,14 +420,55 @@ impl PhaseScope {
                     low[t] = low[t].min(split[t]);
                     high[t] = high[t].max(split[t]);
                 }
+                if let (Some(shift), Some(o)) = (shifted, &self.overlay) {
+                    let [ol, or] =
+                        u64::try_from(frame as i64 + shift).map_or([0.0; 2], |f| o.track.sample(f));
+                    let x = (ol + or) / 2.0;
+                    let both = (l + r) / 2.0 + x;
+                    over = [over[0].min(x), over[1].max(x)];
+                    sum = [sum[0].min(both), sum[1].max(both)];
+                }
             }
             for (t, (min, max)) in traces.iter_mut().enumerate() {
                 min[column] = low[t];
                 max[column] = high[t];
             }
+            if let Some([o, s]) = &mut overlay {
+                if shifted.is_some() {
+                    (o.0[column], o.1[column]) = (over[0], over[1]);
+                    (s.0[column], s.1[column]) = (sum[0], sum[1]);
+                } else {
+                    // Nothing from the overlay here: the sum is the main alone.
+                    let mono = |frame| {
+                        let [l, r] = track.sample(frame);
+                        (l + r) / 2.0
+                    };
+                    let (lo, hi) = (a..b)
+                        .map(mono)
+                        .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+                    (s.0[column], s.1[column]) = (lo, hi);
+                }
+            }
             from = to;
         }
-        Some(Cut { traces })
+        Some(Cut { traces, overlay })
+    }
+
+    /// The overlay frame that lines up with main frame `frame`, at song
+    /// position `beats`, after the offset: by song position when both follow
+    /// their DAW, else by arrival. `None` if the overlay doesn't reach it.
+    fn overlay_frame(&self, beats: f64, frame: u64) -> Option<i64> {
+        let overlay = self.overlay.as_ref()?;
+        let offset_seconds = f64::from(self.settings.overlay_offset) / 1_000.0;
+        if self.main.following && overlay.track.following {
+            let tempo = self.main.tempo()?;
+            let at = overlay
+                .track
+                .frame_at(beats - offset_seconds * tempo / 60.0)?;
+            return Some(at.floor() as i64);
+        }
+        let arrival = overlay.arrival?;
+        Some(frame as i64 - arrival - (offset_seconds * f64::from(self.rate)).round() as i64)
     }
 
     /// What the scope shows now.
@@ -386,11 +491,12 @@ impl PhaseScope {
         let count = s.channel_view.traces();
         let newest = newest.unwrap_or_else(|| Cut {
             traces: vec![(vec![0.0; COLUMNS], vec![0.0; COLUMNS]); count],
+            overlay: None,
         });
         let all = std::iter::once(&newest).chain(trail.iter().copied());
         let gain = if s.auto_gain {
             let peak = all
-                .flat_map(|c| &c.traces)
+                .flat_map(|c| c.traces.iter().chain(c.overlay.iter().flatten()))
                 .flat_map(|(min, max)| min.iter().chain(max))
                 .fold(0.0f32, |peak, v| peak.max(v.abs()));
             if peak > 1e-6 {
@@ -401,15 +507,22 @@ impl PhaseScope {
         } else {
             10f32.powf(s.gain / 20.0)
         };
-        let scale = |cut: &Cut| -> Vec<ScopeTrace> {
-            cut.traces
-                .iter()
-                .map(|(min, max)| ScopeTrace {
-                    min: min.iter().map(|&v| level(v * gain)).collect(),
-                    max: max.iter().map(|&v| level(v * gain)).collect(),
-                })
-                .collect()
+        let one = |(min, max): &(Vec<f32>, Vec<f32>)| ScopeTrace {
+            min: min.iter().map(|&v| level(v * gain)).collect(),
+            max: max.iter().map(|&v| level(v * gain)).collect(),
         };
+        let scale = |cut: &Cut| -> Vec<ScopeTrace> { cut.traces.iter().map(one).collect() };
+        let overlay = self.overlay.as_ref().map(|_| {
+            let [trace, sum] = newest.overlay.as_ref().map_or_else(
+                || [ScopeTrace::silent(), ScopeTrace::silent()],
+                |[o, s]| [one(o), one(s)],
+            );
+            ScopeOverlay {
+                trace,
+                sum,
+                ..ScopeOverlay::default()
+            }
+        });
         let beats = match s.cycle {
             CycleLength::Beat => 1,
             CycleLength::Bar => grid.per_bar,
@@ -425,7 +538,7 @@ impl PhaseScope {
             following_daw: self.main.following,
             said_tempo: self.main.timed,
             colour: None,
-            overlay: None,
+            overlay,
             note: None,
         }
     }
@@ -454,7 +567,24 @@ fn average(cuts: &[&Cut]) -> Option<Cut> {
     let traces = (0..first.traces.len())
         .map(|t| (mean(t, true), mean(t, false)))
         .collect();
-    Some(Cut { traces })
+    let overlay = cuts.iter().all(|c| c.overlay.is_some()).then(|| {
+        let mean = |i: usize, low: bool| -> Vec<f32> {
+            (0..COLUMNS)
+                .map(|column| {
+                    let pick = |c: &&Cut| {
+                        let pair = &c.overlay.as_ref().expect("all have it")[i];
+                        if low { pair.0[column] } else { pair.1[column] }
+                    };
+                    cuts.iter().map(pick).sum::<f32>() / n
+                })
+                .collect()
+        };
+        [
+            (mean(0, true), mean(0, false)),
+            (mean(1, true), mean(1, false)),
+        ]
+    });
+    Some(Cut { traces, overlay })
 }
 
 /// A value after gain: clipped to ±1 and rounded to 0.01, so a still

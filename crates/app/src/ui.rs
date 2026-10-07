@@ -1069,6 +1069,70 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
     }
 }
 
+/// A Phase Scope's Overlay Source: a second Send Plugin from the same DAW,
+/// or none, and the ± ms offset that nudges it. Shown disabled on System
+/// Capture, which has no second input.
+fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, actions: &mut Actions) {
+    let (Some(overlay), MeterSettings::PhaseScope(mut settings)) =
+        (&meter_scene.overlay, meter_scene.settings)
+    else {
+        return;
+    };
+    let meter = meter_scene.meter;
+    ui.separator();
+    ui.label("Overlay Source");
+    if scene.listen_to == ListenTo::SystemCapture {
+        ui.add_enabled(
+            false,
+            egui::Label::new("Needs Send Plugins: listen to Send Plugins"),
+        );
+        return;
+    }
+    if ui.radio(overlay.picked.is_none(), "None").clicked() && overlay.picked.is_some() {
+        actions.push(Event::PickOverlay { meter, id: None });
+    }
+    let mut listed = false;
+    for plugin in &overlay.choices {
+        listed |= overlay.picked == Some(plugin.id);
+        let selected = overlay.picked == Some(plugin.id);
+        ui.horizontal(|ui| {
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+            ui.painter()
+                .circle_filled(dot.center(), 4.0, colour32(plugin.colour));
+            if ui.radio(selected, &plugin.label).clicked() && !selected {
+                actions.push(Event::PickOverlay {
+                    meter,
+                    id: Some(plugin.id),
+                });
+            }
+        });
+    }
+    if let (Some(_), false) = (overlay.picked, listed) {
+        ui.label(RichText::new("The picked one isn't there: waiting for it").weak());
+    }
+    if overlay.choices.is_empty() && overlay.picked.is_none() {
+        ui.label(RichText::new("No other Send Plugin in this DAW").weak());
+    }
+    if overlay.picked.is_some() {
+        let (low, high) = limits::PHASE_SCOPE_OFFSET;
+        if ui
+            .add(
+                Slider::new(&mut settings.overlay_offset, low..=high)
+                    .text("Offset")
+                    .suffix(" ms")
+                    .max_decimals(1),
+            )
+            .on_hover_text("Nudges the overlay later (+) or earlier (−)")
+            .changed()
+        {
+            actions.push(Event::SetMeter {
+                meter,
+                settings: MeterSettings::PhaseScope(settings),
+            });
+        }
+    }
+}
+
 /// "Add Meter": a Meter of the picked kind next to this one.
 fn add_meter_item(ui: &mut egui::Ui, meter: usize, actions: &mut Actions) {
     ui.menu_button("Add Meter", |ui| {
@@ -1212,6 +1276,7 @@ fn menu_contents(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut A
     ui.set_width(280.0);
     ui.label(RichText::new(kind_name(&meter_scene.settings)).strong());
     source_item(ui, scene, meter, actions);
+    overlay_item(ui, scene, meter_scene, actions);
     ui.separator();
     basic(ui, meter, meter_scene.settings, actions);
     ui.separator();

@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -25,6 +25,12 @@ const BAR: (u32, u32) = (3024, 360);
 /// A kick on every beat at 120 BPM over a bass line (an octave jump each
 /// bar), `seconds` long, mono.
 fn kick_and_bass(seconds: f64) -> Vec<f32> {
+    let (kick, bass) = kick_and_bass_apart(seconds);
+    kick.iter().zip(&bass).map(|(k, b)| k + b).collect()
+}
+
+/// [`kick_and_bass`] as two tracks: the kick, and the bass.
+fn kick_and_bass_apart(seconds: f64) -> (Vec<f32>, Vec<f32>) {
     let beat = f64::from(RATE) / 2.0;
     let (mut kick_phase, mut bass_phase) = (0.0f64, 0.0f64);
     (0..frames(RATE, seconds))
@@ -40,9 +46,9 @@ fn kick_and_bass(seconds: f64) -> Vec<f32> {
             let bass_freq = if bar % 2 == 0 { 55.0 } else { 41.2 };
             bass_phase += std::f64::consts::TAU * bass_freq / f64::from(RATE);
             let bass = bass_phase.sin() * 0.3 * (1.0 - (-t * 20.0).exp());
-            (kick + bass) as f32
+            (kick as f32, bass as f32)
         })
-        .collect()
+        .unzip()
 }
 
 pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
@@ -315,6 +321,61 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             for block in audio.chunks(1024) {
                 now += Duration::from_secs_f64(512.0 / f64::from(RATE));
                 core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
+        // The Phase Scope on a Kick Send Plugin with the Bass from the same
+        // DAW as its Overlay Source, both following the DAW at 120 BPM.
+        Some("phase-scope-overlay") => {
+            let settings =
+                dasmeter_core::MeterSettings::default_of(dasmeter_core::MeterKind::PhaseScope);
+            core.handle(Event::SetMeter { meter: 1, settings }, now);
+            core.handle(
+                Event::SetListenTo(dasmeter_core::ListenTo::SendPlugins),
+                now,
+            );
+            let plugin = |id: u64, name: &str, colour: u32| dasmeter_core::SendPlugin {
+                id,
+                name: name.to_owned(),
+                colour,
+                mono: false,
+                sample_rate: RATE,
+                state: dasmeter_core::SendPluginState::Live,
+                outdated: false,
+                host_pid: 1,
+            };
+            let listed = [plugin(1, "Kick", 0xff_6a_3d), plugin(2, "Bass", 0x4d_a3_ff)];
+            core.handle(Event::SendPlugins(&listed), now);
+            core.handle(Event::PickSendPlugin { meter: 1, id: 1 }, now);
+            core.handle(
+                Event::PickOverlay {
+                    meter: 1,
+                    id: Some(2),
+                },
+                now,
+            );
+            let (kick, bass) = kick_and_bass_apart(8.0);
+            for (block, (kick, bass)) in kick.chunks(512).zip(bass.chunks(512)).enumerate() {
+                let beats = (block * 512) as f64 / f64::from(RATE) * 2.0;
+                let timing = Some(dasmeter_core::Timing {
+                    tempo: 120.0,
+                    beats,
+                    bar_start: (beats / 4.0).floor() * 4.0,
+                    signature: (4, 4),
+                    playing: true,
+                });
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                for (id, mono) in [(1, kick), (2, bass)] {
+                    let frames: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
+                    core.handle(
+                        Event::SendPluginAudio {
+                            id,
+                            frames: &frames,
+                            timing,
+                        },
+                        now,
+                    );
+                }
                 core.decide(now);
             }
         }

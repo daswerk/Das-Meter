@@ -955,6 +955,22 @@ impl Meter {
         self.view = None;
     }
 
+    /// A Phase Scope starts (afresh) or stops taking an Overlay Source.
+    /// Other Meters have none.
+    pub fn set_overlay(&mut self, on: bool) {
+        if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
+            a.set_overlay(on);
+            self.view = None;
+        }
+    }
+
+    /// The Overlay Source's audio, for a Phase Scope.
+    pub fn process_overlay(&mut self, frames: &[f32], timing: Option<Timing>) {
+        if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
+            a.process_overlay(frames, timing);
+        }
+    }
+
     /// The cursor moved over this Meter (or left it): only the Spectrum shows it.
     pub fn pointer_changed(&mut self) {
         if matches!(self.settings, MeterSettings::Spectrum(_)) {

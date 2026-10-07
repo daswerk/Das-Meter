@@ -56,6 +56,9 @@ pub struct MeterPreset {
     /// The Send Plugin it picked: found again by ID, then by name, else waited for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub send_plugin: Option<Pick>,
+    /// A Phase Scope's Overlay Source, found again the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<Pick>,
     #[serde(default)]
     pub show_source_label: bool,
     /// Its own colours for single roles, over the Theme's.
@@ -122,6 +125,7 @@ fn default_meters() -> Vec<MeterPreset> {
     .map(|settings| MeterPreset {
         settings,
         send_plugin: None,
+        overlay: None,
         show_source_label: false,
         overrides: Vec::new(),
     })

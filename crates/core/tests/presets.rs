@@ -444,3 +444,38 @@ fn a_saved_copy_isnt_taken_for_a_built_in_after_relaunch() {
     let copy = list.iter().find(|p| p.name == "Bar (2)").unwrap();
     assert!(!copy.built_in);
 }
+
+#[test]
+fn a_phase_scopes_overlay_and_offset_are_saved() {
+    use dasmeter_core::{MeterKind, MeterSettings};
+    let mut app = App::first_launch();
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let plugins = [plugin(1, "Kick"), plugin(2, "Bass")];
+    app.send(Event::SendPlugins(&plugins));
+    let MeterSettings::PhaseScope(mut settings) = MeterSettings::default_of(MeterKind::PhaseScope)
+    else {
+        unreachable!()
+    };
+    settings.overlay_offset = 7.0;
+    app.send(Event::SetMeter {
+        meter: 0,
+        settings: MeterSettings::PhaseScope(settings),
+    });
+    app.send(Event::PickSendPlugin { meter: 0, id: 1 });
+    app.send(Event::PickOverlay {
+        meter: 0,
+        id: Some(2),
+    });
+
+    // Next session: Bass came back under a new ID, found by name.
+    let mut app = app.relaunch();
+    let plugins = [plugin(1, "Kick"), plugin(5, "Bass")];
+    app.send(Event::SendPlugins(&plugins));
+    let scene = app.scene();
+    let meter = &scene.windows[0].meters[0];
+    assert_eq!(meter.overlay.as_ref().and_then(|o| o.picked), Some(5));
+    let MeterSettings::PhaseScope(settings) = meter.settings else {
+        panic!("{:?}", meter.settings)
+    };
+    assert_eq!(settings.overlay_offset, 7.0);
+}

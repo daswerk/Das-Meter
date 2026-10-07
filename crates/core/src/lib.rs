@@ -43,8 +43,8 @@ pub use presets::{
     StoredSettings, ThemeRef,
 };
 pub use scene::{
-    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note, Scene,
-    SendPluginItem, SourceItem, SourceLabel, WindowScene,
+    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note,
+    OverlayScene, Scene, SendPluginItem, SourceItem, SourceLabel, WindowScene,
 };
 pub use settings::AppSettings;
 pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState, Timing};
@@ -105,6 +105,11 @@ pub enum Event<'a> {
     PickSendPlugin {
         meter: usize,
         id: u64,
+    },
+    /// The user picked a Phase Scope's Overlay Source (`None` removes it).
+    PickOverlay {
+        meter: usize,
+        id: Option<u64>,
     },
     /// "Use for all Meters": every Meter takes the Send Plugin this one shows.
     UseForAllMeters {
@@ -358,6 +363,10 @@ struct MeterSlot {
     /// On Send Plugins: the ID and sample rate of the Send Plugin whose audio
     /// the analyser has, and when it was last fed (audio or idle silence).
     showing: Option<Showing>,
+    /// A Phase Scope's Overlay Source pick. Never followed by other Meters.
+    overlay: Option<Pick>,
+    /// The ID of the Overlay Source whose audio the Phase Scope takes.
+    overlay_showing: Option<u64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -467,6 +476,8 @@ impl AppCore {
                     show_source_label: false,
                     overrides: Vec::new(),
                     showing: None,
+                    overlay: None,
+                    overlay_showing: None,
                 })
                 .collect(),
             pointer: None,
@@ -785,6 +796,7 @@ impl AppCore {
             .meters
             .iter()
             .filter_map(|slot| slot.showing.map(|showing| showing.id))
+            .chain(self.meters.iter().filter_map(|slot| slot.overlay_showing))
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -989,6 +1001,7 @@ impl AppCore {
                 .map(|slot| MeterPreset {
                     settings: slot.meter.settings(),
                     send_plugin: slot.pick.clone(),
+                    overlay: slot.overlay.clone(),
                     show_source_label: slot.show_source_label,
                     overrides: slot
                         .overrides
@@ -1025,6 +1038,8 @@ impl AppCore {
                 show_source_label: m.show_source_label,
                 overrides: m.overrides.iter().map(|o| (o.role, o.colour)).collect(),
                 showing: None,
+                overlay: m.overlay.clone(),
+                overlay_showing: None,
             })
             .collect();
         self.layout = data.bar;
@@ -1173,6 +1188,9 @@ impl AppCore {
                     if !wanted.contains(&i) {
                         continue;
                     }
+                    if slot.overlay_showing == Some(id) {
+                        slot.meter.process_overlay(frames, timing);
+                    }
                     if let Some(showing) = slot.showing.as_mut().filter(|s| s.id == id) {
                         slot.meter.process_timed(frames, timing);
                         showing.fed_at = now;
@@ -1191,6 +1209,26 @@ impl AppCore {
                     return;
                 }
                 self.meters[meter].pick = Some(Pick::of(plugin));
+                self.route(now);
+            }
+            Event::PickOverlay { meter, id } => {
+                let Some(slot) = self.meters.get(meter) else {
+                    return;
+                };
+                let pick = match id {
+                    None => None,
+                    Some(id) => {
+                        let offered = self.overlay_choices(meter);
+                        let Some(plugin) = offered.into_iter().find(|p| p.id == id) else {
+                            return;
+                        };
+                        Some(Pick::of(plugin))
+                    }
+                };
+                if slot.overlay == pick {
+                    return;
+                }
+                self.meters[meter].overlay = pick;
                 self.route(now);
             }
             Event::UseForAllMeters { meter } => {
@@ -1618,7 +1656,7 @@ impl AppCore {
     /// pick found only by name (a new ID) takes the new ID.
     fn follow_renames(&mut self) {
         for slot in &mut self.meters {
-            if let Some(pick) = &mut slot.pick {
+            for pick in [&mut slot.pick, &mut slot.overlay].into_iter().flatten() {
                 if let Some(plugin) = sources::find(pick, &self.send_plugins) {
                     *pick = Pick::of(plugin);
                 }
@@ -1655,6 +1693,7 @@ impl AppCore {
                 if slot.showing.take().is_some() {
                     slot.meter.stop();
                 }
+                slot.overlay_showing = None;
                 continue;
             };
             match slot.showing {
@@ -1666,6 +1705,7 @@ impl AppCore {
                         self.note_until = Some(now + NOTE_DURATION);
                     }
                     slot.meter.start(sample_rate);
+                    slot.overlay_showing = None; // a fresh analyser
                     slot.showing = Some(Showing {
                         id,
                         sample_rate,
@@ -1688,6 +1728,51 @@ impl AppCore {
                 }
             }
         }
+        // Phase Scopes take their Overlay Source while it's there.
+        for meter in 0..self.meters.len() {
+            let target = self.overlay_plugin(meter).map(|p| p.id);
+            let slot = &mut self.meters[meter];
+            if slot.showing.is_none() || slot.overlay_showing == target {
+                continue;
+            }
+            slot.meter.set_overlay(target.is_some());
+            slot.overlay_showing = target;
+        }
+    }
+
+    /// The Send Plugins a Phase Scope may take as its Overlay Source: usable
+    /// ones from the same DAW as the one it shows, but not that one. None on
+    /// System Capture or for other Meters.
+    fn overlay_choices(&self, meter: usize) -> Vec<&SendPlugin> {
+        if self.listen_to != ListenTo::SendPlugins
+            || !matches!(
+                self.meters[meter].meter.settings(),
+                MeterSettings::PhaseScope(_)
+            )
+        {
+            return Vec::new();
+        }
+        let Resolved::Plugin(main) = self.resolve(meter) else {
+            return Vec::new();
+        };
+        self.send_plugins
+            .iter()
+            .filter(|p| p.usable() && p.host_pid == main.host_pid && p.id != main.id)
+            .collect()
+    }
+
+    /// The Overlay Source a Phase Scope takes now, if its pick is there.
+    fn overlay_plugin(&self, meter: usize) -> Option<&SendPlugin> {
+        let pick = self.meters[meter].overlay.as_ref()?;
+        if self.listen_to != ListenTo::SendPlugins
+            || !matches!(
+                self.meters[meter].meter.settings(),
+                MeterSettings::PhaseScope(_)
+            )
+        {
+            return None;
+        }
+        sources::find(pick, &self.send_plugins).filter(|p| p.usable())
     }
 
     /// The Meters the current layout shows.
@@ -1766,6 +1851,8 @@ impl AppCore {
             show_source_label: self.meters[like].show_source_label,
             overrides: self.meters[like].overrides.clone(),
             showing: None,
+            overlay: self.meters[like].overlay.clone(),
+            overlay_showing: None,
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {
             Some(i) => {
@@ -2041,9 +2128,29 @@ impl AppCore {
                 ListenTo::SendPlugins => match self.resolve(i) {
                     Resolved::Plugin(plugin) => {
                         let (name, rgb) = (plugin.name.clone(), plugin.colour);
+                        let overlay = self.meters[i].overlay.as_ref().map(|pick| {
+                            match self.overlay_plugin(i) {
+                                Some(p) => (Some(colour(p.colour)), None),
+                                None => (None, Some(pick.name.clone())),
+                            }
+                        });
                         let mut state = self.live_state(i, frame, pointer, now);
                         if let MeterState::Live(MeterView::PhaseScope { scope, .. }) = &mut state {
                             scope.colour = Some(colour(rgb));
+                            match overlay {
+                                Some((colour, None)) => {
+                                    if let Some(shown) = &mut scope.overlay {
+                                        shown.colour = colour;
+                                    }
+                                }
+                                Some((_, waiting)) => {
+                                    scope.overlay = Some(ScopeOverlay {
+                                        waiting,
+                                        ..ScopeOverlay::default()
+                                    });
+                                }
+                                None => {}
+                            }
                             if !scope.said_tempo {
                                 scope.note = Some(format!(
                                     "No tempo from {name}: {:.1} BPM typed in",
@@ -2078,8 +2185,31 @@ impl AppCore {
                 .iter_mut()
                 .find(|w| w.key == key)
                 .expect("placed in a window");
+            let overlay =
+                matches!(slot.meter.settings(), MeterSettings::PhaseScope(_)).then(|| {
+                    OverlayScene {
+                        picked: match self.listen_to {
+                            ListenTo::SendPlugins => slot
+                                .overlay
+                                .as_ref()
+                                .map(|pick| self.overlay_plugin(i).map_or(pick.id, |p| p.id)),
+                            ListenTo::SystemCapture => slot.overlay.as_ref().map(|pick| pick.id),
+                        },
+                        choices: self
+                            .overlay_choices(i)
+                            .into_iter()
+                            .map(|p| SendPluginItem {
+                                id: p.id,
+                                label: p.label(),
+                                colour: colour(p.colour),
+                                pickable: true,
+                            })
+                            .collect(),
+                    }
+                });
             window.meters.push(MeterScene {
                 meter: i,
+                overlay,
                 frame,
                 state,
                 source,
