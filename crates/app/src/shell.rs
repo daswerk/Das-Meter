@@ -564,6 +564,22 @@ impl Shell {
                 .with_min_inner_size(LogicalSize::new(360.0, 240.0));
             self.open(event_loop, Role::Settings, attributes);
         }
+        // The settings stay above a Bar or Window that floats on top.
+        let above = scene.windows.iter().any(|w| w.on_top);
+        if let Some(id) = self.find(Role::Settings) {
+            let app = self.windows.get_mut(&id).expect("found");
+            if app.on_top != Some(above) {
+                #[cfg(target_os = "macos")]
+                crate::macos::set_above_floating(&app.window, above);
+                #[cfg(not(target_os = "macos"))]
+                app.window.set_window_level(if above {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                });
+                app.on_top = Some(above);
+            }
+        }
         // The menu and the panel show settings, not audio: they redraw only
         // when what they show changes.
         let ui_view = ui_view(&scene);

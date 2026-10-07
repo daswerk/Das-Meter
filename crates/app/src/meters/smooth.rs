@@ -266,14 +266,21 @@ pub fn panel(c: &mut Canvas, area: Area, radius: f32, opacity: f32) {
                 .rounded_gradient(inner, ring_radius, t.faded(0.13), b.faded(0.13));
         }
     }
-    let line = Area {
-        x: area.x + radius,
-        width: (area.width - 2.0 * radius).max(0.0),
-        height: c.px(1.0).max(1.0),
-        ..area
-    };
-    c.shapes.rect(line, white.faded(0.06 * opacity));
+    // A faint light edge along the top, fading out well before the corners.
+    let (left, right) = (area.x + radius, area.right() - radius);
+    let thin = c.px(1.0).max(1.0);
+    c.shapes.faded_hline(
+        left,
+        right,
+        area.y + thin / 2.0,
+        thin,
+        white.faded(TOP_EDGE_ALPHA * opacity),
+        (right - left) * 0.35,
+    );
 }
+
+/// How bright the light edge along a panel's top is, at its middle.
+const TOP_EDGE_ALPHA: f32 = 0.035;
 
 /// The window under the Meters in the Smooth Look: the background a little
 /// lighter at the top, and a soft shadow under each Meter's panel.
