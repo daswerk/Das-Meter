@@ -116,13 +116,14 @@ While listening to Send Plugins, pick an **Overlay Source** in the Phase
 Scope's menu: a second Send Plugin from the same DAW, say the bass track
 under a Phase Scope on the kick. It's drawn over the main trace in its own
 Send Plugin's colour, placed by its own song position, so the two line up
-as they do in the song, with their sum (what's actually left) dashed on top. Where the two push in
-opposite directions and cancel, the space between them is shaded: the
-stronger the cancelling, the stronger the shading. The number at the bottom
-right is their correlation below the **Correlation below** frequency
-(150 Hz by default): +1 when the lows move together, −1 when one is the
-other upside down. It's blank in silence, and the first thing left out when
-the Meter is small. **Offset** nudges it
+as they do in the song, with their sum (what's actually left) dashed on top. A coloured
+lane under the Cycle shows how their lows move at each point: green where
+they push together, red where they cancel, stronger where they're louder.
+The large number in the top right is their correlation below the
+**Correlation below** frequency (150 Hz by default), with what it means in
+words: +1 when the lows move together, −1 when one is the other upside
+down. It's blank in silence, and the first thing left out when the Meter is
+small. **Offset** nudges it
 a few milliseconds later (+) or earlier (−). If its Send Plugin goes away,
 the Phase Scope says "Waiting for …" until it's back. The pick and offset
 are saved in Presets. With System Capture there's only the one Source, so

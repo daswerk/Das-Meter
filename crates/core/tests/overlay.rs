@@ -340,7 +340,13 @@ fn identical_tracks_dont_cancel() {
     app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.3));
     let scope = app.scope();
     let overlay = scope.overlay.expect("the overlay");
-    assert!(overlay.cancel.iter().all(|&c| c == 0.0), "no shading");
+    // Together all the way across: no column pushes against the other.
+    let together = overlay.phase.iter().filter(|&&p| p > 0.9).count();
+    assert!(
+        together > overlay.phase.len() * 9 / 10,
+        "{together} together"
+    );
+    assert!(overlay.phase.iter().all(|&p| p >= 0.0));
     let correlation = overlay.correlation.expect("a correlation");
     assert!(correlation > 0.98, "{correlation}");
     // The sum is the two traces added.
@@ -357,10 +363,10 @@ fn an_inverted_copy_cancels_completely() {
     app.play_both(4.0, &kick, |f| -kick(f));
     let scope = app.scope();
     let overlay = scope.overlay.expect("the overlay");
-    let shaded = overlay.cancel.iter().filter(|&&c| c > 0.9).count();
+    let against = overlay.phase.iter().filter(|&&p| p < -0.9).count();
     assert!(
-        shaded > overlay.cancel.len() * 9 / 10,
-        "{shaded} columns shaded"
+        against > overlay.phase.len() * 9 / 10,
+        "{against} columns cancel"
     );
     let correlation = overlay.correlation.expect("a correlation");
     assert!(correlation < -0.98, "{correlation}");

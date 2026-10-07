@@ -1,7 +1,9 @@
 //! The Phase Scope: the waveform over one Cycle, the newest sharp and the
 //! few before it fading behind, with a centre line, the beat lines of a bar,
 //! and the tempo it follows. An Overlay Source is drawn over it in its own
-//! colour, with the dashed sum of both and shading where they cancel.
+//! colour with the dashed sum of both; a phase lane under the Cycle shows
+//! where the two push together (green) and where they cancel (red), and the
+//! low end's correlation sits large in the top right.
 
 use dasmeter_core::{
     Colour, PhaseScopeMeterSettings, PhaseScopeView, Role, ScopeOverlay, ScopeTrace,
@@ -11,11 +13,18 @@ use super::Canvas;
 use super::labels::Align;
 use super::shapes::Area;
 
-/// Below this height (logical px) the correlation number is left out, the
+/// Below this height (logical px) the correlation readout is left out, the
 /// first thing to go, so the traces keep the room.
 const MIN_NUMBER_HEIGHT: f32 = 64.0;
-/// Below this height the tempo readout goes too.
+/// Below this height the tempo readout and the phase lane go too.
 const MIN_TEXT_HEIGHT: f32 = 40.0;
+/// The tempo readout's row at the bottom, in logical px.
+const TEXT_ROW: f32 = 14.0;
+/// The phase lane's height, and the gap around it, in logical px.
+const LANE: f32 = 10.0;
+const LANE_GAP: f32 = 3.0;
+/// A column quieter than this (after gain) leaves the lane empty there.
+const LANE_QUIET: f32 = 0.02;
 
 pub fn draw(
     c: &mut Canvas,
@@ -26,7 +35,26 @@ pub fn draw(
     let (grid, dim) = (c.colour(Role::PhaseScopeGrid), c.dim());
     let thin = c.px(1.0).max(1.0);
     let roomy = area.height >= c.px(MIN_TEXT_HEIGHT);
-    let plot = area;
+
+    // Room at the bottom for the tempo readout and, with an overlay, the lane.
+    let (mut plot, text_row) = if roomy {
+        let (plot, row) = area.split_bottom(c.px(TEXT_ROW));
+        (plot, Some(row))
+    } else {
+        (area, None)
+    };
+    let lane = match (&scope.overlay, roomy) {
+        (Some(overlay), true) if overlay.waiting.is_none() => {
+            let (rest, lane) = plot.split_bottom(c.px(LANE + 2.0 * LANE_GAP));
+            plot = rest;
+            Some(Area {
+                y: lane.y + c.px(LANE_GAP),
+                height: c.px(LANE),
+                ..lane
+            })
+        }
+        _ => None,
+    };
 
     // Beat lines across the whole plot, then one band per trace with its centre line.
     for &x in &scope.beat_lines {
@@ -65,20 +93,26 @@ pub fn draw(
         for (i, cycle) in scope.trail.iter().enumerate() {
             if let Some(old) = cycle.get(t) {
                 let fade = 0.12 + 0.2 * (i + 1) as f32 / (older + 1) as f32;
-                envelope(c, band, old, colour.faded(fade), false);
+                trace_line(c, band, old, colour.faded(fade), false);
             }
         }
-        if t == 0
-            && let Some(overlay) = &scope.overlay
-        {
-            draw_overlay(c, band, overlay, colour);
+        let overlay = scope.overlay.as_ref().filter(|_| t == 0);
+        if let Some(overlay) = overlay {
+            overlay_trace(c, band, overlay, colour);
         }
-        envelope(c, band, trace, colour, settings.filled);
+        trace_line(c, band, trace, colour, settings.filled);
+        if let Some(overlay) = overlay {
+            sum_line(c, band, overlay);
+        }
     }
 
-    if !roomy {
-        return;
+    if let (Some(lane), Some(overlay), Some(main)) = (lane, &scope.overlay, scope.traces.first()) {
+        phase_lane(c, lane, overlay, main);
     }
+
+    let Some(row) = text_row else {
+        return;
+    };
     let mut readout = format!("{:.1} BPM", scope.tempo);
     if !scope.following_daw {
         readout += " · typed in";
@@ -88,8 +122,8 @@ pub fn draw(
     }
     c.text(
         &readout,
-        plot.x + c.px(2.0),
-        plot.bottom() - c.px(13.0),
+        row.x + c.px(2.0),
+        row.y + c.px(1.0),
         9.0,
         dim,
         Align::Left,
@@ -104,119 +138,159 @@ pub fn draw(
             Align::Left,
         );
     }
-    let numbered = area.height >= c.px(MIN_NUMBER_HEIGHT);
-    if let Some(correlation) = scope
-        .overlay
-        .as_ref()
-        .and_then(|o| o.correlation)
-        .filter(|_| numbered)
+    if area.height >= c.px(MIN_NUMBER_HEIGHT)
+        && let Some(correlation) = scope.overlay.as_ref().and_then(|o| o.correlation)
     {
-        let good = c.colour(Role::CorrelationPositive);
-        let bad = c.colour(Role::CorrelationNegative);
-        let colour = if correlation < 0.0 { bad } else { good };
-        c.text(
-            &format!("{correlation:+.2}"),
-            plot.right() - c.px(2.0),
-            plot.bottom() - c.px(15.0),
-            11.0,
-            colour,
-            Align::Right,
-        );
+        correlation_readout(c, plot, correlation, settings.cutoff);
     }
 }
 
-/// One trace in its band: each column a bar from its lowest to its highest
-/// value (at least a line thick), filled to the centre line if asked.
-fn envelope(c: &mut Canvas, band: Area, trace: &ScopeTrace, colour: Colour, filled: bool) {
-    let columns = trace.max.len().max(1);
-    let step = band.width / columns as f32;
+/// The x of column `i`'s centre, and the y of value `v`, in `band`.
+fn place(band: Area, columns: usize) -> impl Fn(usize, f32) -> [f32; 2] {
+    let step = band.width / columns.max(1) as f32;
     let half = band.height / 2.0 * 0.95;
     let centre = band.y + band.height / 2.0;
-    let line = c.stroke(1.5);
-    for (i, (&low, &high)) in trace.min.iter().zip(&trace.max).enumerate() {
-        let x = band.x + i as f32 * step;
-        let (top, bottom) = (centre - high * half, centre - low * half);
-        if filled {
-            let (from, to) = (top.min(centre), bottom.max(centre));
-            c.shapes.rect(
-                Area {
-                    x,
-                    y: from,
-                    width: step.max(1.0),
-                    height: to - from,
-                },
-                colour.faded(0.3),
-            );
-        }
-        let height = (bottom - top).max(line);
-        let mid = (top + bottom) / 2.0;
-        c.shapes.rect(
-            Area {
-                x,
-                y: mid - height / 2.0,
-                width: step.max(1.0),
-                height,
-            },
-            colour,
-        );
-    }
+    move |i, v| [band.x + (i as f32 + 0.5) * step, centre - v * half]
 }
 
-/// The Overlay Source in its band: shading where the two cancel, its trace,
-/// and the dashed sum.
-fn draw_overlay(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colour) {
-    let columns = overlay.trace.max.len().max(1);
-    let step = band.width / columns as f32;
-    let half = band.height / 2.0 * 0.95;
-    let centre = band.y + band.height / 2.0;
-    // Shading between the two where they push in opposite directions: the
-    // main Source's value is the sum less the overlay's.
-    let cancel = c.colour(Role::PhaseScopeCancel);
-    let mid = |t: &ScopeTrace, i: usize| match (t.min.get(i), t.max.get(i)) {
-        (Some(low), Some(high)) => (low + high) / 2.0,
-        _ => 0.0,
-    };
-    for (i, &amount) in overlay.cancel.iter().enumerate() {
-        if amount < 0.2 {
-            continue;
-        }
-        let other = mid(&overlay.trace, i);
-        let main = mid(&overlay.sum, i) - other;
-        let (top, bottom) = (
-            centre - main.max(other) * half,
-            centre - main.min(other) * half,
-        );
-        c.shapes.rect(
-            Area {
-                x: band.x + i as f32 * step,
-                y: top,
-                width: step.max(1.0),
-                height: bottom - top,
-            },
-            cancel.faded(0.6 * amount.min(1.0)),
-        );
+/// One trace in its band as a smooth line: through each column's value
+/// where the column holds one, and as a band from its lowest to highest
+/// value where it holds many (dense, fast content). Filled to the centre
+/// line if asked.
+fn trace_line(c: &mut Canvas, band: Area, trace: &ScopeTrace, colour: Colour, filled: bool) {
+    let columns = trace.max.len();
+    if columns < 2 {
+        return;
     }
+    let at = place(band, columns);
+    let high: Vec<[f32; 2]> = trace
+        .max
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| at(i, v))
+        .collect();
+    let low: Vec<[f32; 2]> = trace
+        .min
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| at(i, v))
+        .collect();
+    let centre = band.y + band.height / 2.0;
+    if filled {
+        let mid: Vec<[f32; 2]> = high
+            .iter()
+            .zip(&low)
+            .map(|(h, l)| [h[0], (h[1] + l[1]) / 2.0])
+            .collect();
+        let fill = colour.faded(0.3);
+        c.shapes.fill_under(&mid, centre, fill, fill);
+    }
+    // The space between the highest and lowest values, solid.
+    for i in 0..columns - 1 {
+        c.shapes
+            .quad([high[i], high[i + 1], low[i], low[i + 1]], colour, colour);
+    }
+    let stroke = c.stroke(1.5);
+    c.shapes.polyline(&high, stroke, colour);
+    c.shapes.polyline(&low, stroke, colour);
+}
+
+/// The Overlay Source's trace, in its own colour.
+fn overlay_trace(c: &mut Canvas, band: Area, overlay: &ScopeOverlay, main: Colour) {
     let colour = overlay
         .colour
         .unwrap_or_else(|| super::mix(main, c.colour(Role::Text), 0.6));
-    envelope(c, band, &overlay.trace, colour.faded(0.85), false);
-    // The sum, dashed: drawn like a trace, in every other few columns.
-    let sum = c.colour(Role::PhaseScopeSum);
-    let dot = c.stroke(2.0);
-    for (i, (&low, &high)) in overlay.sum.min.iter().zip(&overlay.sum.max).enumerate() {
-        if i % 4 >= 2 {
+    trace_line(c, band, &overlay.trace, colour.faded(0.85), false);
+}
+
+/// The sum of both, what's actually left, as a thin dashed line on top.
+fn sum_line(c: &mut Canvas, band: Area, overlay: &ScopeOverlay) {
+    let at = place(band, overlay.sum.max.len());
+    let points: Vec<[f32; 2]> = overlay
+        .sum
+        .min
+        .iter()
+        .zip(&overlay.sum.max)
+        .enumerate()
+        .map(|(i, (&low, &high))| at(i, (low + high) / 2.0))
+        .collect();
+    let (colour, stroke) = (c.colour(Role::PhaseScopeSum).faded(0.8), c.stroke(1.0));
+    // Dashes: four columns drawn, four left out.
+    for (i, pair) in points.windows(2).enumerate() {
+        if i % 8 < 4 {
+            c.overlay.line(pair[0], pair[1], stroke, colour);
+        }
+    }
+}
+
+/// A strip under the Cycle, one cell per column: green where the two push
+/// the same way, red where they cancel, stronger the louder they are there,
+/// empty where both are quiet.
+fn phase_lane(c: &mut Canvas, lane: Area, overlay: &ScopeOverlay, main: &ScopeTrace) {
+    let (together, against) = (
+        c.colour(Role::CorrelationPositive),
+        c.colour(Role::PhaseScopeCancel),
+    );
+    c.shapes
+        .rect(lane, c.colour(Role::PhaseScopeGrid).faded(0.35));
+    let columns = overlay.phase.len().max(1);
+    let step = lane.width / columns as f32;
+    let peak = |t: &ScopeTrace, i: usize| {
+        let low = t.min.get(i).copied().unwrap_or(0.0);
+        let high = t.max.get(i).copied().unwrap_or(0.0);
+        low.abs().max(high.abs())
+    };
+    for (i, &phase) in overlay.phase.iter().enumerate() {
+        let loud = peak(main, i).max(peak(&overlay.trace, i));
+        if loud < LANE_QUIET || phase == 0.0 {
             continue;
         }
-        let (top, bottom) = (centre - high * half, centre - low * half);
-        let height = (bottom - top).max(dot);
-        c.overlay.rect(
+        let colour = if phase > 0.0 { together } else { against };
+        let strength = phase.abs() * (0.35 + 0.65 * loud.min(1.0));
+        c.shapes.rect(
             Area {
-                x: band.x + i as f32 * step,
-                y: (top + bottom) / 2.0 - height / 2.0,
+                x: lane.x + i as f32 * step,
                 width: step.max(1.0),
-                height,
+                ..lane
             },
-            sum,
+            colour.faded(strength),
         );
     }
+}
+
+/// The low end's correlation, large in the top right, with what it means
+/// in words under it.
+fn correlation_readout(c: &mut Canvas, plot: Area, correlation: f32, cutoff: f32) {
+    let colour = if correlation < 0.0 {
+        c.colour(Role::PhaseScopeCancel)
+    } else if correlation < 0.5 {
+        c.dim()
+    } else {
+        c.colour(Role::CorrelationPositive)
+    };
+    let meaning = if correlation < 0.0 {
+        "lows cancel"
+    } else if correlation < 0.5 {
+        "lows partly apart"
+    } else {
+        "lows in phase"
+    };
+    let right = plot.right() - c.px(4.0);
+    c.bold(
+        &format!("{correlation:+.2}"),
+        right,
+        plot.y + c.px(3.0),
+        16.0,
+        colour,
+        Align::Right,
+    );
+    let dim = c.dim();
+    c.text(
+        &format!("{meaning} · below {cutoff:.0} Hz"),
+        right,
+        plot.y + c.px(23.0),
+        9.0,
+        dim,
+        Align::Right,
+    );
 }

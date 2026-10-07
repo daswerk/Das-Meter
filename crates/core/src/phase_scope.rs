@@ -86,8 +86,9 @@ pub struct ScopeOverlay {
     pub colour: Option<Colour>,
     /// The mono sum of both.
     pub sum: ScopeTrace,
-    /// Per column, how strongly the two push in opposite directions, 0–1.
-    pub cancel: Vec<f32>,
+    /// Per column, whether the two push the same way: 1 together, −1 one
+    /// the exact opposite of the other (they cancel), 0 unrelated or silent.
+    pub phase: Vec<f32>,
     /// How well the two agree below the cut-off, −1 to 1 to 0.01; `None` in
     /// silence.
     pub correlation: Option<f32>,
@@ -276,8 +277,8 @@ struct OverlayCut {
     trace: (Vec<f32>, Vec<f32>),
     /// The mono sum of both.
     sum: (Vec<f32>, Vec<f32>),
-    /// Per column, how strongly the two push in opposite directions, 0–1.
-    cancel: Vec<f32>,
+    /// Per column, whether the two push the same way, −1 to 1.
+    phase: Vec<f32>,
     /// How well the two agree below the cut-off; `None` if either is silent there.
     correlation: Option<f32>,
 }
@@ -530,14 +531,14 @@ impl PhaseScope {
             Some(o) => ScopeOverlay {
                 trace: one(&o.trace),
                 sum: one(&o.sum),
-                cancel: o.cancel.clone(),
+                phase: o.phase.clone(),
                 correlation: o.correlation,
                 ..ScopeOverlay::default()
             },
             None => ScopeOverlay {
                 trace: ScopeTrace::silent(),
                 sum: ScopeTrace::silent(),
-                cancel: vec![0.0; COLUMNS],
+                phase: vec![0.0; COLUMNS],
                 ..ScopeOverlay::default()
             },
         });
@@ -570,6 +571,12 @@ struct OverlayPass {
     /// Σx, Σy, Σxy, Σx², Σy² of the low-passed Sources, over `frames` frames.
     sums: [f64; 5],
     frames: u64,
+    /// Per column, Σxy, Σx², Σy² of the low-passed Sources and its frames,
+    /// for the phase lane.
+    local: Vec<[f64; 4]>,
+    /// The phase lane looks at least this many frames around each column:
+    /// one period of the cut-off.
+    window: f64,
 }
 
 impl OverlayPass {
@@ -581,12 +588,14 @@ impl OverlayPass {
             cut: OverlayCut {
                 trace: empty(),
                 sum: empty(),
-                cancel: vec![0.0; COLUMNS],
+                phase: vec![0.0; COLUMNS],
                 correlation: None,
             },
             filters: [filter, filter],
             sums: [0.0; 5],
             frames: 0,
+            local: vec![[0.0; 4]; COLUMNS],
+            window: f64::from(scope.rate) / f64::from(cutoff),
         };
         // Settle the filters on the audio just before the Cycle.
         let a = first.floor() as u64;
@@ -623,8 +632,7 @@ impl OverlayPass {
             return;
         };
         let (mut over, mut sum) = ([f32::MAX, f32::MIN], [f32::MAX, f32::MIN]);
-        let (mut product, mut power) = (0.0f64, 0.0f64);
-        for frame in frames.clone() {
+        for frame in frames {
             // Nothing from the overlay here: the sum is the main alone.
             let (m, o) = shift.map_or_else(
                 || (self.pair(scope, overlay, frame, 0).0, 0.0),
@@ -634,11 +642,15 @@ impl OverlayPass {
                 over = [over[0].min(o), over[1].max(o)];
             }
             sum = [sum[0].min(m + o), sum[1].max(m + o)];
-            product += f64::from(m * o);
-            power += f64::from(m * m + o * o) / 2.0;
             let (x, y) = (self.filters[0].run(m), self.filters[1].run(o));
             let (x, y) = (f64::from(x), f64::from(y));
             for (sum, v) in self.sums.iter_mut().zip([x, y, x * y, x * x, y * y]) {
+                *sum += v;
+            }
+            for (sum, v) in self.local[column]
+                .iter_mut()
+                .zip([x * y, x * x, y * y, 1.0])
+            {
                 *sum += v;
             }
             self.frames += 1;
@@ -648,13 +660,6 @@ impl OverlayPass {
             (cut.trace.0[column], cut.trace.1[column]) = (over[0], over[1]);
         }
         (cut.sum.0[column], cut.sum.1[column]) = (sum[0], sum[1]);
-        // 1 where one is the exact opposite of the other, 0 where they don't fight.
-        let n = frames.end.saturating_sub(frames.start).max(1) as f64;
-        cut.cancel[column] = if power / n > SILENT_POWER {
-            ratio((-product / power).clamp(0.0, 1.0))
-        } else {
-            0.0
-        };
     }
 
     fn finish(mut self) -> OverlayCut {
@@ -665,6 +670,26 @@ impl OverlayPass {
         // Either silent below the cut-off: no number.
         self.cut.correlation = (vx.min(vy) > SILENT_POWER)
             .then(|| ratio(((xy - x * y) / (vx * vy).sqrt()).clamp(-1.0, 1.0)));
+        // The phase lane: around each column, over one period of the
+        // cut-off, how the two lows move. 1 where they're the same, −1
+        // where one is the other upside down, 0 where either is silent.
+        let per_column = self.frames.max(1) as f64 / COLUMNS as f64;
+        let reach = (self.window / per_column / 2.0).ceil() as usize;
+        for column in 0..COLUMNS {
+            let around =
+                &self.local[column.saturating_sub(reach)..(column + reach + 1).min(COLUMNS)];
+            let [xy, xx, yy, n] = around.iter().fold([0.0; 4], |mut total, part| {
+                for (t, v) in total.iter_mut().zip(part) {
+                    *t += v;
+                }
+                total
+            });
+            self.cut.phase[column] = if xx.min(yy) / n.max(1.0) > SILENT_POWER {
+                ratio((xy / (xx * yy).sqrt()).clamp(-1.0, 1.0))
+            } else {
+                0.0
+            };
+        }
         self.cut
     }
 }
@@ -708,7 +733,7 @@ fn average(cuts: &[&Cut]) -> Option<Cut> {
         OverlayCut {
             trace: (mean(&|c, i| c.trace.0[i]), mean(&|c, i| c.trace.1[i])),
             sum: (mean(&|c, i| c.sum.0[i]), mean(&|c, i| c.sum.1[i])),
-            cancel: mean(&|c, i| c.cancel[i])
+            phase: mean(&|c, i| c.phase[i])
                 .into_iter()
                 .map(|v| ratio(f64::from(v)))
                 .collect(),
