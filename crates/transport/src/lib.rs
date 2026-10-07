@@ -18,15 +18,18 @@ mod table;
 mod writer;
 
 pub use layout::{NAME_CAPACITY, RING_FRAMES, SLOT_COUNT};
-pub use reader::{Read, Reader, SlotInfo, SlotRef, SlotState};
-pub use table::Details;
+pub use reader::{Read, Reader, SlotInfo, SlotRef, SlotState, SlotTiming};
+pub use table::{Details, Timing};
 pub use writer::{AudioWriter, Claimed, Heartbeat, Writer};
 
 /// Name of the shared-memory table on macOS. The layout version is part of the name.
-pub const TABLE_NAME: &str = "dasmeter.v1";
+pub const TABLE_NAME: &str = "dasmeter.v2";
 
 /// Name of the shared-memory table on Windows, in the session namespace.
-pub const TABLE_NAME_WINDOWS: &str = r"Local\dasmeter.v1";
+pub const TABLE_NAME_WINDOWS: &str = r"Local\dasmeter.v2";
+
+/// The table older Send Plugins write (no timing), which the app reads too.
+pub const TABLE_NAME_V1: &str = "dasmeter.v1";
 
 /// How often both sides bump their heartbeat.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(250);

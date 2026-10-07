@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::layout::*;
 use crate::process::process_alive;
-use crate::table::{Details, Table};
+use crate::table::{Details, Table, Timing};
 use crate::{GONE_AFTER, TABLE_NAME};
 
 /// A claimed slot, used from the Send Plugin's main thread.
@@ -57,13 +57,34 @@ impl Writer {
         Self::claim_in(table_name, wanted_id, details, std::process::id())
     }
 
+    /// Claims a slot the way an older Send Plugin does, in a v1 table with no
+    /// timing, for tests of the app reading both.
+    #[doc(hidden)]
+    pub fn claim_named_v1(
+        table_name: &str,
+        wanted_id: Option<u64>,
+        details: &Details,
+    ) -> io::Result<Claimed> {
+        Self::claim_version(table_name, V1, wanted_id, details, std::process::id())
+    }
+
     pub(crate) fn claim_in(
         table_name: &str,
         wanted_id: Option<u64>,
         details: &Details,
         host_pid: u32,
     ) -> io::Result<Claimed> {
-        let table = Table::open(table_name)?;
+        Self::claim_version(table_name, V2, wanted_id, details, host_pid)
+    }
+
+    fn claim_version(
+        table_name: &str,
+        version: u32,
+        wanted_id: Option<u64>,
+        details: &Details,
+        host_pid: u32,
+    ) -> io::Result<Claimed> {
+        let table = Table::open(table_name, version)?;
 
         // A live slot with our ID in a running process is a duplicate; one whose
         // process died (a crashed DAW) is ours from before, so free it.
@@ -105,6 +126,9 @@ impl Writer {
         slot.host_pid.store(host_pid, Relaxed);
         slot.id.store(id, Relaxed);
         slot.write_details(details);
+        if let Some(timing) = table.timing(index) {
+            timing.write(0, None);
+        }
         slot.state.store(SLOT_LIVE, Release);
 
         let writer = Writer {
@@ -231,6 +255,20 @@ pub struct AudioWriter {
 }
 
 impl AudioWriter {
+    /// Says where the DAW is at the first frame of the next block pushed, or
+    /// that it said nothing (`None`). Call it before each [`AudioWriter::push`].
+    /// Like `push`, it makes no allocations, takes no locks and makes no syscalls.
+    /// In a v1 table, which has no room for it, it does nothing.
+    pub fn set_timing(&mut self, timing: Option<&Timing>) {
+        let slot = self.table.slot(self.index);
+        if slot.generation.load(Relaxed) != self.generation {
+            return;
+        }
+        if let Some(block) = self.table.timing(self.index) {
+            block.write(self.position, timing);
+        }
+    }
+
     /// Pushes one block of stereo audio. For a mono track pass the same slice twice.
     ///
     /// Counts the frames even when nobody listens, so the app can tell a playing

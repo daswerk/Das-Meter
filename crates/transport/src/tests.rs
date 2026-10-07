@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::layout::SLOT_LIVE;
+use crate::layout::{SLOT_LIVE, V2};
 use crate::table::Table;
 
 /// A table with a unique name, removed again when the test ends.
@@ -33,7 +33,7 @@ impl TestTable {
     }
 
     fn raw(&self) -> Table {
-        Table::open(&self.0).unwrap()
+        Table::open(&self.0, V2).unwrap()
     }
 }
 
@@ -517,4 +517,110 @@ fn garbage_in_a_slot_is_skipped_without_panicking() {
     // An unknown state value means the slot isn't listed.
     slot.state.store(77, Relaxed);
     assert!(reader.slots(now).is_empty());
+}
+
+fn timing(beats: f64, playing: bool) -> Timing {
+    Timing {
+        tempo: 128.0,
+        beats,
+        bar_start: 4.0 * (beats / 4.0).floor(),
+        signature: (4, 4),
+        playing,
+    }
+}
+
+#[test]
+fn the_daw_timing_reads_back_for_the_frames_it_belongs_to() {
+    let table = TestTable::new();
+    let mut reader = table.reader();
+    let claimed = table.claim(None);
+    let slot = only_slot(&mut reader, Instant::now()).slot;
+    // Nothing said yet.
+    assert_eq!(reader.timing(slot), None);
+    reader.set_listened(slot, true);
+
+    let mut audio = claimed.writer.audio();
+    audio.set_timing(Some(&timing(8.0, true)));
+    push_counting(&mut audio, 0, 512, 512);
+    assert_eq!(
+        reader.timing(slot),
+        Some(SlotTiming {
+            frame: 0,
+            timing: timing(8.0, true)
+        })
+    );
+    // The next block's position is for the frame it starts at.
+    audio.set_timing(Some(&timing(8.1, true)));
+    push_counting(&mut audio, 512, 1024, 512);
+    let said = reader.timing(slot).unwrap();
+    assert_eq!(said.frame, 512);
+    assert_eq!(said.timing, timing(8.1, true));
+    // Moved on to a later frame at its tempo: 128 BPM is 1 quarter note per 22 500 frames.
+    let later = said.at(512 + 22_500, 48_000);
+    assert!((later.beats - 9.1).abs() < 1e-9, "{}", later.beats);
+    // Stopped, it stays put.
+    audio.set_timing(Some(&timing(9.5, false)));
+    push_counting(&mut audio, 1024, 1536, 512);
+    let said = reader.timing(slot).unwrap();
+    assert!(!said.timing.playing);
+    assert_eq!(said.at(100_000, 48_000).beats, 9.5);
+    // A host that stops saying: none.
+    audio.set_timing(None);
+    assert_eq!(reader.timing(slot), None);
+}
+
+#[test]
+fn a_new_claim_starts_without_timing() {
+    let table = TestTable::new();
+    let mut reader = table.reader();
+    let first = table.claim(None);
+    first.writer.audio().set_timing(Some(&timing(1.0, true)));
+    drop(first);
+    let _second = table.claim(None);
+    let slot = only_slot(&mut reader, Instant::now()).slot;
+    assert_eq!(reader.timing(slot), None);
+}
+
+#[test]
+fn nonsense_timing_is_ignored() {
+    let table = TestTable::new();
+    let mut reader = table.reader();
+    let _claimed = table.claim(None);
+    let slot = only_slot(&mut reader, Instant::now()).slot;
+    let raw = table.raw();
+    let block = raw.timing(0).unwrap();
+    block.write(0, Some(&timing(1.0, true)));
+    assert!(reader.timing(slot).is_some());
+    block.tempo.store(f64::NAN.to_bits(), Relaxed);
+    assert_eq!(reader.timing(slot), None);
+    block.write(0, Some(&timing(1.0, true)));
+    block.signature.store(0, Relaxed);
+    assert_eq!(reader.timing(slot), None);
+}
+
+#[test]
+fn older_send_plugins_in_the_v1_table_are_listed_and_read_without_timing() {
+    let table = TestTable::new();
+    let old = TestTable::new();
+    let mut reader = Reader::open_named_with_v1(&table.0, &old.0).unwrap();
+    let new = table.claim(Some(1));
+    let older = Writer::claim_named_v1(&old.0, Some(2), &details("Bass")).unwrap();
+    let mut listed = reader.slots(Instant::now());
+    listed.sort_by_key(|info| info.id);
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert_eq!(listed[1].details.name, "Bass");
+
+    for (info, writer) in listed.iter().zip([&new.writer, &older.writer]) {
+        reader.set_listened(info.slot, true);
+        let mut audio = writer.audio();
+        audio.set_timing(Some(&timing(0.0, true)));
+        push_counting(&mut audio, 0, 256, 128);
+        let mut out = vec![0.0; 1024];
+        let read = reader.read(info.slot, 0, &mut out).unwrap();
+        assert_eq!(read.frames, 256);
+        assert_eq!(&out[2..4], &[1.0, -1.0]);
+    }
+    // Only the v2 one has room to say where its DAW is.
+    assert!(reader.timing(listed[0].slot).is_some());
+    assert_eq!(reader.timing(listed[1].slot), None);
 }

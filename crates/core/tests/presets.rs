@@ -393,6 +393,7 @@ fn plugin(id: u64, name: &str) -> SendPlugin {
         sample_rate: 48_000,
         state: SendPluginState::Live,
         outdated: false,
+        host_pid: 1,
     }
 }
 

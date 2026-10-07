@@ -31,6 +31,7 @@ fn plugin(id: u64, name: &str) -> SendPlugin {
         sample_rate: RATE,
         state: SendPluginState::Live,
         outdated: false,
+        host_pid: 1,
     }
 }
 

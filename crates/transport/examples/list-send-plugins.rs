@@ -32,6 +32,20 @@ fn main() -> std::io::Result<()> {
                 slot.state,
                 slot.host_pid,
             );
+            match reader.timing(slot.slot) {
+                Some(said) => {
+                    let t = said.timing;
+                    println!(
+                        "      {:.2} BPM  {}/{}  at {:.3} quarter notes  {}",
+                        t.tempo,
+                        t.signature.0,
+                        t.signature.1,
+                        t.beats,
+                        if t.playing { "playing" } else { "stopped" },
+                    );
+                }
+                None => println!("      no DAW timing"),
+            }
         }
         std::thread::sleep(Duration::from_secs(1));
     }

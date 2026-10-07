@@ -15,6 +15,7 @@ const INIT_WAIT: Duration = Duration::from_secs(1);
 #[derive(Clone)]
 pub(crate) struct Table {
     mapping: Arc<Mapping>,
+    version: u32,
 }
 
 fn invalid(what: impl Into<String>) -> io::Error {
@@ -22,24 +23,25 @@ fn invalid(what: impl Into<String>) -> io::Error {
 }
 
 impl Table {
-    /// Opens the table called `name`, creating it if this side comes first.
-    pub(crate) fn open(name: &str) -> io::Result<Table> {
-        let mapping = Mapping::create_or_open(&crate::platform_name(name), TABLE_SIZE)?;
+    /// Opens the table of layout `version` called `name`, creating it if this side comes first.
+    pub(crate) fn open(name: &str, version: u32) -> io::Result<Table> {
+        let mapping = Mapping::create_or_open(&crate::platform_name(name), table_size(version))?;
         let table = Table {
             mapping: Arc::new(mapping),
+            version,
         };
         table.initialise_or_validate()?;
         Ok(table)
     }
 
     pub(crate) fn header(&self) -> &Header {
-        // SAFETY: the mapping is page-aligned and at least TABLE_SIZE bytes; Header is all atomics.
+        // SAFETY: the mapping is page-aligned and at least table_size(version) bytes; Header is all atomics.
         unsafe { &*self.mapping.as_ptr().cast::<Header>() }
     }
 
     pub(crate) fn slot(&self, index: usize) -> &Slot {
         assert!(index < SLOT_COUNT);
-        // SAFETY: in bounds per the assert and TABLE_SIZE; slots are 64-byte aligned and all atomics.
+        // SAFETY: in bounds per the assert and table_size(version); slots are 64-byte aligned and all atomics.
         unsafe {
             &*self
                 .mapping
@@ -47,6 +49,23 @@ impl Table {
                 .add(HEADER_SIZE + index * SLOT_SIZE)
                 .cast::<Slot>()
         }
+    }
+
+    /// A slot's timing block, in a v2 table.
+    pub(crate) fn timing(&self, index: usize) -> Option<&TimingBlock> {
+        assert!(index < SLOT_COUNT);
+        if self.version < V2 {
+            return None;
+        }
+        // SAFETY: a v2 mapping is at least table_size(V2) bytes, which holds
+        // SLOT_COUNT timing blocks at TIMING_OFFSET, 64-byte aligned and all atomics.
+        Some(unsafe {
+            &*self
+                .mapping
+                .as_ptr()
+                .add(TIMING_OFFSET + index * TIMING_SIZE)
+                .cast::<TimingBlock>()
+        })
     }
 
     pub(crate) fn slots(&self) -> impl Iterator<Item = (usize, &Slot)> {
@@ -83,7 +102,7 @@ impl Table {
 
     fn write_header(&self) {
         let header = self.header();
-        header.layout_version.store(LAYOUT_VERSION, Relaxed);
+        header.layout_version.store(self.version, Relaxed);
         header.slot_count.store(SLOT_COUNT as u32, Relaxed);
         header.ring_frames.store(RING_FRAMES as u32, Relaxed);
         header.slot_size.store(SLOT_SIZE as u32, Relaxed);
@@ -107,7 +126,7 @@ impl Table {
         expect(
             "layout version",
             header.layout_version.load(Relaxed).into(),
-            LAYOUT_VERSION.into(),
+            self.version.into(),
         )?;
         expect(
             "slot count",
@@ -130,6 +149,86 @@ impl Table {
             HEADER_SIZE as u64,
         )?;
         Ok(())
+    }
+}
+
+/// Where a Send Plugin's DAW is, as it last said.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
+    /// Quarter notes per minute.
+    pub tempo: f64,
+    /// The song position, in quarter notes.
+    pub beats: f64,
+    /// Where the current bar began, in quarter notes.
+    pub bar_start: f64,
+    /// Beats per bar, and the note value of a beat.
+    pub signature: (u16, u16),
+    pub playing: bool,
+}
+
+impl TimingBlock {
+    /// Writes the DAW's position for the frame at ring position `frame`, or
+    /// that it said none. Only the slot's audio thread calls this.
+    pub(crate) fn write(&self, frame: u64, timing: Option<&Timing>) {
+        let seq = self.seq.load(Relaxed);
+        self.seq.store(seq.wrapping_add(1) | 1, Relaxed);
+        std::sync::atomic::fence(Release);
+        match timing {
+            Some(t) => {
+                self.frame.store(frame, Relaxed);
+                self.beats.store(t.beats.to_bits(), Relaxed);
+                self.tempo.store(t.tempo.to_bits(), Relaxed);
+                self.bar_start.store(t.bar_start.to_bits(), Relaxed);
+                let (num, den) = t.signature;
+                self.signature
+                    .store(u32::from(num) << 16 | u32::from(den), Relaxed);
+                let playing = if t.playing { TIMING_PLAYING } else { 0 };
+                self.flags.store(TIMING_SET | playing, Relaxed);
+            }
+            None => self.flags.store(0, Relaxed),
+        }
+        self.seq.store((seq | 1).wrapping_add(1), Release);
+    }
+
+    /// A consistent copy: the ring position and the DAW's position there, or
+    /// `None` if it said none, keeps changing or holds nonsense.
+    pub(crate) fn read(&self) -> Option<(u64, Timing)> {
+        for _ in 0..16 {
+            let before = self.seq.load(Acquire);
+            if before & 1 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let flags = self.flags.load(Relaxed);
+            let frame = self.frame.load(Relaxed);
+            let beats = f64::from_bits(self.beats.load(Relaxed));
+            let tempo = f64::from_bits(self.tempo.load(Relaxed));
+            let bar_start = f64::from_bits(self.bar_start.load(Relaxed));
+            let signature = self.signature.load(Relaxed);
+            std::sync::atomic::fence(Acquire);
+            if self.seq.load(Relaxed) != before {
+                continue;
+            }
+            let (num, den) = ((signature >> 16) as u16, signature as u16);
+            let sane = beats.is_finite()
+                && bar_start.is_finite()
+                && tempo.is_finite()
+                && tempo > 0.0
+                && num > 0
+                && den > 0;
+            if flags & TIMING_SET == 0 || !sane {
+                return None;
+            }
+            let timing = Timing {
+                tempo,
+                beats,
+                bar_start,
+                signature: (num, den),
+                playing: flags & TIMING_PLAYING != 0,
+            };
+            return Some((frame, timing));
+        }
+        None
     }
 }
 

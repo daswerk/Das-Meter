@@ -118,6 +118,7 @@ fn sending(name: &str, state: SendPluginState) -> SendPlugin {
         sample_rate: RATE,
         state,
         outdated: false,
+        host_pid: 1,
     }
 }
 

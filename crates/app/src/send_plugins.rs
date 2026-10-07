@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use dasmeter_core::{AppCore, Event, SendPlugin, SendPluginState};
-use dasmeter_transport::{RING_FRAMES, Reader, SlotInfo, SlotRef, SlotState, TABLE_NAME};
+use dasmeter_transport::{
+    RING_FRAMES, Reader, SlotInfo, SlotRef, SlotState, TABLE_NAME, TABLE_NAME_V1,
+};
 
 /// How often the Send Plugins are listed (and the app's heartbeat bumped).
 pub const LIST_EVERY: Duration = Duration::from_millis(250);
@@ -23,6 +25,8 @@ struct Listening {
 
 pub struct SendPluginInput {
     table: String,
+    /// The table older Send Plugins write, read too.
+    v1_table: Option<String>,
     /// Opened on first use, and again if that failed.
     reader: Option<Reader>,
     slots: Vec<SlotInfo>,
@@ -33,19 +37,30 @@ pub struct SendPluginInput {
 
 impl SendPluginInput {
     pub fn new() -> SendPluginInput {
-        SendPluginInput::with_table(TABLE_NAME)
+        let mut input = SendPluginInput::with_table(TABLE_NAME);
+        input.v1_table = Some(TABLE_NAME_V1.to_owned());
+        input
     }
 
-    /// On a table with another name, for tests.
+    /// On a table with another name (and no v1 table), for tests.
     pub fn with_table(table: &str) -> SendPluginInput {
         SendPluginInput {
             table: table.to_owned(),
+            v1_table: None,
             reader: None,
             slots: Vec::new(),
             listened: HashMap::new(),
             listed_at: None,
             buffer: vec![0.0; 2 * RING_FRAMES],
         }
+    }
+
+    /// On tables with other names, the v1 one too, for tests.
+    #[cfg(test)]
+    fn with_tables(table: &str, v1_table: &str) -> SendPluginInput {
+        let mut input = SendPluginInput::with_table(table);
+        input.v1_table = Some(v1_table.to_owned());
+        input
     }
 
     /// The Send Plugins as last listed.
@@ -62,7 +77,10 @@ impl SendPluginInput {
     /// listen to, and feeds their new audio into the core.
     pub fn pump(&mut self, core: &mut AppCore, now: Duration, instant: Instant) {
         if self.reader.is_none() {
-            self.reader = Reader::open_named(&self.table).ok();
+            self.reader = match &self.v1_table {
+                Some(v1) => Reader::open_named_with_v1(&self.table, v1).ok(),
+                None => Reader::open_named(&self.table).ok(),
+            };
         }
         let Some(reader) = &mut self.reader else {
             return;
@@ -149,9 +167,9 @@ fn send_plugin(info: &SlotInfo) -> SendPlugin {
             SlotState::Idle => SendPluginState::Idle,
             SlotState::Gone => SendPluginState::Gone,
         },
-        // Only one layout exists so far; an older one would come from a
-        // second table the app also reads (ADR 0003).
+        // The app reads both layouts there are (ADR 0003).
         outdated: false,
+        host_pid: info.host_pid,
     }
 }
 
@@ -227,5 +245,71 @@ mod tests {
         drop(audio);
         drop(writer);
         remove_table(&table);
+    }
+
+    /// An older Send Plugin (v1 table) and a new one feed a Meter each.
+    #[test]
+    fn older_and_newer_send_plugins_both_reach_their_meters() {
+        let table = format!("dmapp-v2-{}", std::process::id());
+        let old_table = format!("dmapp-v1-{}", std::process::id());
+        let details = |name: &str| Details {
+            name: name.into(),
+            colour: 0x00_ff_00,
+            mono: false,
+            sample_rate: 48_000,
+        };
+        let new = Writer::claim_named(&table, Some(1), &details("Kick")).unwrap();
+        let old = Writer::claim_named_v1(&old_table, Some(2), &details("Bass")).unwrap();
+        let (mut new_audio, mut old_audio) = (new.writer.audio(), old.writer.audio());
+
+        let loudness = MeterSettings::Loudness(LoudnessMeterSettings::default());
+        let mut core = AppCore::with_meters(vec![loudness, loudness]);
+        let mut input = SendPluginInput::with_tables(&table, &old_table);
+        let start = Instant::now();
+        core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
+        input.pump(&mut core, Duration::ZERO, start);
+        assert_eq!(input.listed().len(), 2);
+        core.handle(Event::PickSendPlugin { meter: 0, id: 1 }, Duration::ZERO);
+        core.handle(Event::PickSendPlugin { meter: 1, id: 2 }, Duration::ZERO);
+
+        // −20 dBFS into the new one, −30 into the old one.
+        let block = 480;
+        for step in 0..200 {
+            let now = Duration::from_millis(10 * step);
+            new.writer.heartbeat();
+            old.writer.heartbeat();
+            let tone = |level: f64| -> Vec<f32> {
+                (0..block)
+                    .map(|i| {
+                        let t = (step as usize * block + i) as f64 / 48_000.0;
+                        (level * (std::f64::consts::TAU * 1_000.0 * t).sin()) as f32
+                    })
+                    .collect()
+            };
+            let (loud, quiet) = (tone(0.1), tone(0.031_6));
+            new_audio.push(&loud, &loud);
+            old_audio.push(&quiet, &quiet);
+            input.pump(&mut core, now, start + now);
+        }
+        core.decide(Duration::from_secs(3));
+        let scene = core.scene().expect("a scene");
+        let momentary = |meter: usize| {
+            let MeterState::Live(MeterView::Loudness { display, .. }) =
+                &scene.windows[0].meters[meter].state
+            else {
+                panic!("{:?}", scene.windows[0].meters[meter].state);
+            };
+            let Level::Tenths(tenths) = display.momentary else {
+                panic!("meter {meter} is silent");
+            };
+            tenths
+        };
+        assert!((momentary(0) - -200).abs() <= 3, "{}", momentary(0));
+        assert!((momentary(1) - -300).abs() <= 3, "{}", momentary(1));
+
+        drop(input);
+        drop((new_audio, old_audio, new, old));
+        remove_table(&table);
+        remove_table(&old_table);
     }
 }

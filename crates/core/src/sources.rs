@@ -27,6 +27,8 @@ pub struct SendPlugin {
     pub state: SendPluginState,
     /// It writes an older layout than the app reads: listed, but it can't be listened to.
     pub outdated: bool,
+    /// The DAW it runs in: Send Plugins with the same one share a clock.
+    pub host_pid: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
