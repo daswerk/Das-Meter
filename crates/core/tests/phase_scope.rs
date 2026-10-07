@@ -402,3 +402,113 @@ fn a_send_plugin_without_a_tempo_says_so_and_uses_the_typed_in_one() {
         "in the Send Plugin's colour"
     );
 }
+
+impl App {
+    fn tap(&mut self, after: f64) {
+        self.now += Duration::from_secs_f64(after);
+        self.core.handle(Event::TapTempo { meter: 0 }, self.now);
+    }
+}
+
+#[test]
+fn tapping_sets_the_tempo() {
+    let mut app = App::new();
+    app.tap(0.0);
+    assert_eq!(app.settings().tempo, 120.0, "one tap alone changes nothing");
+    for _ in 0..3 {
+        app.tap(0.6);
+    }
+    assert_eq!(app.settings().tempo, 100.0);
+    // A pause starts a fresh count.
+    app.tap(3.0);
+    app.tap(0.4);
+    app.tap(0.4);
+    assert_eq!(app.settings().tempo, 150.0);
+    // Kept within the limits.
+    app.tap(3.0);
+    app.tap(0.1);
+    let (_, high) = dasmeter_core::settings::PHASE_SCOPE_TEMPO;
+    assert_eq!(app.settings().tempo, high);
+}
+
+#[test]
+fn a_bar_cycle_holds_a_bar_long_pattern_still() {
+    let mut app = App::new();
+    app.set(|s| s.cycle = CycleLength::Bar);
+    // 120 BPM in 4/4 (no DAW to say otherwise): a bar is 96 000 frames. A
+    // click a beat and a half into each bar.
+    let bar = 96_000;
+    let audio = clicks(36_000, bar, bar * 6, 0.5);
+    app.feed(&audio[..bar * 3]);
+    let scope = app.scope();
+    assert_eq!(scope.beat_lines, vec![0.25, 0.5, 0.75]);
+    let first = loudest_column(&scope);
+    assert!(first.abs_diff(column(1.5 / 4.0)) <= 1, "{first}");
+    app.feed(&audio[bar * 3..]);
+    assert_eq!(loudest_column(&app.scope()), first);
+}
+
+#[test]
+fn the_trail_holds_the_previous_few_cycles() {
+    let mut app = App::new();
+    app.feed(&clicks(1_000, 24_000, 24_000 * 8, 0.5));
+    let scope = app.scope();
+    assert_eq!(scope.trail.len(), dasmeter_core::phase_scope::TRAIL);
+    for cycle in &scope.trail {
+        assert_eq!(cycle.len(), 1);
+        assert!(cycle[0].max.iter().any(|&v| v > 0.5));
+    }
+}
+
+#[test]
+fn averaging_steadies_a_pattern_and_smooths_a_one_off() {
+    let beat = 24_000;
+    // A click on every beat, and one extra click 0.7 into the tenth beat.
+    let mut audio = clicks(1_000, beat, beat * 11, 0.5);
+    let extra = beat * 9 + (0.7 * beat as f64) as usize;
+    for sample in &mut audio[extra..extra + 48] {
+        *sample = 0.5;
+    }
+    let one_off = column(0.7);
+
+    let mut sharp = App::new();
+    sharp.feed(&audio);
+    let scope = sharp.scope();
+    assert!(scope.traces[0].max[one_off] > 0.8, "shown sharp");
+
+    let mut steady = App::new();
+    steady.set(|s| s.steadiness = dasmeter_core::Steadiness::Average);
+    steady.feed(&audio);
+    let scope = steady.scope();
+    assert!(scope.trail.is_empty());
+    let regular = scope.traces[0].max[loudest_column(&scope)];
+    assert!(regular > 0.8, "the pattern stays full: {regular}");
+    let smoothed = scope.traces[0].max[one_off];
+    assert!(
+        smoothed < regular / 4.0,
+        "the one-off is smoothed: {smoothed}"
+    );
+}
+
+#[test]
+fn every_option_is_kept_within_its_limits() {
+    let mut app = App::new();
+    app.set(|s| {
+        s.gain = 500.0;
+        s.cutoff = 5.0;
+        s.overlay_offset = -900.0;
+    });
+    let s = app.settings();
+    use dasmeter_core::settings::{PHASE_SCOPE_CUTOFF, PHASE_SCOPE_GAIN, PHASE_SCOPE_OFFSET};
+    assert_eq!(s.gain, PHASE_SCOPE_GAIN.1);
+    assert_eq!(s.cutoff, PHASE_SCOPE_CUTOFF.0);
+    assert_eq!(s.overlay_offset, PHASE_SCOPE_OFFSET.0);
+}
+
+#[test]
+fn left_and_right_show_two_traces() {
+    let mut app = App::new();
+    app.set(|s| s.channel_view = dasmeter_analysis::ChannelView::LeftRight);
+    app.feed(&clicks(1_000, 24_000, 24_000 * 3, 0.5));
+    assert_eq!(app.scope().traces.len(), 2);
+}

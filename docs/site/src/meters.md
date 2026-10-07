@@ -97,9 +97,20 @@ DAW to follow, so it runs at a **Tempo** you type in (120 BPM by default), as
 it does for a Send Plugin from an older version or a host that doesn't say
 its tempo ("No tempo from …"). The tempo it follows is shown at the bottom
 left.
-Settings: **Cycle** (Beat or Bar), **Tempo** and **Filled**, and in the
-settings panel the channels (mono, L/R or M/S), **Gain** (auto or manual) and
-**Steadiness** (a fading trail, or the last few Cycles averaged).
+All its options are in its right-click menu:
+
+- **Cycle**: one beat, or one bar with a line on each beat. A bar follows the
+  DAW's time signature, or is 4/4 when there's no DAW to say.
+- **Tempo**, with a **Tap** button: tap along twice or more and the taps set
+  it. A pause of two seconds starts a fresh count.
+- **Look**: a line, or filled to the centre.
+- **Channels**: mono, Left and Right, or Mid and Side, each in its own band.
+- **Gain**: auto (the loudest point fills the Meter) or manual, in dB.
+- **Steadiness**: the newest Cycle sharp with the previous few fading behind
+  it, or the last few Cycles averaged, which holds a repeating pattern steady
+  and smooths out a one-off.
+
+When it's very small the readouts go first, so the traces keep the room.
 
 To show it, right-click a Meter and choose **Show ▸ Phase Scope**, or
 **Add Meter ▸ Phase Scope**.

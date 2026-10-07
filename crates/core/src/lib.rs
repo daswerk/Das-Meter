@@ -79,6 +79,10 @@ pub enum Event<'a> {
     /// The pointer moved to this point of a window (fractions, 0–1 from the
     /// top-left), or left it.
     Pointer(Option<(WindowKey, [f32; 2])>),
+    /// The user tapped a Phase Scope's tempo: two or more taps in a row set it.
+    TapTempo {
+        meter: usize,
+    },
     /// A Meter's settings changed. `meter` is its index in the window.
     SetMeter {
         meter: usize,
@@ -412,6 +416,7 @@ pub struct AppCore {
     /// The scene last handed to the shell, and when.
     drawn: Option<Scene>,
     drawn_at: Option<Duration>,
+    taps: phase_scope::Taps,
 }
 
 impl Default for AppCore {
@@ -484,6 +489,7 @@ impl AppCore {
             drawn: None,
             drawn_at: None,
             onboarding: Onboarding::default(),
+            taps: phase_scope::Taps::default(),
         }
     }
 
@@ -1112,6 +1118,20 @@ impl AppCore {
                 {
                     self.meters[meter].meter.drag_box(start, to);
                 }
+            }
+            Event::TapTempo { meter } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let MeterSettings::PhaseScope(mut settings) = slot.meter.settings() else {
+                    return;
+                };
+                let Some(tempo) = self.taps.tap(meter, now) else {
+                    return;
+                };
+                settings.tempo = tempo;
+                slot.meter
+                    .set_settings(MeterSettings::PhaseScope(settings).clamped());
             }
             Event::SetMeter { meter, settings } => match self.meters.get_mut(meter) {
                 Some(slot) => slot.meter.set_settings(settings.clamped()),

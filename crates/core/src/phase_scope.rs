@@ -9,6 +9,7 @@
 //! view shows the newest Cycle with the few before it.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use dasmeter_analysis::ChannelView;
 
@@ -460,6 +461,45 @@ fn average(cuts: &[&Cut]) -> Option<Cut> {
 /// picture stays exactly the same and the app sleeps.
 fn level(v: f32) -> f32 {
     ((v.clamp(-1.0, 1.0) * 100.0).round() / 100.0) + 0.0
+}
+
+/// Taps on a Phase Scope's tempo. A pause longer than this starts a fresh count.
+const TAP_PAUSE: Duration = Duration::from_secs(2);
+/// The most recent taps that count.
+const TAPS_KEPT: usize = 8;
+
+/// The taps so far, on one Meter.
+#[derive(Default)]
+pub(crate) struct Taps {
+    meter: usize,
+    times: Vec<Duration>,
+}
+
+impl Taps {
+    /// A tap on `meter` at `now`. Returns the tempo the taps give (BPM, to
+    /// 0.1, not yet clamped) from the second tap on.
+    pub fn tap(&mut self, meter: usize, now: Duration) -> Option<f32> {
+        let fresh = self.meter != meter
+            || self
+                .times
+                .last()
+                .is_none_or(|&last| now.saturating_sub(last) > TAP_PAUSE);
+        if fresh {
+            self.times.clear();
+            self.meter = meter;
+        }
+        self.times.push(now);
+        if self.times.len() > TAPS_KEPT {
+            self.times.remove(0);
+        }
+        let (first, last) = (*self.times.first()?, *self.times.last()?);
+        let gaps = self.times.len() - 1;
+        if gaps == 0 || last <= first {
+            return None;
+        }
+        let beat = (last - first).as_secs_f64() / gaps as f64;
+        Some(((60.0 / beat * 10.0).round() / 10.0) as f32)
+    }
 }
 
 /// The channel splits a Phase Scope offers.

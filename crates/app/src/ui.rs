@@ -846,7 +846,9 @@ fn spectrogram_advanced(ui: &mut egui::Ui, s: &mut SpectrogramMeterSettings) -> 
     changed
 }
 
-fn phase_scope_basic(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings) -> bool {
+/// Every Phase Scope option, all in the right-click menu. `tap` is set when
+/// the Tap button is pressed.
+fn phase_scope_basic(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings, tap: &mut bool) -> bool {
     let mut changed = choice(
         ui,
         "Cycle",
@@ -854,21 +856,30 @@ fn phase_scope_basic(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings) -> bool
         &[(CycleLength::Beat, "Beat"), (CycleLength::Bar, "Bar")],
     );
     let (low, high) = limits::PHASE_SCOPE_TEMPO;
-    changed |= ui
-        .add(
-            Slider::new(&mut s.tempo, low..=high)
-                .text("Tempo")
-                .suffix(" BPM")
-                .max_decimals(1),
-        )
-        .on_hover_text("Used when no DAW says its tempo: System Capture, or an older Send Plugin")
-        .changed();
-    changed |= ui.checkbox(&mut s.filled, "Filled").changed();
-    changed
-}
-
-fn phase_scope_advanced(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings) -> bool {
-    let mut changed = choice(
+    ui.horizontal(|ui| {
+        changed |= ui
+            .add(
+                Slider::new(&mut s.tempo, low..=high)
+                    .text("Tempo")
+                    .suffix(" BPM")
+                    .max_decimals(1),
+            )
+            .on_hover_text(
+                "Used when no DAW says its tempo: System Capture, or an older Send Plugin",
+            )
+            .changed();
+        *tap |= ui
+            .button("Tap")
+            .on_hover_text("Tap along: two or more taps set the tempo")
+            .clicked();
+    });
+    changed |= choice(
+        ui,
+        "Look",
+        &mut s.filled,
+        &[(false, "Line"), (true, "Filled")],
+    );
+    changed |= choice(
         ui,
         "Channels",
         &mut s.channel_view,
@@ -958,7 +969,7 @@ fn stereometer_advanced(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> 
 /// A Meter's basic settings, sent as one event if any changed.
 fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut Actions) {
     let mut s = settings;
-    let mut reset = false;
+    let (mut reset, mut tap) = (false, false);
     let changed = match &mut s {
         MeterSettings::Waveform(w) => waveform_basic(ui, w),
         MeterSettings::Spectrum(w) => spectrum_basic(ui, w),
@@ -966,13 +977,16 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Stereometer(w) => stereometer_basic(ui, w),
         MeterSettings::Cepstrum(w) => cepstrum_basic(ui, w),
         MeterSettings::Spectrogram(w) => spectrogram_basic(ui, w),
-        MeterSettings::PhaseScope(w) => phase_scope_basic(ui, w),
+        MeterSettings::PhaseScope(w) => phase_scope_basic(ui, w, &mut tap),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
     }
     if reset {
         actions.push(Event::ResetLoudness { meter });
+    }
+    if tap {
+        actions.push(Event::TapTempo { meter });
     }
 }
 
@@ -985,7 +999,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Stereometer(w) => stereometer_advanced(ui, w),
         MeterSettings::Cepstrum(w) => cepstrum_advanced(ui, w),
         MeterSettings::Spectrogram(w) => spectrogram_advanced(ui, w),
-        MeterSettings::PhaseScope(w) => phase_scope_advanced(ui, w),
+        MeterSettings::PhaseScope(_) => false, // all in the menu
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });

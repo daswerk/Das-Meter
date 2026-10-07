@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -291,17 +291,26 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             }
         }
         // The Phase Scope in the Spectrum's place, on a kick and a bass at
-        // 120 BPM: the typed-in tempo, a beat or (`phase-scope-bar`) a bar.
-        Some(option @ ("phase-scope" | "phase-scope-bar")) => {
+        // 120 BPM: the typed-in tempo, a beat or (`phase-scope-bar`) a bar,
+        // filled, or Left and Right (the right channel quieter).
+        Some(
+            option @ ("phase-scope" | "phase-scope-bar" | "phase-scope-filled" | "phase-scope-lr"),
+        ) => {
             let mut settings = dasmeter_core::PhaseScopeMeterSettings::default();
-            if option == "phase-scope-bar" {
-                settings.cycle = dasmeter_core::CycleLength::Bar;
+            match option {
+                "phase-scope-bar" => settings.cycle = dasmeter_core::CycleLength::Bar,
+                "phase-scope-filled" => settings.filled = true,
+                "phase-scope-lr" => {
+                    settings.channel_view = dasmeter_analysis::ChannelView::LeftRight;
+                }
+                _ => {}
             }
+            let right = if option == "phase-scope-lr" { 0.5 } else { 1.0 };
             let settings = dasmeter_core::MeterSettings::PhaseScope(settings);
             core.handle(Event::SetMeter { meter: 1, settings }, now);
             let audio: Vec<f32> = kick_and_bass(8.0)
                 .into_iter()
-                .flat_map(|x| [x, x])
+                .flat_map(|x| [x, x * right])
                 .collect();
             for block in audio.chunks(1024) {
                 now += Duration::from_secs_f64(512.0 / f64::from(RATE));
