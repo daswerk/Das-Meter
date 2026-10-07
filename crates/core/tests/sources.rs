@@ -95,6 +95,7 @@ impl Harness {
                 self.send(Event::SendPluginAudio {
                     id,
                     frames: &audio[start..end],
+                    timing: None,
                 });
             }
             if self.now >= next_poll {
@@ -491,6 +492,7 @@ fn audio_from_a_send_plugin_no_meter_shows_draws_nothing() {
     app.send(Event::SendPluginAudio {
         id: 2,
         frames: &audio,
+        timing: None,
     });
     assert_eq!(app.core.decide(app.now), Decision::Sleep { until: None });
 }

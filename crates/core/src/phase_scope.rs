@@ -57,6 +57,9 @@ pub struct PhaseScopeView {
     /// Whether it follows the DAW's tempo and song position; otherwise the
     /// typed-in tempo.
     pub following_daw: bool,
+    /// Whether the Source says where its DAW is (a Send Plugin in a host
+    /// that gives its transport), playing or not.
+    pub said_tempo: bool,
     /// The Send Plugin's colour, for the main trace (none on System Capture).
     pub colour: Option<Colour>,
     /// The Overlay Source, when there is one.
@@ -124,6 +127,8 @@ struct Track {
     anchors: VecDeque<Anchor>,
     /// Whether the last block came with DAW timing while it played.
     following: bool,
+    /// Whether the last block came with DAW timing at all.
+    timed: bool,
     grid: Grid,
 }
 
@@ -136,6 +141,7 @@ impl Track {
             end: 0,
             anchors: VecDeque::new(),
             following: false,
+            timed: false,
             grid: Grid::FREE,
         }
     }
@@ -178,6 +184,7 @@ impl Track {
     fn push(&mut self, frames: &[f32], timing: Option<Timing>, free: f64) -> bool {
         let start = self.end;
         let mut relocked = false;
+        self.timed = timing.is_some();
         match timing.filter(|t| t.playing && t.tempo > 0.0) {
             Some(t) => {
                 let expected = self.beats_at(start);
@@ -415,6 +422,7 @@ impl PhaseScope {
                 .tempo()
                 .map_or(s.tempo, |t| ((t * 10.0).round() / 10.0) as f32),
             following_daw: self.main.following,
+            said_tempo: self.main.timed,
             colour: None,
             overlay: None,
             note: None,

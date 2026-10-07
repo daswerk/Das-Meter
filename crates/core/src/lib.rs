@@ -90,10 +90,12 @@ pub enum Event<'a> {
     /// The Send Plugins the transport lists now, gone ones included. The shell
     /// sends this every few hundred milliseconds while listening to Send Plugins.
     SendPlugins(&'a [SendPlugin]),
-    /// Interleaved stereo frames from one Send Plugin, at its sample rate.
+    /// Interleaved stereo frames from one Send Plugin, at its sample rate,
+    /// with where its DAW was at the first frame if it says.
     SendPluginAudio {
         id: u64,
         frames: &'a [f32],
+        timing: Option<Timing>,
     },
     /// The user picked a Send Plugin for a Meter (its Source item, or its list).
     PickSendPlugin {
@@ -1144,7 +1146,7 @@ impl AppCore {
                 self.follow_renames();
                 self.route(now);
             }
-            Event::SendPluginAudio { id, frames } => {
+            Event::SendPluginAudio { id, frames, timing } => {
                 let wanted = self.fed_meters();
                 let mut fed = false;
                 for (i, slot) in self.meters.iter_mut().enumerate() {
@@ -1152,7 +1154,7 @@ impl AppCore {
                         continue;
                     }
                     if let Some(showing) = slot.showing.as_mut().filter(|s| s.id == id) {
-                        slot.meter.process(frames);
+                        slot.meter.process_timed(frames, timing);
                         showing.fed_at = now;
                         fed = true;
                     }
@@ -2018,11 +2020,22 @@ impl AppCore {
                 }
                 ListenTo::SendPlugins => match self.resolve(i) {
                     Resolved::Plugin(plugin) => {
+                        let (name, rgb) = (plugin.name.clone(), plugin.colour);
+                        let mut state = self.live_state(i, frame, pointer, now);
+                        if let MeterState::Live(MeterView::PhaseScope { scope, .. }) = &mut state {
+                            scope.colour = Some(colour(rgb));
+                            if !scope.said_tempo {
+                                scope.note = Some(format!(
+                                    "No tempo from {name}: {:.1} BPM typed in",
+                                    scope.tempo
+                                ));
+                            }
+                        }
                         let source = SourceLabel {
-                            name: plugin.name.clone(),
-                            colour: Some(colour(plugin.colour)),
+                            name,
+                            colour: Some(colour(rgb)),
                         };
-                        (self.live_state(i, frame, pointer, now), Some(source))
+                        (state, Some(source))
                     }
                     Resolved::Waiting(name) => {
                         let source = SourceLabel {

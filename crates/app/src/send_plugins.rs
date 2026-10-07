@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use dasmeter_core::{AppCore, Event, SendPlugin, SendPluginState};
+use dasmeter_core::{AppCore, Event, SendPlugin, SendPluginState, Timing};
 use dasmeter_transport::{
     RING_FRAMES, Reader, SlotInfo, SlotRef, SlotState, TABLE_NAME, TABLE_NAME_V1,
 };
@@ -21,6 +21,7 @@ struct Listening {
     slot: SlotRef,
     /// Where the next read starts.
     cursor: u64,
+    sample_rate: u32,
 }
 
 pub struct SendPluginInput {
@@ -121,6 +122,7 @@ impl SendPluginInput {
                     Listening {
                         slot: info.slot,
                         cursor,
+                        sample_rate: info.details.sample_rate,
                     },
                 );
             }
@@ -133,7 +135,12 @@ impl SendPluginInput {
             listening.cursor = read.next;
             if read.frames > 0 {
                 let frames = &self.buffer[..2 * read.frames];
-                core.handle(Event::SendPluginAudio { id, frames }, now);
+                // Where the DAW was at the first frame read.
+                let first = read.next - read.frames as u64;
+                let timing = reader
+                    .timing(listening.slot)
+                    .map(|said| timing(said.at(first, listening.sample_rate)));
+                core.handle(Event::SendPluginAudio { id, frames, timing }, now);
             }
         }
     }
@@ -152,6 +159,16 @@ impl SendPluginInput {
 impl Drop for SendPluginInput {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+fn timing(t: dasmeter_transport::Timing) -> Timing {
+    Timing {
+        tempo: t.tempo,
+        beats: t.beats,
+        bar_start: t.bar_start,
+        signature: t.signature,
+        playing: t.playing,
     }
 }
 
@@ -177,7 +194,7 @@ fn send_plugin(info: &SlotInfo) -> SendPlugin {
 mod tests {
     use super::*;
     use dasmeter_core::{
-        Level, ListenTo, LoudnessMeterSettings, MeterSettings, MeterState, MeterView,
+        Level, ListenTo, LoudnessMeterSettings, MeterKind, MeterSettings, MeterState, MeterView,
     };
     use dasmeter_transport::{Details, Writer, remove_table};
 
@@ -311,5 +328,58 @@ mod tests {
         drop((new_audio, old_audio, new, old));
         remove_table(&table);
         remove_table(&old_table);
+    }
+
+    #[test]
+    fn the_daws_tempo_reaches_a_phase_scope() {
+        let table = format!("dmapp-timing-{}", std::process::id());
+        let details = Details {
+            name: "Kick".into(),
+            colour: 0x00_ff_00,
+            mono: false,
+            sample_rate: 48_000,
+        };
+        let kick = Writer::claim_named(&table, Some(1), &details).unwrap();
+        let mut audio = kick.writer.audio();
+        let mut core = AppCore::with_meters(vec![MeterSettings::default_of(MeterKind::PhaseScope)]);
+        let mut input = SendPluginInput::with_table(&table);
+        let start = Instant::now();
+        core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
+        input.pump(&mut core, Duration::ZERO, start);
+
+        // 96 BPM, two blocks per pump.
+        let block = 240;
+        let silence = vec![0.0f32; block];
+        for step in 0..300u64 {
+            let now = Duration::from_millis(10 * step);
+            kick.writer.heartbeat();
+            for half in 0..2 {
+                let frame = (step * 2 + half) * block as u64;
+                let beats = frame as f64 / 48_000.0 * 96.0 / 60.0;
+                audio.set_timing(Some(&dasmeter_transport::Timing {
+                    tempo: 96.0,
+                    beats,
+                    bar_start: (beats / 4.0).floor() * 4.0,
+                    signature: (4, 4),
+                    playing: true,
+                }));
+                audio.push(&silence, &silence);
+            }
+            input.pump(&mut core, now, start + now);
+        }
+        core.decide(Duration::from_secs(4));
+        let scene = core.scene().expect("a scene");
+        let MeterState::Live(MeterView::PhaseScope { scope, .. }) =
+            &scene.windows[0].meters[0].state
+        else {
+            panic!("{:?}", scene.windows[0].meters[0].state);
+        };
+        assert!(scope.following_daw);
+        assert_eq!(scope.tempo, 96.0);
+        assert!(scope.note.is_none());
+
+        drop(input);
+        drop((audio, kick));
+        remove_table(&table);
     }
 }

@@ -90,8 +90,13 @@ beat lands in the same place: a kick on the beat stays put, and you can watch
 how its attack and tail sit against the bass. The newest Cycle is drawn sharp
 with the few before it fading behind.
 
-On System Capture there's no DAW to follow, so it runs at a **Tempo** you
-type in (120 BPM by default). The tempo it follows is shown at the bottom left.
+On a Send Plugin it follows the DAW: its tempo, its beat and, for a bar
+Cycle, its time signature. When the DAW stops, it keeps running at the last
+tempo and locks on again when you press play. On System Capture there's no
+DAW to follow, so it runs at a **Tempo** you type in (120 BPM by default), as
+it does for a Send Plugin from an older version or a host that doesn't say
+its tempo ("No tempo from …"). The tempo it follows is shown at the bottom
+left.
 Settings: **Cycle** (Beat or Bar), **Tempo** and **Filled**, and in the
 settings panel the channels (mono, L/R or M/S), **Gain** (auto or manual) and
 **Steadiness** (a fading trail, or the last few Cycles averaged).
