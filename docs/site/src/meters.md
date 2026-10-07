@@ -122,24 +122,28 @@ Scope's menu: a second Send Plugin from the same DAW, say the bass track
 under a Phase Scope on the kick. It's drawn over the main trace in its own
 Send Plugin's colour, placed by its own song position, so the two line up
 as they do in the song, with their sum (what's actually left) drawn as its
-own waveform on top (**Show sum**, on by default). A coloured
+own waveform on top (**Show sum**, on by default), or in its own row under
+the two with **Sum in its own row**. A coloured
 lane under the Cycle shows how their lows move at each point: green where
 they push together, red where they cancel, stronger where they're louder.
-The large number in the top right is their correlation below the
+The number in the row above the waves is their correlation below the
 **Correlation below** frequency (150 Hz by default), with what it means in
 words: +1 when the lows move together, −1 when one is the other upside
 down. It's blank in silence, and the first thing left out when the Meter is
 small. **Offset** nudges it
 a few milliseconds later (+) or earlier (−). Turn on **Suggestions** and,
-when the lows don't fit, it says what would help under the number: flip the
+when the lows don't fit, it says what would help under the lane: flip the
 Overlay Source's polarity, move it by so many milliseconds (set that as the
-Offset to hear it), or pitch it to match the other's low end. If its Send Plugin goes away,
+Offset to hear it), or pitch it to match the other's low end. Once they fit
+it says so in green (**Lows fit**, with the number), and if nothing simple
+would help it says that too, so a change always gets an answer. If its Send Plugin goes away,
 the Phase Scope says "Waiting for …" until it's back. The pick and offset
 are saved in Presets. With System Capture there's only the one Source, so
 the option is greyed out. An Overlay Source is compared in mono, so while one
 is shown the main trace is mono too.
 
-When it's very small the readouts go first, so the traces keep the room.
+Text never sits on the traces. When it's small the suggestions go first,
+then the words beside the number, then the number, so the traces keep the room.
 
 To show it, right-click a Meter and choose **Show ▸ Phase Scope**, or
 **Add Meter ▸ Phase Scope**.

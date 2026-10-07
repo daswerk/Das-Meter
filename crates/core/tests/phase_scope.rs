@@ -563,6 +563,25 @@ fn a_cycle_draws_as_it_plays_not_a_cycle_later() {
 }
 
 #[test]
+fn the_trail_fades_as_the_cycle_is_drawn_not_a_step_a_cycle() {
+    let mut app = App::new();
+    let beat = 24_000;
+    app.feed(&clicks(1_000, beat, beat * 4, 0.5));
+    let mut last = app.scope().progress;
+    let mut rose = 0;
+    for block in vec![0.0; beat].chunks(2_400) {
+        app.feed(block);
+        let now = app.scope().progress;
+        assert!((0.0..=1.0).contains(&now));
+        if now > last {
+            rose += 1;
+        }
+        last = now;
+    }
+    assert!(rose >= 8, "it moves on with every block: {rose}");
+}
+
+#[test]
 fn a_slow_fade_out_fades_smoothly() {
     let mut app = App::new();
     // A 100 Hz tone fading out by 20 dB over 12 beats, after 4 steady ones.

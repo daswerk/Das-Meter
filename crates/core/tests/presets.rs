@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use dasmeter_core::{
-    AUTOSAVE_DELAY, AppCore, Edge, Event, LayoutMode, ListenTo, MeterState, PresetData, PresetFile,
-    PresetOp, Scene, SendPlugin, SendPluginState, WindowKey,
+    AUTOSAVE_DELAY, AppCore, Edge, Event, LayoutMode, ListenTo, MeterKind, MeterSettings,
+    MeterState, PresetData, PresetFile, PresetOp, Scene, SendPlugin, SendPluginState, WindowKey,
 };
 
 /// The presets folder, `settings.toml`, the trash and the Preset files' `.bak`s.
@@ -137,18 +137,28 @@ impl App {
 #[test]
 fn first_launch_copies_the_built_ins_and_opens_bar() {
     let mut app = App::first_launch();
-    assert_eq!(app.names(), ["Bar", "Mixing", "Mastering"]);
+    assert_eq!(app.names(), BUILT_INS);
     assert_eq!(app.current(), "Bar");
     assert!(app.scene().presets.list.iter().all(|p| p.built_in));
     let files: Vec<&String> = app.disk.files.keys().collect();
-    assert_eq!(files, ["bar.toml", "mastering.toml", "mixing.toml"]);
+    assert_eq!(
+        files,
+        [
+            "bar.toml",
+            "compact.toml",
+            "mastering-advanced.toml",
+            "mastering.toml",
+            "mixing.toml",
+            "producing.toml"
+        ]
+    );
     assert!(app.disk.settings.is_some());
 
     // The built-ins are what the spec lays out.
     app.send(Event::SwitchPreset { index: 1 });
     let scene = app.scene();
     assert_eq!(scene.mode, LayoutMode::Window);
-    assert_eq!(scene.windows[0].meters.len(), 4);
+    assert_eq!(scene.windows[0].meters.len(), 5);
     app.send(Event::SwitchPreset { index: 2 });
     let scene = app.scene();
     let loudness = scene.windows[0]
@@ -162,13 +172,148 @@ fn first_launch_copies_the_built_ins_and_opens_bar() {
     );
 }
 
+/// The built-ins, in their first-launch order.
+const BUILT_INS: [&str; 6] = [
+    "Bar",
+    "Mixing",
+    "Mastering",
+    "Mastering advanced",
+    "Producing",
+    "Compact",
+];
+
+impl App {
+    /// The kinds of the open Preset's Meters, in order.
+    fn kinds(&mut self) -> Vec<MeterKind> {
+        let count = self.scene().windows.iter().map(|w| w.meters.len()).sum();
+        (0..count)
+            .map(|i| self.core.meter_settings(i).unwrap().kind())
+            .collect()
+    }
+
+    fn switch_to(&mut self, name: &str) {
+        let index = self.names().iter().position(|n| n == name).unwrap();
+        self.send(Event::SwitchPreset { index });
+    }
+}
+
+#[test]
+fn the_built_ins_hold_the_meters_for_their_job() {
+    use MeterKind::*;
+    let mut app = App::first_launch();
+    app.switch_to("Mixing");
+    assert_eq!(
+        app.kinds(),
+        [Waveform, Spectrum, Stereometer, Loudness, PhaseScope]
+    );
+    app.switch_to("Mastering advanced");
+    assert_eq!(app.scene().mode, LayoutMode::Window);
+    assert_eq!(
+        app.kinds(),
+        [Loudness, Spectrum, Spectrogram, Stereometer, Waveform]
+    );
+    let scene = app.scene();
+    let loudness = scene.windows[0]
+        .meters
+        .iter()
+        .find(|m| m.meter == 0)
+        .unwrap();
+    assert!(
+        loudness.frame.width >= 0.4 && loudness.frame.height == 1.0,
+        "a large Loudness Meter"
+    );
+    app.switch_to("Producing");
+    assert_eq!(app.kinds(), [Spectrum, PhaseScope, Cepstrum, Loudness]);
+    let scene = app.scene();
+    let small = scene.windows[0]
+        .meters
+        .iter()
+        .find(|m| m.meter == 3)
+        .unwrap();
+    assert!(
+        small.frame.width * small.frame.height < 0.15,
+        "a small Loudness Meter"
+    );
+    app.switch_to("Compact");
+    assert_eq!(app.scene().mode, LayoutMode::Bar);
+    assert_eq!(app.kinds(), [Loudness, Spectrum, Stereometer]);
+    assert!(app.core.layout().thickness < 180.0, "a thin Bar");
+}
+
+#[test]
+fn an_older_install_gets_the_new_built_ins_once() {
+    // Copied by a version with three built-ins; the Mixing one untouched.
+    let mut old_mixing = PresetData::built_in(dasmeter_core::BuiltIn::Bar);
+    old_mixing.name = "Mixing".to_owned();
+    old_mixing.built_in = Some(dasmeter_core::BuiltIn::Mixing);
+    old_mixing.mode = LayoutMode::Window;
+    old_mixing.meters[3].show_source_label = true;
+    old_mixing.bar.thickness = 120.0;
+    let mut disk = Disk::default();
+    for (file, data) in [
+        (
+            "bar.toml",
+            PresetData::built_in(dasmeter_core::BuiltIn::Bar),
+        ),
+        ("mixing.toml", old_mixing.clone()),
+        (
+            "mastering.toml",
+            PresetData::built_in(dasmeter_core::BuiltIn::Mastering),
+        ),
+    ] {
+        disk.files.insert(file.to_owned(), data.to_toml());
+    }
+    disk.settings = Some(
+        "order = [\"bar.toml\", \"mixing.toml\", \"mastering.toml\"]\n\
+         [first_launch]\nbuilt_ins_copied = true\n"
+            .to_owned(),
+    );
+    let mut app = App::launch(disk.clone());
+    assert_eq!(app.names(), BUILT_INS);
+    app.switch_to("Mixing");
+    assert!(
+        app.kinds().contains(&MeterKind::PhaseScope),
+        "the untouched Mixing is the new one"
+    );
+    let mixing: PresetData = toml::from_str(&app.disk.files["mixing.toml"]).unwrap();
+    assert!(mixing.meters[3].show_source_label, "its own bits are kept");
+    assert_eq!(mixing.bar.thickness, 120.0);
+    assert_eq!(mixing.bar.meters.len(), 5);
+
+    // Deleted after: not copied again.
+    let index = app.names().iter().position(|n| n == "Compact").unwrap();
+    app.send(Event::DeletePreset { index });
+    app.flush();
+    let mut app = app.relaunch();
+    assert_eq!(app.names(), &BUILT_INS[..5]);
+
+    // A Mixing the user changed is left as it is.
+    let mut changed = old_mixing;
+    changed.meters[2].settings = MeterSettings::default_of(MeterKind::Cepstrum);
+    disk.files
+        .insert("mixing.toml".to_owned(), changed.to_toml());
+    let mut app = App::launch(disk);
+    app.switch_to("Mixing");
+    assert_eq!(
+        app.kinds(),
+        [
+            MeterKind::Waveform,
+            MeterKind::Spectrum,
+            MeterKind::Cepstrum,
+            MeterKind::Loudness
+        ]
+    );
+}
+
 #[test]
 fn a_deleted_built_in_isnt_copied_again() {
     let mut app = App::first_launch();
     app.send(Event::DeletePreset { index: 2 });
     app.flush();
     let mut app = app.relaunch();
-    assert_eq!(app.names(), ["Bar", "Mixing"]);
+    let mut left = BUILT_INS.to_vec();
+    left.remove(2);
+    assert_eq!(app.names(), left);
 }
 
 #[test]
@@ -190,7 +335,7 @@ fn changes_are_saved_after_a_pause_and_come_back_at_launch() {
     app.send(Event::ClosePane { meter: 2 });
     let mut app = app.relaunch();
     assert_eq!(app.current(), "Mixing");
-    assert_eq!(app.scene().windows[0].meters.len(), 3);
+    assert_eq!(app.scene().windows[0].meters.len(), 4);
     app.send(Event::SwitchPreset { index: 0 });
     assert_eq!(app.edge(), Some(Edge::Top));
     assert_eq!(app.core.layout().thickness, 240.0);
@@ -314,11 +459,11 @@ fn reset_brings_a_built_in_back() {
         name: "My mix",
     });
     app.wait(AUTOSAVE_DELAY * 2);
-    assert_eq!(app.scene().windows[0].meters.len(), 3);
+    assert_eq!(app.scene().windows[0].meters.len(), 4);
     app.send(Event::ResetPreset { index: 1 });
     app.flush();
     assert_eq!(app.current(), "Mixing");
-    assert_eq!(app.scene().windows[0].meters.len(), 4);
+    assert_eq!(app.scene().windows[0].meters.len(), 5);
     let saved: PresetData = toml::from_str(&app.disk.files["mixing.toml"]).unwrap();
     assert_eq!(saved, PresetData::built_in(dasmeter_core::BuiltIn::Mixing));
 }
@@ -336,6 +481,9 @@ fn deleting_the_current_preset_switches_to_the_one_above() {
     app.send(Event::DeletePreset { index: 0 });
     assert_eq!(app.current(), "Mixing");
     // The last one stays.
+    while app.names().len() > 1 {
+        app.send(Event::DeletePreset { index: 1 });
+    }
     app.send(Event::DeletePreset { index: 0 });
     app.flush();
     assert_eq!(app.names(), ["Mixing"]);
@@ -346,7 +494,7 @@ fn managing_names_copies_and_order() {
     let mut app = App::first_launch();
     app.send(Event::DuplicatePreset { index: 0 });
     app.flush();
-    assert_eq!(app.names(), ["Bar", "Bar (2)", "Mixing", "Mastering"]);
+    assert_eq!(app.names()[..4], ["Bar", "Bar (2)", "Mixing", "Mastering"]);
     assert!(
         !app.scene().presets.list[1].built_in,
         "a copy isn't a built-in"

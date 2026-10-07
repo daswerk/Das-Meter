@@ -3,7 +3,9 @@
 A **Theme** is a named set of colours and styling: background opacity, line
 thickness, spacing, corner radius and text size. Das-Meter comes with **Dark**,
 **Light** and **High contrast** (a colour-blind-safe palette, with shape cues
-besides colour).
+besides colour), and three darker ones with a near-black body and dark grey
+panels: **Midnight Purple**, **Deep Turquoise** and **Graphite** (neutral
+greys with light grey and white).
 
 By default a Preset uses the Dark and Light pair and **follows the system's
 light/dark setting**. Turn that off to pick one Theme.

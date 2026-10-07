@@ -101,11 +101,14 @@ impl Themes {
     pub fn load(&mut self, files: &[ThemeFile]) {
         self.entries.retain(|e| e.built_in);
         for file in files {
-            let Ok(theme) = Theme::from_toml(&file.text) else {
+            let Ok(mut theme) = Theme::from_toml(&file.text) else {
                 continue;
             };
-            if self.find(&theme.name).is_some() {
-                continue;
+            match self.find(&theme.name) {
+                // Named like a built-in added since it was made: kept, as a copy.
+                Some(i) if self.entries[i].built_in => theme.name = self.unique_name(&theme.name),
+                Some(_) => continue,
+                None => {}
             }
             self.entries.push(Entry {
                 theme,

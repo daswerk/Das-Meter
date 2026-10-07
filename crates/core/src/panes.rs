@@ -62,7 +62,7 @@ pub struct Divider {
 }
 
 impl Node {
-    fn split(direction: Direction, ratio: f32, first: Node, second: Node) -> Node {
+    pub(crate) fn split(direction: Direction, ratio: f32, first: Node, second: Node) -> Node {
         Node::Split {
             direction,
             ratio,

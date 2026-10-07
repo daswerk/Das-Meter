@@ -545,7 +545,46 @@ fn tracks_in_phase_get_no_suggestion() {
     let mut app = App::with_bass();
     app.set(|s| s.suggestions = true);
     app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.2));
-    assert!(app.scope().overlay.unwrap().fits.is_empty());
+    let overlay = app.scope().overlay.unwrap();
+    assert!(overlay.fits.is_empty());
+    assert_eq!(overlay.lows_fit, Some(true), "it says they fit");
+}
+
+#[test]
+fn after_a_fix_it_says_the_lows_fit() {
+    let mut app = App::with_bass();
+    let kick = sine(55.0, 0.3);
+    app.play_both(2.0, &kick, |f| -kick(f));
+    assert_eq!(
+        app.scope().overlay.unwrap().lows_fit,
+        None,
+        "nothing said with suggestions off"
+    );
+
+    app.set(|s| s.suggestions = true);
+    app.play_both(2.0, &kick, |f| -kick(f));
+    let overlay = app.scope().overlay.unwrap();
+    assert_eq!(overlay.lows_fit, Some(false));
+    assert!(!overlay.fits.is_empty());
+
+    // The Bass flipped in the DAW: the next Cycles say it worked.
+    app.play_both(2.0, &kick, &kick);
+    let overlay = app.scope().overlay.unwrap();
+    assert!(overlay.fits.is_empty() && overlay.advice.is_empty());
+    assert_eq!(overlay.lows_fit, Some(true));
+}
+
+#[test]
+fn lows_apart_with_no_simple_fix_are_not_called_a_fit() {
+    let mut app = App::with_bass();
+    app.set(|s| s.suggestions = true);
+    // Noise-like lows: no flip, move or pitch lines them up.
+    let a = |f: u64| sine(41.0, 0.2)(f) + sine(67.0, 0.2)(f);
+    let b = |f: u64| sine(47.0, 0.2)(f) + sine(59.0, 0.2)(f) + sine(33.0, 0.2)(f);
+    app.play_both(4.0, a, b);
+    let overlay = app.scope().overlay.unwrap();
+    assert!(overlay.correlation.is_some_and(|c| c < 0.8), "{overlay:?}");
+    assert_eq!(overlay.lows_fit, Some(false));
 }
 
 #[test]

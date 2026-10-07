@@ -351,6 +351,9 @@ pub struct PhaseScopeMeterSettings {
     pub overlay_offset: f32,
     /// Whether the sum of the two Sources is drawn over them. Default on.
     pub show_sum: bool,
+    /// Whether the sum gets its own row under the two Sources rather than
+    /// being drawn over them. Default off.
+    pub split_sum: bool,
     /// Whether it says what would make the two fit better (flip, move,
     /// tune). Default off.
     pub suggestions: bool,
@@ -369,6 +372,7 @@ impl Default for PhaseScopeMeterSettings {
             cutoff: 150.0,
             overlay_offset: 0.0,
             show_sum: true,
+            split_sum: false,
             suggestions: false,
         }
     }

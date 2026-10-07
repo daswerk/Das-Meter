@@ -127,7 +127,17 @@ fn the_built_ins_are_listed_and_read_only() {
     let mut app = App::new();
     let scene = app.scene();
     let names: Vec<&str> = scene.theme.themes.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["Dark", "Light", "High contrast"]);
+    assert_eq!(
+        names,
+        [
+            "Dark",
+            "Light",
+            "High contrast",
+            "Midnight Purple",
+            "Deep Turquoise",
+            "Graphite"
+        ]
+    );
     assert!(scene.theme.themes.iter().all(|t| t.built_in));
     // Default: follow the system with Light and Dark; the system starts dark.
     assert_eq!(scene.theme.name, "Dark");
@@ -141,6 +151,22 @@ fn the_built_ins_are_listed_and_read_only() {
     });
     assert_eq!(app.scene().palette, Palette::dark());
     assert!(app.flush().is_empty());
+}
+
+#[test]
+fn the_darker_built_ins_have_a_near_black_body() {
+    let luma =
+        |c: Colour| 0.2126 * f32::from(c.r) + 0.7152 * f32::from(c.g) + 0.0722 * f32::from(c.b);
+    for theme in &Theme::built_ins()[3..] {
+        let palette = &theme.palette;
+        assert!(luma(palette[Role::Background]) < 20.0, "{}", theme.name);
+        assert!(
+            luma(palette[Role::Panel]) < 40.0,
+            "{}: dark grey panels",
+            theme.name
+        );
+        assert!(luma(palette[Role::Text]) > 180.0, "{}", theme.name);
+    }
 }
 
 #[test]
@@ -201,13 +227,28 @@ fn themes_are_read_from_the_folder() {
     app.rescan();
     let scene = app.scene();
     let listed: Vec<&str> = scene.theme.themes.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(listed, ["Dark", "Light", "High contrast", "Ocean"]);
+    assert_eq!(listed[6..], ["Ocean"], "after the built-ins");
     let ocean_index = app.index_of("Ocean");
     app.send(Event::ChooseTheme {
         light: ocean_index,
         dark: ocean_index,
     });
     assert_eq!(app.scene().palette, ocean.palette);
+}
+
+#[test]
+fn a_users_theme_named_like_a_new_built_in_is_kept_as_a_copy() {
+    let mut app = App::new();
+    let mut mine = Theme::light();
+    mine.name = "Graphite".to_owned();
+    app.folder = vec![ThemeFile {
+        file_name: "graphite.toml".to_owned(),
+        text: mine.to_toml(),
+    }];
+    app.rescan();
+    let scene = app.scene();
+    let listed: Vec<&str> = scene.theme.themes.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(listed[6..], ["Graphite copy"]);
 }
 
 #[test]
@@ -340,5 +381,5 @@ fn a_folder_theme_can_be_renamed_and_the_choice_follows() {
         .iter()
         .map(|t| t.name.clone())
         .collect();
-    assert_eq!(names, ["Dark", "Light", "High contrast", "Light (2)"]);
+    assert_eq!(names[6..], ["Light (2)"], "after the built-ins");
 }

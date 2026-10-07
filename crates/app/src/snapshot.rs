@@ -77,8 +77,13 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
-    // "WxH": a window of that many logical px, for checking small sizes.
-    let custom = open.and_then(|o| {
+    // "WxH": a window of that many logical px, for checking small sizes;
+    // "option@WxH" for an option at that size.
+    let (open, size) = match open.and_then(|o| o.split_once('@')) {
+        Some((option, size)) => (Some(option), Some(size)),
+        None => (open, open),
+    };
+    let custom = size.and_then(|o| {
         let (w, h) = o.split_once('x')?;
         Some((w.parse::<u32>().ok()? * 2, h.parse::<u32>().ok()? * 2))
     });
@@ -129,7 +134,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 core.handle(Event::Audio(block), now);
             }
         }
-        Some(_) if custom.is_some() => {}
+        Some(_) if custom.is_some() && size == open => {}
         // The Loudness Meter with its bars on, in the Bar or a window.
         Some(option @ ("bars" | "bars-window")) => {
             if option == "bars-window" {
@@ -328,11 +333,13 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         }
         // The Phase Scope on a Kick Send Plugin with the Bass from the same
         // DAW as its Overlay Source, both following the DAW at 120 BPM,
-        // with suggestions on.
-        Some("phase-scope-overlay") => {
+        // with suggestions on; `phase-scope-split` with the sum in its own
+        // row, `phase-scope-fit` with a Bass that fits.
+        Some(option @ ("phase-scope-overlay" | "phase-scope-split" | "phase-scope-fit")) => {
             let settings =
                 dasmeter_core::MeterSettings::PhaseScope(dasmeter_core::PhaseScopeMeterSettings {
                     suggestions: true,
+                    split_sum: option == "phase-scope-split",
                     ..Default::default()
                 });
             core.handle(Event::SetMeter { meter: 1, settings }, now);
@@ -360,7 +367,10 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 },
                 now,
             );
-            let (kick, bass) = kick_and_bass_apart(8.0);
+            let (kick, mut bass) = kick_and_bass_apart(8.0);
+            if option == "phase-scope-fit" {
+                bass = kick.iter().map(|k| k * 0.6).collect();
+            }
             for (block, (kick, bass)) in kick.chunks(512).zip(bass.chunks(512)).enumerate() {
                 let beats = (block * 512) as f64 / f64::from(RATE) * 2.0;
                 let timing = Some(dasmeter_core::Timing {

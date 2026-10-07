@@ -325,6 +325,108 @@ impl Palette {
         }
     }
 
+    /// The built-in Midnight Purple palette: a black body, dark grey panels and purple.
+    pub fn midnight_purple() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x0a, 0x0a, 0x0d),
+            Role::Panel => Colour::rgb(0x17, 0x15, 0x1c),
+            Role::Grid => Colour::rgb(0x2e, 0x2a, 0x38),
+            Role::Text => Colour::rgb(0xe6, 0xe1, 0xf0),
+            Role::Accent => Colour::rgb(0xb4, 0x7c, 0xff),
+            Role::WaveformLow => Colour::rgb(0xff, 0x5c, 0x8a),
+            Role::WaveformMid => Colour::rgb(0xb4, 0x7c, 0xff),
+            Role::WaveformHigh => Colour::rgb(0x6e, 0x8b, 0xff),
+            Role::SpectrumLine => Colour::rgb(0xc9, 0xa2, 0xff),
+            Role::SpectrumFill => Colour::rgb(0x5b, 0x2a, 0xa8),
+            Role::SpectrumPeakHold => Colour::rgb(0xec, 0xe6, 0xf5),
+            Role::SpectrumPeakDots => Colour::rgb(0xc9, 0xa2, 0xff),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xcf, 0x6e),
+            Role::SpectrumSecond => Colour::rgb(0xff, 0x7a, 0xd9),
+            Role::LoudnessBar => Colour::rgb(0xa0, 0x70, 0xff),
+            Role::LoudnessPeak => Colour::rgb(0xec, 0xe6, 0xf5),
+            Role::LoudnessOverTarget => Colour::rgb(0xff, 0x7a, 0x59),
+            Role::CorrelationPositive => Colour::rgb(0x57, 0xd6, 0x8d),
+            Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::StereometerTrace => Colour::rgb(0xd4, 0xa8, 0xff),
+            Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xd9),
+            Role::PhaseScopeTrace => Colour::rgb(0xb4, 0x8c, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::PhaseScopeSum => Colour::rgb(0xf0, 0xe8, 0xff),
+            Role::PhaseScopeGrid => Colour::rgb(0x35, 0x2f, 0x42),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
+    /// The built-in Deep Turquoise palette: black and dark teal with turquoise.
+    pub fn deep_turquoise() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x05, 0x0a, 0x0b),
+            Role::Panel => Colour::rgb(0x0b, 0x17, 0x18),
+            Role::Grid => Colour::rgb(0x1d, 0x33, 0x35),
+            Role::Text => Colour::rgb(0xd6, 0xee, 0xee),
+            Role::Accent => Colour::rgb(0x2e, 0xe6, 0xd6),
+            Role::WaveformLow => Colour::rgb(0xff, 0x6b, 0x5c),
+            Role::WaveformMid => Colour::rgb(0x2e, 0xe6, 0xd6),
+            Role::WaveformHigh => Colour::rgb(0x3d, 0x9b, 0xff),
+            Role::SpectrumLine => Colour::rgb(0x4f, 0xf0, 0xe0),
+            Role::SpectrumFill => Colour::rgb(0x0d, 0x6f, 0x6a),
+            Role::SpectrumPeakHold => Colour::rgb(0xe0, 0xf5, 0xf5),
+            Role::SpectrumPeakDots => Colour::rgb(0x4f, 0xf0, 0xe0),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd1, 0x66),
+            Role::SpectrumSecond => Colour::rgb(0x7a, 0xa8, 0xff),
+            Role::LoudnessBar => Colour::rgb(0x22, 0xc7, 0xb8),
+            Role::LoudnessPeak => Colour::rgb(0xe0, 0xf5, 0xf5),
+            Role::LoudnessOverTarget => Colour::rgb(0xff, 0x8a, 0x3d),
+            Role::CorrelationPositive => Colour::rgb(0x3d, 0xdc, 0x97),
+            Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x5e),
+            Role::StereometerTrace => Colour::rgb(0x6f, 0xf5, 0xe6),
+            Role::CepstrumTrace => Colour::rgb(0xff, 0x8f, 0xb3),
+            Role::PhaseScopeTrace => Colour::rgb(0x5f, 0xe8, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x5e),
+            Role::PhaseScopeSum => Colour::rgb(0xea, 0xfc, 0xfc),
+            Role::PhaseScopeGrid => Colour::rgb(0x23, 0x40, 0x44),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
+    /// The built-in Graphite palette: neutral greys with light grey and white, colour kept for warnings.
+    pub fn graphite() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x0e, 0x0e, 0x0f),
+            Role::Panel => Colour::rgb(0x1a, 0x1a, 0x1c),
+            Role::Grid => Colour::rgb(0x33, 0x33, 0x36),
+            Role::Text => Colour::rgb(0xe6, 0xe6, 0xe6),
+            Role::Accent => Colour::rgb(0xd0, 0xd0, 0xd0),
+            Role::WaveformLow => Colour::rgb(0x8e, 0x8e, 0x93),
+            Role::WaveformMid => Colour::rgb(0xc8, 0xc8, 0xcc),
+            Role::WaveformHigh => Colour::rgb(0xff, 0xff, 0xff),
+            Role::SpectrumLine => Colour::rgb(0xf0, 0xf0, 0xf0),
+            Role::SpectrumFill => Colour::rgb(0x50, 0x50, 0x55),
+            Role::SpectrumPeakHold => Colour::rgb(0xff, 0xff, 0xff),
+            Role::SpectrumPeakDots => Colour::rgb(0xf0, 0xf0, 0xf0),
+            Role::SpectrumHarmonics => Colour::rgb(0xbd, 0xbd, 0xbd),
+            Role::SpectrumSecond => Colour::rgb(0x8f, 0xa3, 0xb8),
+            Role::LoudnessBar => Colour::rgb(0xbf, 0xbf, 0xc4),
+            Role::LoudnessPeak => Colour::rgb(0xff, 0xff, 0xff),
+            Role::LoudnessOverTarget => Colour::rgb(0xe0, 0x7a, 0x5a),
+            Role::CorrelationPositive => Colour::rgb(0x7f, 0xc9, 0x9a),
+            Role::CorrelationNegative => Colour::rgb(0xe0, 0x5a, 0x5a),
+            Role::StereometerTrace => Colour::rgb(0xe0, 0xe0, 0xe0),
+            Role::CepstrumTrace => Colour::rgb(0xcf, 0xcf, 0xd4),
+            Role::PhaseScopeTrace => Colour::rgb(0xe8, 0xe8, 0xe8),
+            Role::PhaseScopeCancel => Colour::rgb(0xe0, 0x5a, 0x5a),
+            Role::PhaseScopeSum => Colour::rgb(0xff, 0xff, 0xff),
+            Role::PhaseScopeGrid => Colour::rgb(0x3c, 0x3c, 0x40),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
     /// This palette with `overrides` taking the place of their roles.
     pub fn with(&self, overrides: &[(Role, Colour)]) -> Palette {
         let mut palette = self.clone();
@@ -433,6 +535,9 @@ pub struct Theme {
 pub const DARK: &str = "Dark";
 pub const LIGHT: &str = "Light";
 pub const HIGH_CONTRAST: &str = "High contrast";
+pub const MIDNIGHT_PURPLE: &str = "Midnight Purple";
+pub const DEEP_TURQUOISE: &str = "Deep Turquoise";
+pub const GRAPHITE: &str = "Graphite";
 
 /// The Theme file layout's version.
 const FILE_VERSION: i64 = 1;
@@ -466,9 +571,25 @@ impl Theme {
         }
     }
 
+    /// A built-in with the default styling.
+    fn plain(name: &str, palette: Palette) -> Theme {
+        Theme {
+            name: name.to_owned(),
+            palette,
+            styling: Styling::default(),
+        }
+    }
+
     /// The built-ins, in the order they're listed.
-    pub fn built_ins() -> [Theme; 3] {
-        [Theme::dark(), Theme::light(), Theme::high_contrast()]
+    pub fn built_ins() -> [Theme; 6] {
+        [
+            Theme::dark(),
+            Theme::light(),
+            Theme::high_contrast(),
+            Theme::plain(MIDNIGHT_PURPLE, Palette::midnight_purple()),
+            Theme::plain(DEEP_TURQUOISE, Palette::deep_turquoise()),
+            Theme::plain(GRAPHITE, Palette::graphite()),
+        ]
     }
 
     /// The Theme as a TOML file.

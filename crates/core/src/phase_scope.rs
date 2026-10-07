@@ -33,6 +33,8 @@ const OVERLAY_WAIT_SECONDS: f64 = 0.25;
 /// A DAW song position further than this from where the clock expects it
 /// (in quarter notes) is a jump: the clock locks on again.
 const JUMP_BEATS: f64 = 0.05;
+/// A trail quieter than this (−80 dBFS) has nothing left to fade.
+const SILENT_PEAK: f32 = 1e-4;
 /// What auto gain scales the loudest point to.
 const AUTO_GAIN_PEAK: f32 = 0.9;
 /// How slowly auto gain lets the peak fall, as a time constant in seconds.
@@ -80,6 +82,9 @@ pub struct PhaseScopeView {
     pub overlay: Option<ScopeOverlay>,
     /// Shown in place of the tempo readout: why the DAW's tempo isn't followed.
     pub note: Option<String>,
+    /// How far the newest Cycle has been drawn, 0–1, so the trail behind it
+    /// fades as it goes rather than a step each Cycle. 0 with no trail to fade.
+    pub progress: f32,
 }
 
 /// The Overlay Source drawn over the main Source, and how the two combine.
@@ -102,6 +107,11 @@ pub struct ScopeOverlay {
     pub fits: Vec<Fit>,
     /// The fits in words, when suggestions are turned on.
     pub advice: Vec<String>,
+    /// With suggestions on, once a whole Cycle has been judged: `true` when
+    /// the lows fit with nothing to change, `false` when they don't (`fits`
+    /// says what would help, if anything simple does). `None` with
+    /// suggestions off, or in silence.
+    pub lows_fit: Option<bool>,
 }
 
 /// Something that would make the Overlay Source fit the main one better
@@ -304,6 +314,7 @@ struct OverlayCut {
     /// How well the two agree below the cut-off; `None` if either is silent there.
     correlation: Option<f32>,
     fits: Vec<Fit>,
+    lows_fit: Option<bool>,
 }
 
 /// Below this mean square (−80 dBFS) a stretch counts as silent: no
@@ -711,6 +722,7 @@ impl PhaseScope {
                 phase: o.phase.clone(),
                 correlation: o.correlation,
                 fits: o.fits.clone(),
+                lows_fit: o.lows_fit,
                 ..ScopeOverlay::default()
             },
             None => ScopeOverlay {
@@ -737,6 +749,12 @@ impl PhaseScope {
             colour: None,
             overlay,
             note: self.too_long(),
+            progress: match &self.cutting {
+                Some(cutting) if peak_of(trail.iter().copied()) > SILENT_PEAK => {
+                    cutting.next as f32 / COLUMNS as f32
+                }
+                _ => 0.0,
+            },
         }
     }
 }
@@ -778,6 +796,7 @@ impl OverlayPass {
                 phase: vec![0.0; COLUMNS],
                 correlation: None,
                 fits: Vec::new(),
+                lows_fit: None,
             },
             filters: [filter, filter],
             sums: [0.0; 5],
@@ -869,6 +888,7 @@ impl OverlayPass {
         if let (Some(now), true) = (self.cut.correlation, self.suggest) {
             let rate = self.rate / self.every as f64;
             self.cut.fits = fits(&self.lows[0], &self.lows[1], rate, now);
+            self.cut.lows_fit = Some(self.cut.fits.is_empty() && now >= FIT_GOOD);
         }
         self.cut
     }
@@ -894,6 +914,7 @@ impl OverlayPass {
             rest(&mut cut.phase, &last.phase, settled);
             cut.correlation = last.correlation;
             cut.fits = last.fits.clone();
+            cut.lows_fit = last.lows_fit;
         } else {
             cut.correlation = self.correlation();
         }
@@ -1177,15 +1198,25 @@ fn average(cuts: &[&Cut]) -> Option<Cut> {
                 ratio(f64::from(correlations.iter().sum::<f32>()) / correlations.len() as f64)
             }),
             fits: o.last().map(|c| c.fits.clone()).unwrap_or_default(),
+            lows_fit: None,
         }
+    });
+    // Fitting only if the averaged number shown agrees.
+    let overlay = overlay.map(|mut o| {
+        o.lows_fit = cuts
+            .last()
+            .and_then(|c| c.overlay.as_ref()?.lows_fit)
+            .map(|fit| fit && o.correlation.is_some_and(|c| c >= FIT_GOOD));
+        o
     });
     Some(Cut { traces, overlay })
 }
 
-/// A value after gain: clipped to ±1 and rounded to 0.01, so a still
-/// picture stays exactly the same and the app sleeps.
+/// A value after gain: clipped to ±1 and rounded to 0.001 (finer than a
+/// pixel on any screen, so a fade glides), so a still picture stays
+/// exactly the same and the app sleeps.
 fn level(v: f32) -> f32 {
-    ((v.clamp(-1.0, 1.0) * 100.0).round() / 100.0) + 0.0
+    ((v.clamp(-1.0, 1.0) * 1_000.0).round() / 1_000.0) + 0.0
 }
 
 /// Taps on a Phase Scope's tempo. A pause longer than this starts a fresh count.
