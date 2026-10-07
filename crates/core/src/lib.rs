@@ -153,8 +153,13 @@ pub enum Event<'a> {
     DisplayRefreshRate(u32),
     /// The display the Bar is on: its whole and usable area.
     Display(Display),
-    /// Dock the Bar to this edge.
+    /// Dock the Bar to this edge (also after it was moved off one).
     SetEdge(Edge),
+    /// The Bar was dragged off its edge (⌘-drag): its top-left corner to
+    /// `to`, in logical px on screen.
+    MoveBar {
+        to: [f32; 2],
+    },
     /// The Bar's thickness was dragged to this many logical pixels.
     SetBarThickness(f32),
     /// The divider after the Bar's `divider`-th Meter was dragged to `at`
@@ -1297,10 +1302,19 @@ impl AppCore {
                 self.display = Some(display);
             }
             Event::SetEdge(edge) => {
-                if edge == self.layout.edge {
+                if edge == self.layout.edge && self.layout.moved.is_none() {
                     return;
                 }
                 self.layout.edge = edge;
+                self.layout.moved = None;
+            }
+            Event::MoveBar { to } => {
+                let Some(display) = self.bar_display() else {
+                    return;
+                };
+                if !self.layout.move_to(to, &display) {
+                    return;
+                }
             }
             Event::SetBarThickness(thickness) => {
                 if thickness.is_nan() {
@@ -2054,7 +2068,8 @@ impl AppCore {
             title: "Das-Meter".to_owned(),
             frame: self.bar_display().map(|display| bar.frame_on(&display)),
             on_top: bar.screen != ScreenMode::NormalWindow,
-            reserve_space: bar.screen == ScreenMode::ReserveSpace,
+            // Moved off its edge, it no longer takes screen space.
+            reserve_space: bar.screen == ScreenMode::ReserveSpace && bar.moved.is_none(),
             over_fullscreen: bar.show_over_fullscreen,
             screen: Some(bar.screen),
             edge: Some(bar.edge),

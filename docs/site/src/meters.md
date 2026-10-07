@@ -30,7 +30,9 @@ Only peaks that stand out for a couple of seconds are marked, and a dot stays
 where it was found. The zoom window marks its peaks the same way.
 **Colour ▸ Steady harmonics** makes harmonics that keep sounding glow brighter.
 Their colours, **Spectrum peak dots** and **Spectrum harmonics**, are with
-the Spectrum's other colours in the Theme and the Meter's own colours.
+the Spectrum's other colours in the Theme and the Meter's own colours. With
+two traces (Left and Right, or Mid and Side), the second one's colour is
+**Spectrum R / Side**.
 
 ## Loudness Meter
 
@@ -55,7 +57,8 @@ See [Measurements](measurements.md) for exactly what each number is.
 Where the sound sits between left and right, with the phase **correlation**
 under it (+1: mono, 0: unrelated, −1: out of phase) and an optional **Balance
 bar**. Settings: the view, **Scale** (auto or fixed gain), persistence and
-the correlation's averaging time.
+the correlation's averaging time. The scope stretches to whatever shape the
+Meter has; in a wide, low Meter the bars stand upright beside it.
 
 ## Cepstrum
 
@@ -64,7 +67,8 @@ The cepstrum of the mono sum: evenly spaced partials of a harmonic sound
 and echoes make peaks at their delay. The axis runs from short periods (high
 pitch) on the left to long ones (low pitch) on the right, labelled in Hz.
 With **Show pitch** on, a line marks the pitch found, with its frequency and
-note; noise and chords give "No pitch". Settings: **FFT size**, the lowest and
+note; noise and chords give "No pitch". Under the mouse it shows the pitch
+and note of the period there. Settings: **FFT size**, the lowest and
 highest pitch to look for (50 to 1000 Hz by default) and the smoothing.
 
 To show it, right-click a Meter and choose **Show ▸ Cepstrum**.
@@ -88,7 +92,8 @@ To show it, right-click a Meter and choose **Show ▸ Spectrogram**, or
 The waveform over one **Cycle**, one beat or one bar, held still so every
 beat lands in the same place: a kick on the beat stays put, and you can watch
 how its attack and tail sit against the bass. The newest Cycle is drawn sharp
-with the few before it fading behind.
+with the few before it fading behind. It's drawn as it plays, like a
+scope's beam sweeping across, so a fade-out fades smoothly.
 
 On a Send Plugin it follows the DAW: its tempo, its beat and, for a bar
 Cycle, its time signature. When the DAW stops, it keeps running at the last
@@ -116,7 +121,8 @@ While listening to Send Plugins, pick an **Overlay Source** in the Phase
 Scope's menu: a second Send Plugin from the same DAW, say the bass track
 under a Phase Scope on the kick. It's drawn over the main trace in its own
 Send Plugin's colour, placed by its own song position, so the two line up
-as they do in the song, with their sum (what's actually left) dashed on top. A coloured
+as they do in the song, with their sum (what's actually left) drawn as its
+own waveform on top (**Show sum**, on by default). A coloured
 lane under the Cycle shows how their lows move at each point: green where
 they push together, red where they cancel, stronger where they're louder.
 The large number in the top right is their correlation below the
@@ -124,7 +130,10 @@ The large number in the top right is their correlation below the
 words: +1 when the lows move together, −1 when one is the other upside
 down. It's blank in silence, and the first thing left out when the Meter is
 small. **Offset** nudges it
-a few milliseconds later (+) or earlier (−). If its Send Plugin goes away,
+a few milliseconds later (+) or earlier (−). Turn on **Suggestions** and,
+when the lows don't fit, it says what would help under the number: flip the
+Overlay Source's polarity, move it by so many milliseconds (set that as the
+Offset to hear it), or pitch it to match the other's low end. If its Send Plugin goes away,
 the Phase Scope says "Waiting for …" until it's back. The pick and offset
 are saved in Presets. With System Capture there's only the one Source, so
 the option is greyed out. An Overlay Source is compared in mono, so while one

@@ -8,6 +8,9 @@ settings.
 A strip of Meters docked to a screen edge. Drag its inner edge to change its
 thickness, drag between Meters to share out the space, and drag its ends to
 make it shorter. Choose the edge in the settings (**Bar ▸ Edge**).
+Hold **⌘** (Ctrl on Windows) and drag the Bar to put it anywhere on the
+screen; it keeps its size, can still be resized there, and stops reserving
+space. Picking an edge docks it again.
 
 The Bar holds as many Meters as you like, of any kind. **Add Meter** in a
 Meter's right-click menu puts a new one next to it, sharing its space;

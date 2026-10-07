@@ -419,3 +419,51 @@ fn the_bar_takes_more_meters_and_gives_them_back() {
     }
     assert_eq!(app.bar_meters().len(), 1);
 }
+
+#[test]
+fn the_bar_can_be_moved_anywhere_and_docks_again() {
+    let mut app = App::on(Platform::Windows);
+    app.send(Event::SetEdge(Edge::Top));
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::End,
+        at: 800.0,
+    });
+    let docked = app.bar().frame.unwrap();
+    assert!(app.bar().reserve_space);
+
+    // Dragged with ⌘ (Ctrl on Windows) to where the user likes it: same
+    // size, off the edge, and no longer taking screen space.
+    app.send(Event::MoveBar { to: [200.0, 400.0] });
+    let bar = app.bar();
+    let frame = bar.frame.unwrap();
+    assert_eq!((frame.x, frame.y), (200.0, 400.0));
+    assert_eq!((frame.width, frame.height), (docked.width, docked.height));
+    assert!(!bar.reserve_space);
+    assert_eq!(bar.edge, Some(Edge::Top), "still lies along a top or bottom");
+
+    // It can be resized where it is, from its inner edge.
+    app.send(Event::SetBarThickness(frame.bottom() + 40.0 - frame.y));
+    let resized = app.bar().frame.unwrap();
+    assert_eq!((resized.x, resized.y), (200.0, 400.0));
+    assert!(near(resized.height, frame.height + 40.0));
+
+    // Its ends drag where it is: the left one leaves the right one put.
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::Start,
+        at: 300.0,
+    });
+    let shortened = app.bar().frame.unwrap();
+    assert!(near(shortened.x, 300.0), "{shortened:?}");
+    assert!(near(shortened.right(), resized.right()), "{shortened:?}");
+    assert!(near(shortened.y, 400.0));
+
+    // Never off the display.
+    app.send(Event::MoveBar { to: [5_000.0, -300.0] });
+    let frame = app.bar().frame.unwrap();
+    assert!(frame.right() <= DISPLAY.frame.right() && frame.y >= DISPLAY.frame.y, "{frame:?}");
+
+    // Picking an edge docks it there again.
+    app.send(Event::SetEdge(Edge::Top));
+    assert_eq!(app.bar().frame.unwrap().y, docked.y);
+    assert!(app.bar().reserve_space);
+}
