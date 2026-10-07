@@ -12,7 +12,7 @@ use crate::meters::MeterSettings;
 use crate::panes::{Direction, Node, WindowLayout};
 use crate::settings::DEFAULT_FRAME_RATE_CAP;
 use crate::sources::{ListenTo, Pick};
-use crate::theme::{Colour, DARK, LIGHT, Role};
+use crate::theme::{Colour, LIGHT, NOCTURNE, Role};
 
 /// The Preset file layout's version.
 pub const PRESET_VERSION: u32 = 1;
@@ -117,7 +117,7 @@ impl Default for ThemeRef {
     fn default() -> Self {
         ThemeRef {
             light: LIGHT.to_owned(),
-            dark: DARK.to_owned(),
+            dark: NOCTURNE.to_owned(),
         }
     }
 }

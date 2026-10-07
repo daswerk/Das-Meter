@@ -95,6 +95,17 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         }
         _ => (WIDTH, HEIGHT),
     };
+    // DASMETER_CLASSIC=1: Dark drawn Classic as the app used to draw it, to
+    // compare with snapshots from before the Smooth Look.
+    if std::env::var_os("DASMETER_CLASSIC").is_some() {
+        let styling = Styling {
+            look: dasmeter_core::Look::Classic,
+            corner_radius: 4.0,
+            ..Styling::default()
+        };
+        core.handle(Event::SetThemeStyling { theme: 0, styling }, now);
+        core.take_writes();
+    }
     match open {
         None | Some("bar") => {}
         Some("window") => {
@@ -177,7 +188,8 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 gap: 8.0,
                 ..Styling::default()
             };
-            core.handle(Event::SetThemeStyling { theme: 3, styling }, now);
+            let copy = dasmeter_core::Theme::built_ins().len();
+            core.handle(Event::SetThemeStyling { theme: copy, styling }, now);
             core.take_writes();
         }
         // Right-click the Loudness Meter, as a user would.

@@ -427,6 +427,41 @@ impl Palette {
         }
     }
 
+    /// The built-in Nocturne palette, made for the Smooth Look: a deep
+    /// blue-violet black with gold, cyan, green and pink-purple.
+    pub fn nocturne() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x0d, 0x0c, 0x14),
+            Role::Panel => Colour::rgb(0x17, 0x16, 0x1f),
+            Role::Grid => Colour::rgb(0x2b, 0x2a, 0x3a),
+            Role::Text => Colour::rgb(0xe4, 0xe2, 0xee),
+            Role::Accent => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::WaveformLow => Colour::rgb(0xff, 0x6b, 0x81),
+            Role::WaveformMid => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::WaveformHigh => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::SpectrumLine => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::SpectrumFill => Colour::rgb(0x8a, 0x6a, 0x1c),
+            Role::SpectrumPeakHold => Colour::rgb(0xec, 0xe9, 0xf5),
+            Role::SpectrumPeakDots => Colour::rgb(0xff, 0xe0, 0x8a),
+            Role::SpectrumHarmonics => Colour::rgb(0xc7, 0x92, 0xff),
+            Role::SpectrumSecond => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::LoudnessBar => Colour::rgb(0x3d, 0xdc, 0x84),
+            Role::LoudnessPeak => Colour::rgb(0xec, 0xe9, 0xf5),
+            Role::LoudnessOverTarget => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::CorrelationPositive => Colour::rgb(0x3d, 0xdc, 0x84),
+            Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::StereometerTrace => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::CepstrumTrace => Colour::rgb(0xd2, 0x7b, 0xff),
+            Role::PhaseScopeTrace => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::PhaseScopeSum => Colour::rgb(0xf2, 0xf0, 0xfa),
+            Role::PhaseScopeGrid => Colour::rgb(0x34, 0x32, 0x4a),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
     /// This palette with `overrides` taking the place of their roles.
     pub fn with(&self, overrides: &[(Role, Colour)]) -> Palette {
         let mut palette = self.clone();
@@ -440,6 +475,24 @@ impl Palette {
 impl IndexMut<Role> for Palette {
     fn index_mut(&mut self, role: Role) -> &mut Colour {
         &mut self.colours[role as usize]
+    }
+}
+
+/// How a Theme is drawn: Classic (flat panels, plain lines) or Smooth
+/// (depth, faded grids, soft glows, floating panels). Colours stay the Theme's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Look {
+    Classic,
+    #[default]
+    Smooth,
+}
+
+impl Look {
+    fn key(self) -> &'static str {
+        match self {
+            Look::Classic => "classic",
+            Look::Smooth => "smooth",
+        }
     }
 }
 
@@ -486,6 +539,20 @@ pub struct Styling {
     /// Shape or pattern cues besides colour (hatching over target, a marker
     /// for negative correlation), for colour-blind viewers. High contrast has them.
     pub shape_cues: bool,
+    /// How it's drawn. Default Smooth; the rest below only count there.
+    pub look: Look,
+    /// How strongly traces and big numbers glow, 0 (none) to 1. Default 0.6.
+    pub glow: f32,
+    /// How much of a plot grid lines fade out over toward each edge, 0 to
+    /// 0.4. Default 0.15.
+    pub grid_fade: f32,
+    /// How much lighter the background is at the top than the bottom, 0 to 1.
+    /// Default 0.5.
+    pub gradient: f32,
+    /// How much darker the panels' corners are, 0 to 1. Default 0.35.
+    pub vignette: f32,
+    /// Whether a Meter dims gently while no audio arrives. Default on.
+    pub dim_when_silent: bool,
 }
 
 impl Default for Styling {
@@ -494,9 +561,15 @@ impl Default for Styling {
             background_opacity: 1.0,
             line: LineWeight::Normal,
             gap: 6.0,
-            corner_radius: 4.0,
+            corner_radius: 10.0,
             text_scale: 1.0,
             shape_cues: false,
+            look: Look::Smooth,
+            glow: 0.6,
+            grid_fade: 0.15,
+            gradient: 0.5,
+            vignette: 0.35,
+            dim_when_silent: true,
         }
     }
 }
@@ -505,6 +578,7 @@ impl Default for Styling {
 pub const GAP_RANGE: (f32, f32) = (0.0, 24.0);
 pub const CORNER_RANGE: (f32, f32) = (0.0, 16.0);
 pub const TEXT_SCALE_RANGE: (f32, f32) = (0.9, 1.5);
+pub const GRID_FADE_RANGE: (f32, f32) = (0.0, 0.4);
 
 impl Styling {
     /// These values kept within their ranges.
@@ -518,6 +592,10 @@ impl Styling {
             gap: clamp(self.gap, GAP_RANGE, d.gap),
             corner_radius: clamp(self.corner_radius, CORNER_RANGE, d.corner_radius),
             text_scale: clamp(self.text_scale, TEXT_SCALE_RANGE, 1.0),
+            glow: clamp(self.glow, (0.0, 1.0), d.glow),
+            grid_fade: clamp(self.grid_fade, GRID_FADE_RANGE, d.grid_fade),
+            gradient: clamp(self.gradient, (0.0, 1.0), d.gradient),
+            vignette: clamp(self.vignette, (0.0, 1.0), d.vignette),
             ..self
         }
     }
@@ -538,6 +616,7 @@ pub const HIGH_CONTRAST: &str = "High contrast";
 pub const MIDNIGHT_PURPLE: &str = "Midnight Purple";
 pub const DEEP_TURQUOISE: &str = "Deep Turquoise";
 pub const GRAPHITE: &str = "Graphite";
+pub const NOCTURNE: &str = "Nocturne";
 
 /// The Theme file layout's version.
 const FILE_VERSION: i64 = 1;
@@ -581,7 +660,7 @@ impl Theme {
     }
 
     /// The built-ins, in the order they're listed.
-    pub fn built_ins() -> [Theme; 6] {
+    pub fn built_ins() -> [Theme; 7] {
         [
             Theme::dark(),
             Theme::light(),
@@ -589,6 +668,7 @@ impl Theme {
             Theme::plain(MIDNIGHT_PURPLE, Palette::midnight_purple()),
             Theme::plain(DEEP_TURQUOISE, Palette::deep_turquoise()),
             Theme::plain(GRAPHITE, Palette::graphite()),
+            Theme::plain(NOCTURNE, Palette::nocturne()),
         ]
     }
 
@@ -613,6 +693,12 @@ impl Theme {
         styling.insert("corner_radius".into(), f64::from(s.corner_radius).into());
         styling.insert("text_scale".into(), f64::from(s.text_scale).into());
         styling.insert("shape_cues".into(), s.shape_cues.into());
+        styling.insert("look".into(), s.look.key().into());
+        styling.insert("glow".into(), f64::from(s.glow).into());
+        styling.insert("grid_fade".into(), f64::from(s.grid_fade).into());
+        styling.insert("gradient".into(), f64::from(s.gradient).into());
+        styling.insert("vignette".into(), f64::from(s.vignette).into());
+        styling.insert("dim_when_silent".into(), s.dim_when_silent.into());
         file.insert("styling".into(), styling.into());
         file.to_string()
     }
@@ -676,10 +762,23 @@ impl Theme {
                 Some("thick") => LineWeight::Thick,
                 _ => s.line,
             };
-            s.shape_cues = styling
-                .get("shape_cues")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(s.shape_cues);
+            let switch = |key: &str, or: bool| {
+                styling
+                    .get(key)
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(or)
+            };
+            s.shape_cues = switch("shape_cues", s.shape_cues);
+            s.dim_when_silent = switch("dim_when_silent", s.dim_when_silent);
+            s.look = match styling.get("look").and_then(toml::Value::as_str) {
+                Some("classic") => Look::Classic,
+                Some("smooth") => Look::Smooth,
+                _ => s.look,
+            };
+            s.glow = number("glow").unwrap_or(s.glow);
+            s.grid_fade = number("grid_fade").unwrap_or(s.grid_fade);
+            s.gradient = number("gradient").unwrap_or(s.gradient);
+            s.vignette = number("vignette").unwrap_or(s.vignette);
             *s = s.clamped();
         }
         Ok(theme)

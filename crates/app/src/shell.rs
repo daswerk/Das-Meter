@@ -248,6 +248,8 @@ fn ui_view(scene: &Scene) -> Scene {
                     show_source_label: meter.show_source_label,
                     overrides: meter.overrides.clone(),
                     overlay: meter.overlay.clone(),
+                    activity: 1.0,
+                    hovered: false,
                 })
                 .collect(),
             key: window.key,

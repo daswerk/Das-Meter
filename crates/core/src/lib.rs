@@ -8,6 +8,7 @@
 //! Time comes in with every call as the time since the app started, so tests
 //! drive the core with a fake clock.
 
+mod activity;
 pub mod displays;
 pub mod docs;
 pub mod layout;
@@ -48,7 +49,7 @@ pub use scene::{
 };
 pub use settings::AppSettings;
 pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState, Timing};
-pub use theme::{Colour, LineWeight, Palette, Role, Styling, Theme};
+pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 
 use meters::Meter;
@@ -372,6 +373,8 @@ struct MeterSlot {
     overlay: Option<Pick>,
     /// The ID of the Overlay Source whose audio the Phase Scope takes.
     overlay_showing: Option<u64>,
+    /// How lit it is: dims in silence in the Smooth Look.
+    activity: activity::Activity,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -483,6 +486,7 @@ impl AppCore {
                     showing: None,
                     overlay: None,
                     overlay_showing: None,
+                    activity: activity::Activity::default(),
                 })
                 .collect(),
             pointer: None,
@@ -1045,6 +1049,7 @@ impl AppCore {
                 showing: None,
                 overlay: m.overlay.clone(),
                 overlay_showing: None,
+                activity: activity::Activity::default(),
             })
             .collect();
         self.layout = data.bar;
@@ -1120,6 +1125,7 @@ impl AppCore {
                 for (i, slot) in self.meters.iter_mut().enumerate() {
                     if fed.contains(&i) {
                         slot.meter.process(frames);
+                        slot.activity.hear(frames, now);
                     }
                 }
             }
@@ -1198,6 +1204,7 @@ impl AppCore {
                     }
                     if let Some(showing) = slot.showing.as_mut().filter(|s| s.id == id) {
                         slot.meter.process_timed(frames, timing);
+                        slot.activity.hear(frames, now);
                         showing.fed_at = now;
                         fed = true;
                     }
@@ -1866,6 +1873,7 @@ impl AppCore {
             showing: None,
             overlay: self.meters[like].overlay.clone(),
             overlay_showing: None,
+            activity: activity::Activity::default(),
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {
             Some(i) => {
@@ -2125,6 +2133,7 @@ impl AppCore {
         };
         for (key, i, frame) in placed {
             let pointer = self.pointer.filter(|(w, _)| *w == key).map(|(_, p)| p);
+            let hovered = pointer.and_then(|p| frame.locate(p)).is_some();
             let (state, source) = match self.listen_to {
                 ListenTo::SystemCapture => {
                     let state = match &self.capture {
@@ -2203,6 +2212,12 @@ impl AppCore {
                     Resolved::Nothing => (MeterState::NoSendPlugins, None),
                 },
             };
+            let styling = self.themes.current().styling;
+            let activity = if styling.look == Look::Smooth && styling.dim_when_silent {
+                self.meters[i].activity.level(now)
+            } else {
+                1.0
+            };
             let slot = &self.meters[i];
             let source = source.filter(|_| slot.show_source_label);
             let picked = match self.listen_to {
@@ -2242,6 +2257,8 @@ impl AppCore {
                 picked,
                 show_source_label: slot.show_source_label,
                 overrides: slot.overrides.clone(),
+                activity,
+                hovered,
             });
         }
         let send_plugins = self

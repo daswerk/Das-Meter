@@ -1,7 +1,7 @@
 //! The Theme library: the built-ins and the themes folder's files, which Theme
 //! (or light/dark pair) is chosen, and the files edits write.
 
-use crate::theme::{Colour, DARK, LIGHT, Role, Styling, Theme};
+use crate::theme::{Colour, LIGHT, NOCTURNE, Role, Styling, Theme};
 
 /// A file in the themes folder, as the shell read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,7 +90,7 @@ impl Themes {
                 })
                 .collect(),
             light: LIGHT.to_owned(),
-            dark: DARK.to_owned(),
+            dark: NOCTURNE.to_owned(),
             appearance: Appearance::Dark,
             writes: Vec::new(),
         }
@@ -295,9 +295,34 @@ impl Themes {
         Some((old, new))
     }
 
-    /// Edits one of the folder's Themes; built-ins can't be changed.
+    /// Edits one of the folder's Themes. A built-in stays as it is: the
+    /// edit goes to a copy of it in the folder, which is used from then on.
     fn edit(&mut self, index: usize, change: impl FnOnce(&mut Theme)) -> bool {
-        let Some(entry) = self.entries.get_mut(index).filter(|e| !e.built_in) else {
+        if self.entries.get(index).is_some_and(|e| e.built_in) {
+            // Only worth a copy if the edit changes something.
+            let mut edited = self.entries[index].theme.clone();
+            change(&mut edited);
+            if edited == self.entries[index].theme {
+                return false;
+            }
+            let Some(copy) = self.duplicate(index) else {
+                return false;
+            };
+            let entry = &mut self.entries[copy];
+            entry.theme = Theme {
+                name: entry.theme.name.clone(),
+                ..edited
+            };
+            let file_name = entry.file.clone().expect("folder Themes have a file");
+            let contents = entry.theme.to_toml();
+            self.writes.retain(|w| w.file_name != file_name);
+            self.writes.push(FileWrite {
+                file_name,
+                contents,
+            });
+            return true;
+        }
+        let Some(entry) = self.entries.get_mut(index) else {
             return false;
         };
         let before = entry.theme.clone();

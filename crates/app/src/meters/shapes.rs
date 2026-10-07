@@ -279,6 +279,213 @@ impl Shapes {
         }
     }
 
+    /// A soft band along `from`–`to`, `width` pixels each side of the line,
+    /// fading from `colour` at the line to nothing: a glow under a trace.
+    pub fn glow_line(&mut self, from: [f32; 2], to: [f32; 2], width: f32, colour: Colour) {
+        let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
+        let length = (dx * dx + dy * dy).sqrt();
+        if length == 0.0 || width <= 0.0 {
+            return;
+        }
+        let (ux, uy) = (-dy / length * width, dx / length * width);
+        let clear = colour.faded(0.0);
+        let side = |s: f32| {
+            [
+                [from[0] + ux * s, from[1] + uy * s],
+                [to[0] + ux * s, to[1] + uy * s],
+            ]
+        };
+        let ([a, b], [e, f], [g, h]) = (side(0.0), side(1.0), side(-1.0));
+        self.quad([e, f, a, b], clear, colour);
+        self.quad([a, b, g, h], colour, clear);
+    }
+
+    /// Glows along the polyline through `points`.
+    pub fn glow_polyline(&mut self, points: &[[f32; 2]], width: f32, colour: Colour) {
+        for pair in points.windows(2) {
+            self.glow_line(pair[0], pair[1], width, colour);
+        }
+    }
+
+    /// A horizontal line from `x0` to `x1` at `y`, fading in over `fade`
+    /// pixels at each end.
+    pub fn faded_hline(
+        &mut self,
+        x0: f32,
+        x1: f32,
+        y: f32,
+        thickness: f32,
+        colour: Colour,
+        fade: f32,
+    ) {
+        let fade = fade.min((x1 - x0) / 2.0).max(0.0);
+        let (top, bottom) = (y - thickness / 2.0, y + thickness / 2.0);
+        let clear = colour.faded(0.0);
+        // Turned on its side, a quad's "top" and "bottom" colours run left to right.
+        let across = |shapes: &mut Shapes, a: f32, b: f32, from: Colour, to: Colour| {
+            shapes.quad([[a, top], [a, bottom], [b, top], [b, bottom]], from, to);
+        };
+        across(self, x0, x0 + fade, clear, colour);
+        self.rect(
+            Area {
+                x: x0 + fade,
+                y: top,
+                width: (x1 - x0 - 2.0 * fade).max(0.0),
+                height: thickness,
+            },
+            colour,
+        );
+        across(self, x1 - fade, x1, colour, clear);
+    }
+
+    /// A vertical line from `y0` to `y1` at `x`, fading in over `fade`
+    /// pixels at each end.
+    pub fn faded_vline(
+        &mut self,
+        y0: f32,
+        y1: f32,
+        x: f32,
+        thickness: f32,
+        colour: Colour,
+        fade: f32,
+    ) {
+        let fade = fade.min((y1 - y0) / 2.0).max(0.0);
+        let clear = colour.faded(0.0);
+        let column = |y: f32, height: f32| Area {
+            x: x - thickness / 2.0,
+            y,
+            width: thickness,
+            height,
+        };
+        self.gradient(column(y0, fade), clear, colour);
+        self.rect(column(y0 + fade, (y1 - y0 - 2.0 * fade).max(0.0)), colour);
+        self.gradient(column(y1 - fade, fade), colour, clear);
+    }
+
+    /// A rounded rectangle shaded from `top` to `bottom`.
+    pub fn rounded_gradient(&mut self, area: Area, radius: f32, top: Colour, bottom: Colour) {
+        let r = radius.min(area.width / 2.0).min(area.height / 2.0);
+        if r < 0.5 {
+            self.gradient(area, top, bottom);
+            return;
+        }
+        let at = |y: f32| super::mix(top, bottom, ((y - area.y) / area.height).clamp(0.0, 1.0));
+        let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());
+        self.gradient(
+            Area {
+                x: x0 + r,
+                width: area.width - 2.0 * r,
+                ..area
+            },
+            top,
+            bottom,
+        );
+        for x in [x0, x1 - r] {
+            self.gradient(
+                Area {
+                    x,
+                    y: y0 + r,
+                    width: r,
+                    height: area.height - 2.0 * r,
+                },
+                at(y0 + r),
+                at(y1 - r),
+            );
+        }
+        const STEPS: usize = 6;
+        let corners = [
+            ([x0 + r, y0 + r], std::f32::consts::PI),
+            ([x1 - r, y0 + r], 1.5 * std::f32::consts::PI),
+            ([x1 - r, y1 - r], 0.0),
+            ([x0 + r, y1 - r], 0.5 * std::f32::consts::PI),
+        ];
+        for (centre, start) in corners {
+            let colour = at(centre[1]);
+            let point = |i: usize| {
+                let angle = start + std::f32::consts::FRAC_PI_2 * i as f32 / STEPS as f32;
+                [centre[0] + r * angle.cos(), centre[1] + r * angle.sin()]
+            };
+            for i in 0..STEPS {
+                self.quad([point(i), point(i + 1), centre, centre], colour, colour);
+            }
+        }
+    }
+
+    /// Shading `width` pixels in from each edge of `area`, `colour` at the
+    /// edge fading to nothing inward: an inner shadow or a vignette. The
+    /// first `radius` pixels of each edge are left out for rounded corners.
+    pub fn inner_shade(&mut self, area: Area, radius: f32, width: f32, colour: Colour) {
+        let width = width.min(area.width / 2.0).min(area.height / 2.0);
+        if width <= 0.0 || colour.a == 0 {
+            return;
+        }
+        let clear = colour.faded(0.0);
+        let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());
+        let (inner_x0, inner_x1) = (x0 + radius, x1 - radius);
+        let (inner_y0, inner_y1) = (y0 + radius, y1 - radius);
+        // Top and bottom, as trapezoids so the corners meet the sides.
+        self.quad(
+            [
+                [inner_x0, y0],
+                [inner_x1, y0],
+                [x0 + width.max(radius), y0 + width],
+                [x1 - width.max(radius), y0 + width],
+            ],
+            colour,
+            clear,
+        );
+        self.quad(
+            [
+                [x0 + width.max(radius), y1 - width],
+                [x1 - width.max(radius), y1 - width],
+                [inner_x0, y1],
+                [inner_x1, y1],
+            ],
+            clear,
+            colour,
+        );
+        // Left and right, on their sides.
+        self.quad(
+            [
+                [x0, inner_y0],
+                [x0, inner_y1],
+                [x0 + width, y0 + width.max(radius)],
+                [x0 + width, y1 - width.max(radius)],
+            ],
+            colour,
+            clear,
+        );
+        self.quad(
+            [
+                [x1 - width, y0 + width.max(radius)],
+                [x1 - width, y1 - width.max(radius)],
+                [x1, inner_y0],
+                [x1, inner_y1],
+            ],
+            clear,
+            colour,
+        );
+    }
+
+    /// `area` in `colour`, with `spread` pixels of soft edge fading out
+    /// around it: a glow behind text, or a shadow under a panel.
+    pub fn soft_rect(&mut self, area: Area, spread: f32, colour: Colour) {
+        if colour.a == 0 {
+            return;
+        }
+        self.rect(area, colour);
+        if spread <= 0.0 {
+            return;
+        }
+        let clear = colour.faded(0.0);
+        let (x0, y0, x1, y1) = (area.x, area.y, area.right(), area.bottom());
+        let (ox0, oy0, ox1, oy1) = (x0 - spread, y0 - spread, x1 + spread, y1 + spread);
+        self.quad([[ox0, oy0], [ox1, oy0], [x0, y0], [x1, y0]], clear, colour);
+        self.quad([[x0, y1], [x1, y1], [ox0, oy1], [ox1, oy1]], colour, clear);
+        self.quad([[ox0, oy0], [ox0, oy1], [x0, y0], [x0, y1]], clear, colour);
+        self.quad([[x1, y0], [x1, y1], [ox1, oy0], [ox1, oy1]], colour, clear);
+    }
+
     /// Uploads the staged shapes.
     pub fn prepare(&mut self, gpu: &Gpu) {
         let count = (self.staged.len() / FLOATS) as u64;

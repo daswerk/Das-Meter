@@ -111,6 +111,11 @@ pub struct MeterScene {
     pub overrides: Vec<(Role, Colour)>,
     /// A Phase Scope's Overlay Source item; `None` for other Meters.
     pub overlay: Option<OverlayScene>,
+    /// How lit it is, 0 (dimmed in silence) to 1. Always 1 unless the Theme
+    /// is drawn Smooth with dimming when silent.
+    pub activity: f32,
+    /// Whether the pointer is over it.
+    pub hovered: bool,
 }
 
 /// A Phase Scope's Overlay Source, for its menu.

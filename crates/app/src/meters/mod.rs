@@ -7,6 +7,7 @@ mod labels;
 mod loudness;
 mod phase_scope;
 mod shapes;
+mod smooth;
 mod spectrogram;
 mod spectrum;
 mod stereometer;
@@ -37,6 +38,8 @@ pub struct Canvas<'a> {
     /// Text that would fall in this area is left out: something drawn over
     /// it (labels are drawn after all shapes) covers it.
     pub covered: Option<Area>,
+    /// Whether the pointer is over the Meter: Smooth brightens its grid.
+    pub hovered: bool,
 }
 
 impl Canvas<'_> {
@@ -112,6 +115,8 @@ pub struct Look<'a> {
     pub styling: Styling,
     /// Physical pixels per logical pixel.
     pub scale: f32,
+    /// Whether it's the Bar (thin Meters, smaller corners).
+    pub bar: bool,
 }
 
 /// Draws one Meter (or the notes over a window) into its area.
@@ -142,6 +147,7 @@ impl MeterRenderer {
             scale,
             styling,
             covered: None,
+            hovered: false,
         }
     }
 
@@ -173,9 +179,20 @@ impl MeterRenderer {
         // The Meter's own colour overrides go over the Theme's.
         let palette = look.palette.with(&meter.overrides);
         let mut c = self.canvas(&palette, scale, styling);
-        let panel = c.colour(Role::Panel).faded(styling.background_opacity);
-        c.shapes
-            .rounded_rect(area, c.px(styling.corner_radius), panel);
+        c.hovered = meter.hovered;
+        let radius = c.px(styling.corner_radius);
+        if c.smooth() {
+            // Thin Bar Meters get smaller corners.
+            let radius = if look.bar {
+                radius.min(c.px(6.0))
+            } else {
+                radius
+            };
+            smooth::panel(&mut c, area, radius, styling.background_opacity);
+        } else {
+            let panel = c.colour(Role::Panel).faded(styling.background_opacity);
+            c.shapes.rounded_rect(area, radius, panel);
+        }
         let inner = area.inset(c.px(10.0));
         match &meter.state {
             MeterState::Starting => {
@@ -362,7 +379,37 @@ impl MeterRenderer {
             };
             c.text(&source.name, x - width, y, 10.0, dim, Align::Right);
         }
+        // In silence the Smooth Look dims the Meter under a veil of its panel.
+        if c.smooth() && meter.activity < 1.0 {
+            let veil = c
+                .colour(Role::Panel)
+                .faded(smooth::SILENT_DIM * (1.0 - meter.activity));
+            let radius = if look.bar {
+                radius.min(c.px(6.0))
+            } else {
+                radius
+            };
+            c.overlay.rounded_rect(area, radius, veil);
+        }
         self.finish(gpu, text, area);
+    }
+
+    /// Lays out what's under the Meters: in the Smooth Look, the window's
+    /// gradient and a soft shadow under each Meter's panel (`areas`).
+    pub fn prepare_backdrop(
+        &mut self,
+        gpu: &Gpu,
+        text: &mut Text,
+        window: Area,
+        look: Look,
+        areas: &[Area],
+    ) {
+        self.begin(gpu, window);
+        let mut c = self.canvas(look.palette, look.scale, look.styling);
+        if c.smooth() {
+            smooth::backdrop(&mut c, window, areas, look.styling.background_opacity);
+        }
+        self.finish(gpu, text, window);
     }
 
     /// Lays out the notes along the bottom of a window.

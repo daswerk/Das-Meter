@@ -466,7 +466,6 @@ fn plot(
     show_hold: bool,
 ) {
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
-    let thin = c.px(1.0).max(1.0);
     let (low, high) = (range.0.ln(), range.1.ln());
     let x_of = |f: f32| map(f.max(1.0).ln(), (low, high), area.x, area.right());
     let db_range = spectrum.db_range;
@@ -480,12 +479,7 @@ fn plot(
             continue;
         }
         let x = x_of(frequency);
-        let line = Area {
-            x: x - thin / 2.0,
-            width: thin,
-            ..area
-        };
-        c.shapes.rect(line, grid.faded(0.6));
+        c.grid_v(area, x, grid.faded(0.6), frequency == 1_000.0);
         let half = text_width(c, name, 9.0) / 2.0;
         let clear = last_label.is_none_or(|last| x - half > last + c.px(4.0));
         let inside = x - half > area.x + c.px(26.0) && x + half < area.right();
@@ -498,12 +492,7 @@ fn plot(
     let mut db = (db_range.1 / db_step).floor() * db_step;
     while db > db_range.0 {
         let y = y_of(db);
-        let line = Area {
-            y: y - thin / 2.0,
-            height: thin,
-            ..area
-        };
-        c.shapes.rect(line, grid.faded(0.6));
+        c.grid_h(area, y, grid.faded(0.6), db == 0.0);
         // Right-aligned so "0" lines up with "-12"; none so low that it runs
         // into the frequency labels.
         let crowded = last_db_label.is_some_and(|last| y - last < c.px(11.0));
@@ -545,12 +534,13 @@ fn plot(
                 } else {
                     fill
                 };
-                c.shapes.fill_under(
+                c.fill_under(
                     &curve,
                     area.bottom(),
                     fill_top.faded(0.45),
                     fill_top.faded(0.05),
                 );
+                c.glow(&curve, line);
                 c.shapes.polyline(&curve, c.stroke(1.5), line);
                 if trace.steadiness.len() == raw.len() {
                     let stroke = c.stroke(2.5);
