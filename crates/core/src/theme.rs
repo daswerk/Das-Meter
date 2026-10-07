@@ -112,6 +112,10 @@ pub enum Role {
     StereometerTrace,
     // Cepstrum.
     CepstrumTrace,
+    // Phase Scope.
+    PhaseScopeTrace,
+    PhaseScopeCancel,
+    PhaseScopeSum,
 }
 
 impl Role {
@@ -138,6 +142,9 @@ impl Role {
             Role::CorrelationNegative => "correlation_negative",
             Role::StereometerTrace => "stereometer_trace",
             Role::CepstrumTrace => "cepstrum_trace",
+            Role::PhaseScopeTrace => "phase_scope_trace",
+            Role::PhaseScopeCancel => "phase_scope_cancel",
+            Role::PhaseScopeSum => "phase_scope_sum",
         }
     }
 
@@ -164,10 +171,13 @@ impl Role {
             Role::CorrelationNegative => "Correlation negative",
             Role::StereometerTrace => "Stereometer trace",
             Role::CepstrumTrace => "Cepstrum trace",
+            Role::PhaseScopeTrace => "Phase Scope trace",
+            Role::PhaseScopeCancel => "Phase Scope cancelling",
+            Role::PhaseScopeSum => "Phase Scope sum",
         }
     }
 
-    pub const ALL: [Role; 20] = [
+    pub const ALL: [Role; 23] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -188,6 +198,9 @@ impl Role {
         Role::CorrelationNegative,
         Role::StereometerTrace,
         Role::CepstrumTrace,
+        Role::PhaseScopeTrace,
+        Role::PhaseScopeCancel,
+        Role::PhaseScopeSum,
     ];
 }
 
@@ -221,6 +234,9 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::StereometerTrace => Colour::rgb(0x7f, 0xe0, 0xc8),
             Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xb6),
+            Role::PhaseScopeTrace => Colour::rgb(0x8c, 0xc8, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xf0, 0x3e, 0x3e),
+            Role::PhaseScopeSum => Colour::rgb(0xe8, 0xe8, 0xe8),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -252,6 +268,9 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xd6, 0x28, 0x28),
             Role::StereometerTrace => Colour::rgb(0x0f, 0x8f, 0x7a),
             Role::CepstrumTrace => Colour::rgb(0xc2, 0x2f, 0x7a),
+            Role::PhaseScopeTrace => Colour::rgb(0x1f, 0x6f, 0xc2),
+            Role::PhaseScopeCancel => Colour::rgb(0xd6, 0x28, 0x28),
+            Role::PhaseScopeSum => Colour::rgb(0x2a, 0x2e, 0x33),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -282,6 +301,9 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::StereometerTrace => Colour::rgb(0xff, 0xff, 0xff),
             Role::CepstrumTrace => Colour::rgb(0x3d, 0xa5, 0xff),
+            Role::PhaseScopeTrace => Colour::rgb(0xff, 0xff, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x9f, 0x1c),
+            Role::PhaseScopeSum => Colour::rgb(0xff, 0xd6, 0x00),
         };
         Palette {
             colours: Role::ALL.map(colour),

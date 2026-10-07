@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -21,6 +21,29 @@ const WIDTH: u32 = 2400;
 const HEIGHT: u32 = 680;
 /// A 180 px Bar across a 1512 px display, at 2×.
 const BAR: (u32, u32) = (3024, 360);
+
+/// A kick on every beat at 120 BPM over a bass line (an octave jump each
+/// bar), `seconds` long, mono.
+fn kick_and_bass(seconds: f64) -> Vec<f32> {
+    let beat = f64::from(RATE) / 2.0;
+    let (mut kick_phase, mut bass_phase) = (0.0f64, 0.0f64);
+    (0..frames(RATE, seconds))
+        .map(|i| {
+            let t = (i as f64 % beat) / f64::from(RATE);
+            if i as f64 % beat < 1.0 {
+                kick_phase = 0.0;
+            }
+            kick_phase +=
+                std::f64::consts::TAU * (45.0 + 110.0 * (-t * 35.0).exp()) / f64::from(RATE);
+            let kick = kick_phase.sin() * (-t * 7.0).exp() * 0.7;
+            let bar = (i as f64 / (beat * 4.0)).floor() as i64;
+            let bass_freq = if bar % 2 == 0 { 55.0 } else { 41.2 };
+            bass_phase += std::f64::consts::TAU * bass_freq / f64::from(RATE);
+            let bass = bass_phase.sin() * 0.3 * (1.0 - (-t * 20.0).exp());
+            (kick + bass) as f32
+        })
+        .collect()
+}
 
 pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // Six seconds of pink noise with an output change after four, so the
@@ -262,6 +285,25 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 })
                 .collect();
             for block in tone.chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
+        // The Phase Scope in the Spectrum's place, on a kick and a bass at
+        // 120 BPM: the typed-in tempo, a beat or (`phase-scope-bar`) a bar.
+        Some(option @ ("phase-scope" | "phase-scope-bar")) => {
+            let mut settings = dasmeter_core::PhaseScopeMeterSettings::default();
+            if option == "phase-scope-bar" {
+                settings.cycle = dasmeter_core::CycleLength::Bar;
+            }
+            let settings = dasmeter_core::MeterSettings::PhaseScope(settings);
+            core.handle(Event::SetMeter { meter: 1, settings }, now);
+            let audio: Vec<f32> = kick_and_bass(8.0)
+                .into_iter()
+                .flat_map(|x| [x, x])
+                .collect();
+            for block in audio.chunks(1024) {
                 now += Duration::from_secs_f64(512.0 / f64::from(RATE));
                 core.handle(Event::Audio(block), now);
                 core.decide(now);

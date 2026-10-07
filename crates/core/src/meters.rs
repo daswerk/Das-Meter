@@ -3,13 +3,15 @@
 use std::time::Duration;
 
 use dasmeter_analysis::{
-    CepstrumAnalyser, CepstrumSettings, LoudnessAnalyser, LoudnessSettings, SpectrogramAnalyser,
-    SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView,
-    StereometerAnalyser, StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings,
-    note_name,
+    CepstrumAnalyser, CepstrumSettings, ChannelView, LoudnessAnalyser, LoudnessSettings,
+    SpectrogramAnalyser, SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings,
+    StereoReadings, StereoView, StereometerAnalyser, StereometerSettings, WaveformAnalyser,
+    WaveformColumn, WaveformSettings, note_name,
 };
 
+use crate::phase_scope::{PhaseScope, PhaseScopeView};
 use crate::scene::{Level, LoudnessDisplay};
+use crate::sources::Timing;
 
 /// How the Waveform is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -306,6 +308,65 @@ impl Default for SpectrogramMeterSettings {
     }
 }
 
+/// How long a Phase Scope's Cycle is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum CycleLength {
+    /// One beat. The default.
+    #[default]
+    Beat,
+    /// One bar, with its beats marked.
+    Bar,
+}
+
+/// How a Phase Scope steadies its picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Steadiness {
+    /// The newest Cycle sharp, the few before it fading behind. The default.
+    #[default]
+    Trail,
+    /// The last few Cycles averaged: one-off notes fade, the pattern stays.
+    Average,
+}
+
+/// The Phase Scope: the waveform over one Cycle, held still against the beat.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PhaseScopeMeterSettings {
+    pub cycle: CycleLength,
+    /// The tempo when no DAW says one (System Capture, an older Send
+    /// Plugin), in BPM. Default 120.
+    pub tempo: f32,
+    pub channel_view: ChannelView,
+    /// Whether the trace is filled to the centre line. Default off: a line.
+    pub filled: bool,
+    /// Whether the loudest point fills the Meter. Default on.
+    pub auto_gain: bool,
+    /// The gain without auto gain, in dB. Default 0.
+    pub gain: f32,
+    pub steadiness: Steadiness,
+    /// The correlation's cut-off: it compares the two Sources below this, in Hz.
+    /// Default 150.
+    pub cutoff: f32,
+    /// How far the Overlay Source is moved, in ms: later if positive.
+    pub overlay_offset: f32,
+}
+
+impl Default for PhaseScopeMeterSettings {
+    fn default() -> Self {
+        PhaseScopeMeterSettings {
+            cycle: CycleLength::Beat,
+            tempo: 120.0,
+            channel_view: ChannelView::Mono,
+            filled: false,
+            auto_gain: true,
+            gain: 0.0,
+            steadiness: Steadiness::Trail,
+            cutoff: 150.0,
+            overlay_offset: 0.0,
+        }
+    }
+}
+
 /// Most points the Stereometer keeps, whatever the persistence and rate.
 const MAX_STEREO_POINTS: usize = 16_384;
 
@@ -318,6 +379,7 @@ pub enum MeterSettings {
     Stereometer(StereometerMeterSettings),
     Cepstrum(CepstrumMeterSettings),
     Spectrogram(SpectrogramMeterSettings),
+    PhaseScope(PhaseScopeMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -329,16 +391,18 @@ pub enum MeterKind {
     Stereometer,
     Cepstrum,
     Spectrogram,
+    PhaseScope,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 6] = [
+    pub const ALL: [MeterKind; 7] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
         MeterKind::Stereometer,
         MeterKind::Cepstrum,
         MeterKind::Spectrogram,
+        MeterKind::PhaseScope,
     ];
 }
 
@@ -356,6 +420,7 @@ impl MeterSettings {
             MeterKind::Spectrogram => {
                 MeterSettings::Spectrogram(SpectrogramMeterSettings::default())
             }
+            MeterKind::PhaseScope => MeterSettings::PhaseScope(PhaseScopeMeterSettings::default()),
         }
     }
 
@@ -367,6 +432,7 @@ impl MeterSettings {
             MeterSettings::Stereometer(_) => MeterKind::Stereometer,
             MeterSettings::Cepstrum(_) => MeterKind::Cepstrum,
             MeterSettings::Spectrogram(_) => MeterKind::Spectrogram,
+            MeterSettings::PhaseScope(_) => MeterKind::PhaseScope,
         }
     }
 
@@ -379,6 +445,7 @@ impl MeterSettings {
             MeterSettings::Stereometer(_) => "Stereometer",
             MeterSettings::Cepstrum(_) => "Cepstrum",
             MeterSettings::Spectrogram(_) => "Spectrogram",
+            MeterSettings::PhaseScope(_) => "Phase Scope",
         }
     }
 }
@@ -468,6 +535,10 @@ pub enum MeterView {
         selecting: Option<[f32; 4]>,
         zoom: Option<SpectrogramZoom>,
     },
+    PhaseScope {
+        settings: PhaseScopeMeterSettings,
+        scope: Box<PhaseScopeView>,
+    },
 }
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
@@ -515,6 +586,7 @@ enum Analyser {
     Stereometer(Box<StereometerAnalyser>),
     Cepstrum(Box<CepstrumAnalyser>),
     Spectrogram(Box<SpectrogramAnalyser>),
+    PhaseScope(Box<PhaseScope>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -816,6 +888,7 @@ impl Meter {
             (Some(Analyser::Spectrogram(a)), MeterSettings::Spectrogram(s)) => {
                 a.set_settings(s.analysis)
             }
+            (Some(Analyser::PhaseScope(a)), MeterSettings::PhaseScope(s)) => a.set_settings(s),
             _ => debug_assert!(!same_kind),
         }
         if !same_kind {
@@ -831,11 +904,24 @@ impl Meter {
             Analyser::Stereometer(a) => a.sample_rate(),
             Analyser::Cepstrum(a) => a.sample_rate(),
             Analyser::Spectrogram(a) => a.sample_rate(),
+            Analyser::PhaseScope(a) => a.sample_rate(),
         })
     }
 
     pub fn process(&mut self, frames: &[f32]) {
+        self.process_timed(frames, None);
+    }
+
+    /// Takes a block of the Source's audio, with where its DAW was at the
+    /// block's first frame if it says.
+    pub fn process_timed(&mut self, frames: &[f32], timing: Option<Timing>) {
         match &mut self.analyser {
+            Some(Analyser::PhaseScope(a)) => {
+                // It only looks different once a Cycle is added.
+                if !a.process(frames, timing) {
+                    return;
+                }
+            }
             Some(Analyser::Waveform(a)) => a.process(frames),
             Some(Analyser::Spectrum(a)) => {
                 a.process(frames);
@@ -1013,6 +1099,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Spectrogram(s) => {
             Analyser::Spectrogram(Box::new(SpectrogramAnalyser::new(sample_rate, s.analysis)))
         }
+        MeterSettings::PhaseScope(s) => {
+            Analyser::PhaseScope(Box::new(PhaseScope::new(sample_rate, *s)))
+        }
     }
 }
 
@@ -1160,6 +1249,10 @@ fn build_view(
                 zoom: None,
             }
         }
+        (Analyser::PhaseScope(a), MeterSettings::PhaseScope(settings)) => MeterView::PhaseScope {
+            settings,
+            scope: Box::new(a.view()),
+        },
         _ => unreachable!("a Meter's analyser always matches its settings"),
     }
 }

@@ -1,6 +1,6 @@
 # Meters
 
-Das-Meter has five kinds of Meter. Right-click one for its settings; the settings
+Das-Meter has seven kinds of Meter. Right-click one for its settings; the settings
 panel has the same settings for every Meter.
 
 ## Waveform
@@ -82,6 +82,22 @@ times slower so the detail shows. Its × closes it.
 
 To show it, right-click a Meter and choose **Show ▸ Spectrogram**, or
 **Add Meter ▸ Spectrogram**.
+
+## Phase Scope
+
+The waveform over one **Cycle**, one beat or one bar, held still so every
+beat lands in the same place: a kick on the beat stays put, and you can watch
+how its attack and tail sit against the bass. The newest Cycle is drawn sharp
+with the few before it fading behind.
+
+On System Capture there's no DAW to follow, so it runs at a **Tempo** you
+type in (120 BPM by default). The tempo it follows is shown at the bottom left.
+Settings: **Cycle** (Beat or Bar), **Tempo** and **Filled**, and in the
+settings panel the channels (mono, L/R or M/S), **Gain** (auto or manual) and
+**Steadiness** (a fading trail, or the last few Cycles averaged).
+
+To show it, right-click a Meter and choose **Show ▸ Phase Scope**, or
+**Add Meter ▸ Phase Scope**.
 
 ## Small sizes
 

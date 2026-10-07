@@ -55,6 +55,21 @@ impl SendPlugin {
     }
 }
 
+/// Where a Send Plugin's DAW is, at the first frame of a block of its audio.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
+    /// Quarter notes per minute.
+    pub tempo: f64,
+    /// The song position, in quarter notes.
+    pub beats: f64,
+    /// The song position where the current bar began, in quarter notes.
+    pub bar_start: f64,
+    /// Beats per bar, and the note value of a beat.
+    pub signature: (u16, u16),
+    /// Whether the DAW is playing. A stopped DAW still says its tempo.
+    pub playing: bool,
+}
+
 /// A Meter's pick: the Send Plugin's ID, and its name for finding it again
 /// (a Preset loaded later) and for "Waiting for <name>".
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

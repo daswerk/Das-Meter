@@ -12,8 +12,9 @@ use dasmeter_analysis::{
 };
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, SpectrogramMeterSettings,
-    SpectrumMeterSettings, StereometerMeterSettings, WaveformMeterSettings,
+    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrumMeterSettings, StereometerMeterSettings,
+    WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -104,6 +105,14 @@ pub const STEREO_GAIN: (f32, f32) = (0.25, 16.0);
 /// The Stereometer's correlation averaging time.
 pub const CORRELATION_TIME: (Duration, Duration) =
     (Duration::from_millis(50), Duration::from_secs(3));
+/// The Phase Scope's typed-in tempo, in BPM.
+pub const PHASE_SCOPE_TEMPO: (f32, f32) = (30.0, 300.0);
+/// The Phase Scope's manual gain, in dB.
+pub const PHASE_SCOPE_GAIN: (f32, f32) = (-24.0, 48.0);
+/// The Phase Scope's correlation cut-off, in Hz.
+pub const PHASE_SCOPE_CUTOFF: (f32, f32) = (40.0, 500.0);
+/// How far the Phase Scope's Overlay Source can be moved, in ms.
+pub const PHASE_SCOPE_OFFSET: (f32, f32) = (-50.0, 50.0);
 /// The narrowest a range (dB or Hz ratio) may get, so a Meter never divides by nothing.
 const MIN_DB_SPAN: f32 = 6.0;
 
@@ -155,6 +164,7 @@ impl MeterSettings {
             MeterSettings::Stereometer(s) => MeterSettings::Stereometer(s.clamped()),
             MeterSettings::Cepstrum(s) => MeterSettings::Cepstrum(s.clamped()),
             MeterSettings::Spectrogram(s) => MeterSettings::Spectrogram(s.clamped()),
+            MeterSettings::PhaseScope(s) => MeterSettings::PhaseScope(s.clamped()),
         }
     }
 }
@@ -312,6 +322,23 @@ impl StereometerMeterSettings {
                 gain: clamp_f32(gain, STEREO_GAIN, 1.0),
             };
         }
+        self
+    }
+}
+
+impl PhaseScopeMeterSettings {
+    fn clamped(mut self) -> Self {
+        let defaults = PhaseScopeMeterSettings::default();
+        // To 0.1 BPM, as typed or tapped.
+        self.tempo =
+            (clamp_f32(self.tempo, PHASE_SCOPE_TEMPO, defaults.tempo) * 10.0).round() / 10.0;
+        self.gain = clamp_f32(self.gain, PHASE_SCOPE_GAIN, defaults.gain);
+        self.cutoff = clamp_f32(self.cutoff, PHASE_SCOPE_CUTOFF, defaults.cutoff);
+        self.overlay_offset = clamp_f32(
+            self.overlay_offset,
+            PHASE_SCOPE_OFFSET,
+            defaults.overlay_offset,
+        );
         self
     }
 }

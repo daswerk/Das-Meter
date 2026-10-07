@@ -15,11 +15,11 @@ use dasmeter_core::docs::Topic;
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
 use dasmeter_core::{
-    BigReading, Card, CepstrumMeterSettings, Colour, Direction, Edge, Event, LayoutMode,
-    LineWeight, ListenTo, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene, MeterSettings,
-    Palette, Platform, Role, Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring,
-    SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
-    WaveformMeterSettings, WindowKey,
+    BigReading, Card, CepstrumMeterSettings, Colour, CycleLength, Direction, Edge, Event,
+    LayoutMode, LineWeight, ListenTo, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
+    MeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role, Scene, ScreenMode,
+    SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings, Steadiness, StereoDrawing,
+    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -846,6 +846,66 @@ fn spectrogram_advanced(ui: &mut egui::Ui, s: &mut SpectrogramMeterSettings) -> 
     changed
 }
 
+fn phase_scope_basic(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings) -> bool {
+    let mut changed = choice(
+        ui,
+        "Cycle",
+        &mut s.cycle,
+        &[(CycleLength::Beat, "Beat"), (CycleLength::Bar, "Bar")],
+    );
+    let (low, high) = limits::PHASE_SCOPE_TEMPO;
+    changed |= ui
+        .add(
+            Slider::new(&mut s.tempo, low..=high)
+                .text("Tempo")
+                .suffix(" BPM")
+                .max_decimals(1),
+        )
+        .on_hover_text("Used when no DAW says its tempo: System Capture, or an older Send Plugin")
+        .changed();
+    changed |= ui.checkbox(&mut s.filled, "Filled").changed();
+    changed
+}
+
+fn phase_scope_advanced(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings) -> bool {
+    let mut changed = choice(
+        ui,
+        "Channels",
+        &mut s.channel_view,
+        &[
+            (ChannelView::Mono, "Mono"),
+            (ChannelView::LeftRight, "L/R"),
+            (ChannelView::MidSide, "M/S"),
+        ],
+    );
+    changed |= choice(
+        ui,
+        "Gain",
+        &mut s.auto_gain,
+        &[(true, "Auto"), (false, "Manual")],
+    );
+    if !s.auto_gain {
+        let (low, high) = limits::PHASE_SCOPE_GAIN;
+        changed |= ui
+            .add(
+                Slider::new(&mut s.gain, low..=high)
+                    .text("Gain")
+                    .suffix(" dB"),
+            )
+            .changed();
+    }
+    changed |= choice(
+        ui,
+        "Steadiness",
+        &mut s.steadiness,
+        &[
+            (Steadiness::Trail, "Fading trail"),
+            (Steadiness::Average, "Average"),
+        ],
+    );
+    changed
+}
+
 fn stereometer_advanced(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> bool {
     let mut changed = duration_slider(
         ui,
@@ -906,6 +966,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Stereometer(w) => stereometer_basic(ui, w),
         MeterSettings::Cepstrum(w) => cepstrum_basic(ui, w),
         MeterSettings::Spectrogram(w) => spectrogram_basic(ui, w),
+        MeterSettings::PhaseScope(w) => phase_scope_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -924,6 +985,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Stereometer(w) => stereometer_advanced(ui, w),
         MeterSettings::Cepstrum(w) => cepstrum_advanced(ui, w),
         MeterSettings::Spectrogram(w) => spectrogram_advanced(ui, w),
+        MeterSettings::PhaseScope(w) => phase_scope_advanced(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1013,6 +1075,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::Stereometer => "Stereo",
         MeterKind::Cepstrum => "Cepstrum",
         MeterKind::Spectrogram => "Spectrogram",
+        MeterKind::PhaseScope => "Phase Scope",
     }
 }
 
@@ -1581,6 +1644,11 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::SpectrumLine,
             Role::Accent,
             Role::Text,
+        ],
+        MeterSettings::PhaseScope(_) => &[
+            Role::PhaseScopeTrace,
+            Role::PhaseScopeCancel,
+            Role::PhaseScopeSum,
         ],
     }
 }

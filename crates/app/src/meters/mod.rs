@@ -5,6 +5,7 @@ mod cepstrum;
 mod heatmap;
 mod labels;
 mod loudness;
+mod phase_scope;
 mod shapes;
 mod spectrogram;
 mod spectrum;
@@ -334,6 +335,9 @@ impl MeterRenderer {
                     *selecting,
                     zoom.as_ref(),
                 ),
+                MeterView::PhaseScope { settings, scope } => {
+                    phase_scope::draw(&mut c, inner, settings, scope)
+                }
             },
         }
         if let Some(source) = &meter.source {

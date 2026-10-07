@@ -14,6 +14,7 @@ pub mod layout;
 pub mod meters;
 pub mod onboarding;
 pub mod panes;
+pub mod phase_scope;
 pub mod presets;
 pub mod scene;
 pub mod settings;
@@ -29,13 +30,14 @@ pub use layout::{
     BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
 };
 pub use meters::{
-    BigReading, CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind,
-    MeterSettings, MeterView, SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring,
-    SpectrumMeterSettings, SpectrumZoom, StereoDrawing, StereometerMeterSettings,
-    WaveformColouring, WaveformMeterSettings,
+    BigReading, CepstrumMeterSettings, CursorReadout, CycleLength, LoudnessMeterSettings, LufsBar,
+    MeterKind, MeterSettings, MeterView, PhaseScopeMeterSettings, SpectrogramMeterSettings,
+    SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings, SpectrumZoom, Steadiness,
+    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
+pub use phase_scope::{PhaseScopeView, ScopeOverlay, ScopeTrace};
 pub use presets::{
     BuiltIn, MeterPreset, PresetData, PresetFile, PresetInfo, PresetOp, PresetScene, RoleColour,
     StoredSettings, ThemeRef,
@@ -45,7 +47,7 @@ pub use scene::{
     SendPluginItem, SourceItem, SourceLabel, WindowScene,
 };
 pub use settings::AppSettings;
-pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState};
+pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState, Timing};
 pub use theme::{Colour, LineWeight, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 
