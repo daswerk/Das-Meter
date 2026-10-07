@@ -116,6 +116,7 @@ pub enum Role {
     PhaseScopeTrace,
     PhaseScopeCancel,
     PhaseScopeSum,
+    PhaseScopeGrid,
 }
 
 impl Role {
@@ -145,6 +146,7 @@ impl Role {
             Role::PhaseScopeTrace => "phase_scope_trace",
             Role::PhaseScopeCancel => "phase_scope_cancel",
             Role::PhaseScopeSum => "phase_scope_sum",
+            Role::PhaseScopeGrid => "phase_scope_grid",
         }
     }
 
@@ -174,10 +176,11 @@ impl Role {
             Role::PhaseScopeTrace => "Phase Scope trace",
             Role::PhaseScopeCancel => "Phase Scope cancelling",
             Role::PhaseScopeSum => "Phase Scope sum",
+            Role::PhaseScopeGrid => "Phase Scope Cycle grid",
         }
     }
 
-    pub const ALL: [Role; 23] = [
+    pub const ALL: [Role; 24] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -201,6 +204,7 @@ impl Role {
         Role::PhaseScopeTrace,
         Role::PhaseScopeCancel,
         Role::PhaseScopeSum,
+        Role::PhaseScopeGrid,
     ];
 }
 
@@ -237,6 +241,7 @@ impl Palette {
             Role::PhaseScopeTrace => Colour::rgb(0x8c, 0xc8, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::PhaseScopeSum => Colour::rgb(0xe8, 0xe8, 0xe8),
+            Role::PhaseScopeGrid => Colour::rgb(0x40, 0x47, 0x50),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -271,6 +276,7 @@ impl Palette {
             Role::PhaseScopeTrace => Colour::rgb(0x1f, 0x6f, 0xc2),
             Role::PhaseScopeCancel => Colour::rgb(0xd6, 0x28, 0x28),
             Role::PhaseScopeSum => Colour::rgb(0x2a, 0x2e, 0x33),
+            Role::PhaseScopeGrid => Colour::rgb(0xc4, 0xc9, 0xcf),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -304,6 +310,7 @@ impl Palette {
             Role::PhaseScopeTrace => Colour::rgb(0xff, 0xff, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::PhaseScopeSum => Colour::rgb(0xff, 0xd6, 0x00),
+            Role::PhaseScopeGrid => Colour::rgb(0x90, 0x90, 0x90),
         };
         Palette {
             colours: Role::ALL.map(colour),

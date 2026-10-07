@@ -11,7 +11,7 @@ The app-wide choice of where all Meters get their audio: System Capture, or Send
 _Avoid_: Input mode, Source Mode
 
 **Source**:
-Where the audio a Meter shows comes from. When the app listens to System Capture, every Meter's Source is System Capture; when it listens to Send Plugins, each Meter picks its own Send Plugin as its Source.
+Where the audio a Meter shows comes from. When the app listens to System Capture, every Meter's Source is System Capture; when it listens to Send Plugins, each Meter picks its own Send Plugin as its Source. A Phase Scope can also show an Overlay Source beside it.
 _Avoid_: Input, device, feed
 
 **Overlay Source**:

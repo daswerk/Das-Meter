@@ -512,3 +512,26 @@ fn left_and_right_show_two_traces() {
     app.feed(&clicks(1_000, 24_000, 24_000 * 3, 0.5));
     assert_eq!(app.scope().traces.len(), 2);
 }
+
+#[test]
+fn mid_and_side_is_not_offered() {
+    let mut app = App::new();
+    app.set(|s| s.channel_view = dasmeter_analysis::ChannelView::MidSide);
+    assert_eq!(
+        app.settings().channel_view,
+        dasmeter_analysis::ChannelView::Mono
+    );
+}
+
+#[test]
+fn a_cycle_too_long_to_keep_says_so() {
+    let mut app = App::new();
+    // A 4/4 bar at 30 BPM is 8 seconds: more than the audio kept.
+    app.set(|s| {
+        s.cycle = CycleLength::Bar;
+        s.tempo = 30.0;
+    });
+    app.feed(&clicks(1_000, 24_000, 24_000 * 2, 0.5));
+    let note = app.scope().note.expect("a note");
+    assert!(note.contains("too long"), "{note}");
+}

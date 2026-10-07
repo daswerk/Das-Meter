@@ -25,7 +25,7 @@ pub const TRAIL: usize = 3;
 pub const AVERAGED: usize = 8;
 /// The longest Cycle kept, in seconds: a bar of 4/4 at 30 BPM.
 const MAX_SECONDS: f64 = 8.0;
-/// Frames a Cycle waits after it ends before it is cut, so the Overlay
+/// How long a Cycle waits after it ends before it is cut, so the Overlay
 /// Source's audio for it has arrived too.
 const MARGIN_SECONDS: f64 = 0.03;
 /// A DAW song position further than this from where the clock expects it
@@ -408,7 +408,7 @@ impl PhaseScope {
         if first < track.oldest() as f64 {
             return None;
         }
-        let view = self.settings.channel_view;
+        let view = self.channel_view();
         let count = view.traces();
         let mut traces = vec![(vec![0.0f32; COLUMNS], vec![0.0f32; COLUMNS]); count];
         let mut overlay = self
@@ -448,6 +448,23 @@ impl PhaseScope {
         })
     }
 
+    /// Why no Cycle can show: one longer than the audio kept.
+    fn too_long(&self) -> Option<String> {
+        let tempo = self.main.tempo().unwrap_or(f64::from(self.settings.tempo));
+        let seconds = self.main.grid.cycle(self.settings.cycle) * 60.0 / tempo;
+        (seconds > MAX_SECONDS - MARGIN_SECONDS)
+            .then(|| "The Cycle is too long at this tempo: pick a beat".to_owned())
+    }
+
+    /// The channel split shown: mono while there's an Overlay Source, which
+    /// is compared in mono.
+    fn channel_view(&self) -> ChannelView {
+        match self.overlay {
+            Some(_) => ChannelView::Mono,
+            None => self.settings.channel_view,
+        }
+    }
+
     /// The overlay frame that lines up with main frame `frame`, at song
     /// position `beats`, after the offset: by song position when both follow
     /// their DAW, else by arrival. `None` if the overlay doesn't reach it.
@@ -482,7 +499,7 @@ impl PhaseScope {
                 (average(&cycles[skip..]), Vec::new())
             }
         };
-        let count = s.channel_view.traces();
+        let count = self.channel_view().traces();
         let newest = newest.unwrap_or_else(|| Cut {
             traces: vec![(vec![0.0; COLUMNS], vec![0.0; COLUMNS]); count],
             overlay: None,
@@ -540,7 +557,7 @@ impl PhaseScope {
             said_tempo: self.main.timed,
             colour: None,
             overlay,
-            note: None,
+            note: self.too_long(),
         }
     }
 }
@@ -548,10 +565,10 @@ impl PhaseScope {
 /// Cutting the Overlay Source's part of one Cycle, column by column.
 struct OverlayPass {
     cut: OverlayCut,
-    /// Both sources low-passed at the cut-off, run on from frame to frame.
+    /// Both Sources low-passed at the cut-off, run on from frame to frame.
     filters: [Lr4; 2],
-    /// Σxy, Σx², Σy² of the low-passed sources, over `frames` frames.
-    sums: [f64; 3],
+    /// Σx, Σy, Σxy, Σx², Σy² of the low-passed Sources, over `frames` frames.
+    sums: [f64; 5],
     frames: u64,
 }
 
@@ -568,7 +585,7 @@ impl OverlayPass {
                 correlation: None,
             },
             filters: [filter, filter],
-            sums: [0.0; 3],
+            sums: [0.0; 5],
             frames: 0,
         };
         // Settle the filters on the audio just before the Cycle.
@@ -620,9 +637,10 @@ impl OverlayPass {
             product += f64::from(m * o);
             power += f64::from(m * m + o * o) / 2.0;
             let (x, y) = (self.filters[0].run(m), self.filters[1].run(o));
-            self.sums[0] += f64::from(x * y);
-            self.sums[1] += f64::from(x * x);
-            self.sums[2] += f64::from(y * y);
+            let (x, y) = (f64::from(x), f64::from(y));
+            for (sum, v) in self.sums.iter_mut().zip([x, y, x * y, x * x, y * y]) {
+                *sum += v;
+            }
             self.frames += 1;
         }
         let cut = &mut self.cut;
@@ -640,11 +658,13 @@ impl OverlayPass {
     }
 
     fn finish(mut self) -> OverlayCut {
-        let [xy, xx, yy] = self.sums;
+        // Pearson: about each Source's mean, so a DC offset or a lopsided
+        // kick doesn't count as agreement.
+        let [x, y, xy, xx, yy] = self.sums.map(|v| v / self.frames.max(1) as f64);
+        let (vx, vy) = (xx - x * x, yy - y * y);
         // Either silent below the cut-off: no number.
-        let quietest = xx.min(yy) / self.frames.max(1) as f64;
-        self.cut.correlation =
-            (quietest > SILENT_POWER).then(|| ratio((xy / (xx * yy).sqrt()).clamp(-1.0, 1.0)));
+        self.cut.correlation = (vx.min(vy) > SILENT_POWER)
+            .then(|| ratio(((xy - x * y) / (vx * vy).sqrt()).clamp(-1.0, 1.0)));
         self.cut
     }
 }
@@ -744,10 +764,3 @@ impl Taps {
         Some(((60.0 / beat * 10.0).round() / 10.0) as f32)
     }
 }
-
-/// The channel splits a Phase Scope offers.
-pub const CHANNEL_VIEWS: [ChannelView; 3] = [
-    ChannelView::Mono,
-    ChannelView::LeftRight,
-    ChannelView::MidSide,
-];

@@ -398,3 +398,31 @@ fn the_number_is_blank_in_silence_or_without_an_overlay() {
     app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.3));
     assert!(app.scope().overlay.is_none());
 }
+
+#[test]
+fn an_overlay_from_another_daw_is_never_shown() {
+    let mut app = App::with_bass();
+    // The main Source moves to Lead, in another DAW: Bass can't be compared.
+    app.send(Event::PickSendPlugin { meter: 0, id: 9 });
+    assert_eq!(app.core.listened(), [9]);
+    let overlay = app.meter().overlay.expect("offered");
+    assert!(overlay.choices.is_empty());
+}
+
+#[test]
+fn a_dc_offset_doesnt_count_as_agreement() {
+    let mut app = App::with_bass();
+    // Two unrelated lows (55 and 87 Hz), each lifted by the same offset.
+    let (a, b) = (sine(55.0, 0.2), sine(87.0, 0.2));
+    app.play_both(4.0, |f| a(f) + 0.3, |f| b(f) + 0.3);
+    let correlation = app.scope().overlay.unwrap().correlation.expect("a number");
+    assert!(correlation.abs() < 0.3, "{correlation}");
+}
+
+#[test]
+fn with_an_overlay_the_main_trace_is_mono() {
+    let mut app = App::with_bass();
+    app.set(|s| s.channel_view = dasmeter_analysis::ChannelView::LeftRight);
+    app.play_both(3.0, sine(55.0, 0.3), sine(55.0, 0.3));
+    assert_eq!(app.scope().traces.len(), 1);
+}

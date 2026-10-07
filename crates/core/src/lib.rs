@@ -1744,15 +1744,7 @@ impl AppCore {
     /// ones from the same DAW as the one it shows, but not that one. None on
     /// System Capture or for other Meters.
     fn overlay_choices(&self, meter: usize) -> Vec<&SendPlugin> {
-        if self.listen_to != ListenTo::SendPlugins
-            || !matches!(
-                self.meters[meter].meter.settings(),
-                MeterSettings::PhaseScope(_)
-            )
-        {
-            return Vec::new();
-        }
-        let Resolved::Plugin(main) = self.resolve(meter) else {
+        let Some(main) = self.overlay_main(meter) else {
             return Vec::new();
         };
         self.send_plugins
@@ -1761,18 +1753,25 @@ impl AppCore {
             .collect()
     }
 
-    /// The Overlay Source a Phase Scope takes now, if its pick is there.
+    /// The Overlay Source a Phase Scope takes now: its pick, if it's there
+    /// and still in the same DAW as the Send Plugin the Meter shows.
     fn overlay_plugin(&self, meter: usize) -> Option<&SendPlugin> {
         let pick = self.meters[meter].overlay.as_ref()?;
-        if self.listen_to != ListenTo::SendPlugins
-            || !matches!(
-                self.meters[meter].meter.settings(),
-                MeterSettings::PhaseScope(_)
-            )
-        {
+        let main = self.overlay_main(meter)?;
+        sources::find(pick, &self.send_plugins)
+            .filter(|p| p.usable() && p.host_pid == main.host_pid && p.id != main.id)
+    }
+
+    /// The Send Plugin a Meter shows, if it's a Phase Scope on Send Plugins
+    /// and so can take an Overlay Source.
+    fn overlay_main(&self, meter: usize) -> Option<&SendPlugin> {
+        if self.listen_to != ListenTo::SendPlugins || !self.meters[meter].meter.is_phase_scope() {
             return None;
         }
-        sources::find(pick, &self.send_plugins).filter(|p| p.usable())
+        match self.resolve(meter) {
+            Resolved::Plugin(main) => Some(main),
+            _ => None,
+        }
     }
 
     /// The Meters the current layout shows.
@@ -2151,7 +2150,7 @@ impl AppCore {
                                 }
                                 None => {}
                             }
-                            if !scope.said_tempo {
+                            if !scope.said_tempo && scope.note.is_none() {
                                 scope.note = Some(format!(
                                     "No tempo from {name}: {:.1} BPM typed in",
                                     scope.tempo
@@ -2185,28 +2184,25 @@ impl AppCore {
                 .iter_mut()
                 .find(|w| w.key == key)
                 .expect("placed in a window");
-            let overlay =
-                matches!(slot.meter.settings(), MeterSettings::PhaseScope(_)).then(|| {
-                    OverlayScene {
-                        picked: match self.listen_to {
-                            ListenTo::SendPlugins => slot
-                                .overlay
-                                .as_ref()
-                                .map(|pick| self.overlay_plugin(i).map_or(pick.id, |p| p.id)),
-                            ListenTo::SystemCapture => slot.overlay.as_ref().map(|pick| pick.id),
-                        },
-                        choices: self
-                            .overlay_choices(i)
-                            .into_iter()
-                            .map(|p| SendPluginItem {
-                                id: p.id,
-                                label: p.label(),
-                                colour: colour(p.colour),
-                                pickable: true,
-                            })
-                            .collect(),
-                    }
-                });
+            let overlay = slot.meter.is_phase_scope().then(|| OverlayScene {
+                picked: match self.listen_to {
+                    ListenTo::SendPlugins => slot
+                        .overlay
+                        .as_ref()
+                        .map(|pick| self.overlay_plugin(i).map_or(pick.id, |p| p.id)),
+                    ListenTo::SystemCapture => slot.overlay.as_ref().map(|pick| pick.id),
+                },
+                choices: self
+                    .overlay_choices(i)
+                    .into_iter()
+                    .map(|p| SendPluginItem {
+                        id: p.id,
+                        label: p.label(),
+                        colour: colour(p.colour),
+                        pickable: true,
+                    })
+                    .collect(),
+            });
             window.meters.push(MeterScene {
                 meter: i,
                 overlay,

@@ -339,6 +339,10 @@ impl PhaseScopeMeterSettings {
             PHASE_SCOPE_OFFSET,
             defaults.overlay_offset,
         );
+        // Mono or Left and Right only.
+        if self.channel_view == dasmeter_analysis::ChannelView::MidSide {
+            self.channel_view = dasmeter_analysis::ChannelView::Mono;
+        }
         self
     }
 }

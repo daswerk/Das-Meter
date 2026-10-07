@@ -11,9 +11,11 @@ use super::Canvas;
 use super::labels::Align;
 use super::shapes::Area;
 
-/// Below this height (logical px) the tempo and correlation readouts are left
-/// out, so the traces keep the room.
-const MIN_TEXT_HEIGHT: f32 = 48.0;
+/// Below this height (logical px) the correlation number is left out, the
+/// first thing to go, so the traces keep the room.
+const MIN_NUMBER_HEIGHT: f32 = 64.0;
+/// Below this height the tempo readout goes too.
+const MIN_TEXT_HEIGHT: f32 = 40.0;
 
 pub fn draw(
     c: &mut Canvas,
@@ -21,7 +23,7 @@ pub fn draw(
     settings: &PhaseScopeMeterSettings,
     scope: &PhaseScopeView,
 ) {
-    let (grid, dim) = (c.colour(Role::Grid), c.dim());
+    let (grid, dim) = (c.colour(Role::PhaseScopeGrid), c.dim());
     let thin = c.px(1.0).max(1.0);
     let roomy = area.height >= c.px(MIN_TEXT_HEIGHT);
     let plot = area;
@@ -102,7 +104,13 @@ pub fn draw(
             Align::Left,
         );
     }
-    if let Some(correlation) = scope.overlay.as_ref().and_then(|o| o.correlation) {
+    let numbered = area.height >= c.px(MIN_NUMBER_HEIGHT);
+    if let Some(correlation) = scope
+        .overlay
+        .as_ref()
+        .and_then(|o| o.correlation)
+        .filter(|_| numbered)
+    {
         let good = c.colour(Role::CorrelationPositive);
         let bad = c.colour(Role::CorrelationNegative);
         let colour = if correlation < 0.0 { bad } else { good };

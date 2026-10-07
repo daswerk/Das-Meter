@@ -955,6 +955,10 @@ impl Meter {
         self.view = None;
     }
 
+    pub fn is_phase_scope(&self) -> bool {
+        matches!(self.settings, MeterSettings::PhaseScope(_))
+    }
+
     /// A Phase Scope starts (afresh) or stops taking an Overlay Source.
     /// Other Meters have none.
     pub fn set_overlay(&mut self, on: bool) {

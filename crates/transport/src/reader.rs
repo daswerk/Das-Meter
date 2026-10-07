@@ -103,7 +103,7 @@ impl Reader {
         Self::open_tables(vec![Table::open(name, V2)?])
     }
 
-    /// [`Reader::open`] on tables with other names, for tests.
+    /// [`Reader::open`] on tables with other names (tests use their own).
     pub fn open_named_with_v1(name: &str, v1_name: &str) -> io::Result<Reader> {
         let mut tables = vec![Table::open(name, V2)?];
         // A broken v1 table only costs the older Send Plugins.

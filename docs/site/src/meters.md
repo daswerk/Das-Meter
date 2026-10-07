@@ -125,8 +125,9 @@ other upside down. It's blank in silence, and the first thing left out when
 the Meter is small. **Offset** nudges it
 a few milliseconds later (+) or earlier (−). If its Send Plugin goes away,
 the Phase Scope says "Waiting for …" until it's back. The pick and offset
-are saved in Presets. With System Capture there's no second input, so the
-option is greyed out.
+are saved in Presets. With System Capture there's only the one Source, so
+the option is greyed out. An Overlay Source is compared in mono, so while one
+is shown the main trace is mono too.
 
 When it's very small the readouts go first, so the traces keep the room.
 

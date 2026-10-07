@@ -883,11 +883,7 @@ fn phase_scope_basic(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings, tap: &m
         ui,
         "Channels",
         &mut s.channel_view,
-        &[
-            (ChannelView::Mono, "Mono"),
-            (ChannelView::LeftRight, "L/R"),
-            (ChannelView::MidSide, "M/S"),
-        ],
+        &[(ChannelView::Mono, "Mono"), (ChannelView::LeftRight, "L/R")],
     );
     changed |= choice(
         ui,
@@ -1071,7 +1067,7 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
 
 /// A Phase Scope's Overlay Source: a second Send Plugin from the same DAW,
 /// or none, and the ± ms offset that nudges it. Shown disabled on System
-/// Capture, which has no second input.
+/// Capture, which has only the one Source.
 fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, actions: &mut Actions) {
     let (Some(overlay), MeterSettings::PhaseScope(mut settings)) =
         (&meter_scene.overlay, meter_scene.settings)
@@ -1739,6 +1735,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::PhaseScopeTrace,
             Role::PhaseScopeCancel,
             Role::PhaseScopeSum,
+            Role::PhaseScopeGrid,
         ],
     }
 }

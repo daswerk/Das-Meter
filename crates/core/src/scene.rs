@@ -119,7 +119,7 @@ pub struct OverlayScene {
     /// The picked Send Plugin's ID, there or not.
     pub picked: Option<u64>,
     /// What can be picked: Send Plugins from the same DAW as the Meter's
-    /// Source. Empty on System Capture, which has no second input.
+    /// Source. Empty on System Capture, which has only the one Source.
     pub choices: Vec<SendPluginItem>,
 }
 
