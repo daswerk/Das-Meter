@@ -23,6 +23,8 @@ use dasmeter_core::{
 };
 use egui::{Color32, RichText, Slider};
 
+use crate::widgets::{self, Toggle};
+
 /// What the user did this frame, as app core events.
 #[derive(Default)]
 pub struct Actions {
@@ -107,7 +109,7 @@ pub enum Surface {
 /// One window's egui context.
 pub struct Ui {
     pub ctx: egui::Context,
-    palette: Option<Palette>,
+    palette: Option<(Palette, Look)>,
     /// How big the last frame's content was, in logical pixels, for sizing a
     /// menu window to fit.
     pub content_size: Option<egui::Vec2>,
@@ -177,9 +179,17 @@ impl Ui {
         scene: &Scene,
         surface: Surface,
     ) -> (egui::FullOutput, Actions) {
-        if self.palette.as_ref() != Some(&scene.palette) {
-            self.ctx.set_visuals(visuals(&scene.palette));
-            self.palette = Some(scene.palette.clone());
+        let look = scene.theme.styling.look;
+        if self.palette.as_ref() != Some(&(scene.palette.clone(), look)) {
+            let smooth = look == Look::Smooth;
+            self.ctx.set_visuals(visuals(&scene.palette, smooth));
+            self.ctx.all_styles_mut(|style| {
+                // Smooth: ~120 ms fades on menus and controls; readings
+                // themselves are never animated.
+                style.animation_time = if smooth { 0.12 } else { 0.2 };
+            });
+            widgets::set_smooth(&self.ctx, smooth);
+            self.palette = Some((scene.palette.clone(), look));
         }
         let mut actions = Actions::new();
         let mut content_size = None;
@@ -219,7 +229,7 @@ fn colour32(colour: Colour) -> Color32 {
 }
 
 /// egui's look, from the colour roles.
-fn visuals(palette: &Palette) -> egui::Visuals {
+fn visuals(palette: &Palette, smooth: bool) -> egui::Visuals {
     let c = |role| colour32(palette[role]);
     let (background, panel, grid, text, accent) = (
         c(Role::Background),
@@ -252,7 +262,58 @@ fn visuals(palette: &Palette) -> egui::Visuals {
         state.fg_stroke.color = text;
     }
     widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent);
+    if smooth {
+        smooth_visuals(&mut v, panel, grid, text, accent);
+    }
     v
+}
+
+/// The Smooth Look's menus and settings: rounded, slightly see-through
+/// popups with a soft shadow and no hard edge, accent on hover, filled
+/// sliders with round handles.
+fn smooth_visuals(
+    v: &mut egui::Visuals,
+    panel: Color32,
+    grid: Color32,
+    text: Color32,
+    accent: Color32,
+) {
+    let black = Color32::BLACK;
+    let raised = panel.lerp_to_gamma(Color32::WHITE, 0.03);
+    v.window_fill = raised;
+    v.panel_fill = panel;
+    v.window_stroke = egui::Stroke::new(1.0, grid.gamma_multiply(0.5));
+    v.window_corner_radius = egui::CornerRadius::same(10);
+    v.menu_corner_radius = egui::CornerRadius::same(10);
+    let shadow = egui::Shadow {
+        offset: [0, 8],
+        blur: 24,
+        spread: 0,
+        color: black.gamma_multiply(0.45),
+    };
+    v.window_shadow = shadow;
+    v.popup_shadow = shadow;
+    v.slider_trailing_fill = true;
+    v.handle_shape = egui::style::HandleShape::Circle;
+    v.selection.bg_fill = accent.gamma_multiply(0.55);
+    v.selection.stroke = egui::Stroke::new(1.0, accent);
+    let widgets = &mut v.widgets;
+    widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, grid.gamma_multiply(0.5));
+    widgets.noninteractive.fg_stroke.color = text.gamma_multiply(0.8);
+    for (state, fill) in [
+        (&mut widgets.inactive, grid.gamma_multiply(0.45)),
+        (&mut widgets.hovered, accent.gamma_multiply(0.22)),
+        (&mut widgets.active, accent.gamma_multiply(0.4)),
+        (&mut widgets.open, grid.gamma_multiply(0.6)),
+    ] {
+        state.bg_fill = fill;
+        state.weak_bg_fill = fill;
+        state.corner_radius = egui::CornerRadius::same(6);
+        state.bg_stroke = egui::Stroke::NONE;
+        state.fg_stroke.color = text;
+    }
+    widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
+    widgets.hovered.fg_stroke.color = text;
 }
 
 fn kind_name(settings: &MeterSettings) -> &'static str {
@@ -330,7 +391,7 @@ fn duration_slider(
 fn peak_hold(ui: &mut egui::Ui, value: &mut PeakHold) -> bool {
     let mut infinite = *value == PeakHold::Infinite;
     let mut changed = ui
-        .checkbox(&mut infinite, "Hold peaks until reset")
+        .add(Toggle::new(&mut infinite, "Hold peaks until reset"))
         .changed();
     let mut time = match *value {
         PeakHold::For(time) => time,
@@ -431,17 +492,19 @@ fn spectrum_basic(ui: &mut egui::Ui, s: &mut SpectrumMeterSettings) -> bool {
         };
         changed = true;
     }
-    changed |= ui.checkbox(&mut s.show_peak_hold, "Peak hold").changed();
     changed |= ui
-        .checkbox(&mut s.show_peak_line, "Peak line")
+        .add(Toggle::new(&mut s.show_peak_hold, "Peak hold"))
+        .changed();
+    changed |= ui
+        .add(Toggle::new(&mut s.show_peak_line, "Peak line"))
         .on_hover_text("A line on the loudest peak, with its frequency and note")
         .changed();
     changed |= ui
-        .checkbox(&mut s.show_cursor, "Mouse readout")
+        .add(Toggle::new(&mut s.show_cursor, "Mouse readout"))
         .on_hover_text("A line under the mouse, with its frequency and note")
         .changed();
     changed |= ui
-        .checkbox(&mut s.slow_on_hover, "Slow down under the mouse")
+        .add(Toggle::new(&mut s.slow_on_hover, "Slow down under the mouse"))
         .on_hover_text("Under the mouse the Spectrum falls slower and keeps its peaks, marked with their notes")
         .changed();
     changed |= choice(
@@ -462,7 +525,7 @@ fn loudness_basic(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings, reset: &mut 
     let mut target = s.target.unwrap_or(-14.0);
     let mut changed = false;
     ui.horizontal(|ui| {
-        changed |= ui.checkbox(&mut on, "Target").changed();
+        changed |= ui.add(Toggle::new(&mut on, "Target")).changed();
         ui.add_enabled_ui(on, |ui| {
             changed |= ui
                 .add(
@@ -480,7 +543,7 @@ fn loudness_basic(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings, reset: &mut 
         s.target = on.then_some(target);
     }
     changed |= ui
-        .checkbox(&mut s.show_bars, "Show bars")
+        .add(Toggle::new(&mut s.show_bars, "Show bars"))
         .on_hover_text("L/R and LUFS bars beside the numbers")
         .changed();
     if !s.show_bars {
@@ -496,7 +559,7 @@ fn loudness_basic(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings, reset: &mut 
             ],
         );
         changed |= ui
-            .checkbox(&mut s.show_thin_bars, "Thin bars")
+            .add(Toggle::new(&mut s.show_thin_bars, "Thin bars"))
             .on_hover_text("A thin bar beside each big number")
             .changed();
     }
@@ -525,7 +588,9 @@ fn stereometer_basic(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> boo
             (StereoView::Lissajous, "Lissajous"),
         ],
     );
-    changed |= ui.checkbox(&mut s.show_balance, "Balance bar").changed();
+    changed |= ui
+        .add(Toggle::new(&mut s.show_balance, "Balance bar"))
+        .changed();
     changed
 }
 
@@ -689,18 +754,21 @@ fn loudness_advanced(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings) -> bool {
         " dB",
     );
     changed |= ui
-        .checkbox(&mut s.show_true_peak, "Show true peak")
+        .add(Toggle::new(&mut s.show_true_peak, "Show true peak"))
         .changed();
-    changed |= ui.checkbox(&mut s.show_range, "Show LRA").changed();
+    changed |= ui.add(Toggle::new(&mut s.show_range, "Show LRA")).changed();
     changed |= ui
-        .checkbox(&mut s.show_peak_to_loudness, "Show PLR and PSR")
+        .add(Toggle::new(
+            &mut s.show_peak_to_loudness,
+            "Show PLR and PSR",
+        ))
         .on_hover_text(
             "Peak to loudness: the true-peak maximum minus integrated loudness (PLR), \
              and the last 3 s' true peak minus short-term loudness (PSR)",
         )
         .changed();
     changed |= ui
-        .checkbox(&mut s.show_history, "Loudness graph")
+        .add(Toggle::new(&mut s.show_history, "Loudness graph"))
         .on_hover_text("The LUFS bar's reading over time, where there's room")
         .changed();
     if s.show_history {
@@ -723,7 +791,7 @@ fn loudness_advanced(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings) -> bool {
 }
 
 fn cepstrum_basic(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
-    ui.checkbox(&mut s.show_pitch, "Show pitch")
+    ui.add(Toggle::new(&mut s.show_pitch, "Show pitch"))
         .on_hover_text("Mark the period of the pitch found, with its frequency and note")
         .changed()
 }
@@ -780,7 +848,9 @@ fn spectrogram_basic(ui: &mut egui::Ui, s: &mut SpectrogramMeterSettings) -> boo
     if changed {
         s.analysis.span = Duration::from_secs(seconds);
     }
-    changed |= ui.checkbox(&mut s.show_scale, "Frequency scale").changed();
+    changed |= ui
+        .add(Toggle::new(&mut s.show_scale, "Frequency scale"))
+        .changed();
     changed
 }
 
@@ -1063,7 +1133,10 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
         }
     }
     let mut shown = meter_scene.show_source_label;
-    if ui.checkbox(&mut shown, "Show Source label").changed() {
+    if ui
+        .add(Toggle::new(&mut shown, "Show Source label"))
+        .changed()
+    {
         actions.push(Event::ShowSourceLabel { meter, shown });
     }
 }
@@ -1135,7 +1208,7 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
             .on_hover_text("How well the two agree below this frequency, −1 to +1")
             .changed();
         changed |= ui
-            .checkbox(&mut settings.show_sum, "Show sum")
+            .add(Toggle::new(&mut settings.show_sum, "Show sum"))
             .on_hover_text("The two added together: what's left in the mix")
             .changed();
         changed |= ui
@@ -1146,7 +1219,7 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
             .on_hover_text("The two on top, their sum under them")
             .changed();
         changed |= ui
-            .checkbox(&mut settings.suggestions, "Suggestions")
+            .add(Toggle::new(&mut settings.suggestions, "Suggestions"))
             .on_hover_text("What would make them fit: flip, move or pitch one")
             .changed();
         if changed {
@@ -1235,7 +1308,7 @@ fn placement_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut 
     match pop_out {
         Some(window) => {
             let mut on_top = window.on_top;
-            if ui.checkbox(&mut on_top, "Always on top").changed() {
+            if ui.add(Toggle::new(&mut on_top, "Always on top")).changed() {
                 actions.push(Event::SetPopOutOnTop { meter, on_top });
             }
             if ui.button("Dock back").clicked() {
@@ -1523,7 +1596,7 @@ fn bar_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     }
     let mut over = bar.over_fullscreen;
     if ui
-        .checkbox(&mut over, "Show over fullscreen apps")
+        .add(Toggle::new(&mut over, "Show over fullscreen apps"))
         .changed()
     {
         actions.push(Event::ShowOverFullscreen(over));
@@ -1581,7 +1654,10 @@ fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     ui.label(format!("In use: {}", theme.name));
     let mut follow = theme.follows_system();
     if ui
-        .checkbox(&mut follow, "Follow the system's light / dark setting")
+        .add(Toggle::new(
+            &mut follow,
+            "Follow the system's light / dark setting",
+        ))
         .changed()
     {
         // Following: Light and Dark; not: the Theme in use for both.
@@ -1678,6 +1754,7 @@ fn rename_theme(
 /// The Theme's styling and colours. Edits to a built-in go to a copy.
 fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, current: usize) {
     let mut styling = scene.theme.styling;
+    widgets::heading(ui, "Look");
     let mut changed = choice(
         ui,
         "Look",
@@ -1696,9 +1773,10 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
         changed |= percent(ui, &mut styling.gradient, 0.0..=1.0, "Gradient");
         changed |= percent(ui, &mut styling.vignette, 0.0..=1.0, "Vignette");
         changed |= ui
-            .checkbox(&mut styling.dim_when_silent, "Dim when silent")
+            .add(Toggle::new(&mut styling.dim_when_silent, "Dim when silent"))
             .changed();
     }
+    widgets::heading(ui, "Layout");
     changed |= ui
         .add(Slider::new(&mut styling.background_opacity, 0.0..=1.0).text("Background opacity"))
         .changed();
@@ -1733,7 +1811,10 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
         .add(Slider::new(&mut styling.text_scale, lo..=hi).text("Text size"))
         .changed();
     changed |= ui
-        .checkbox(&mut styling.shape_cues, "Shape cues besides colour")
+        .add(Toggle::new(
+            &mut styling.shape_cues,
+            "Shape cues besides colour",
+        ))
         .changed();
     if changed {
         actions.push(Event::SetThemeStyling {
@@ -1741,22 +1822,167 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
             styling,
         });
     }
-    // Colours, with a live preview: the Meters and this panel use them at once.
-    egui::Grid::new("theme colours")
-        .num_columns(2)
-        .show(ui, |ui| {
-            for role in Role::ALL {
-                ui.label(role.label());
-                if let Some(colour) = colour_button(ui, scene.palette[role]) {
-                    actions.push(Event::SetThemeColour {
-                        theme: current,
-                        role,
-                        colour,
-                    });
+    // Colours, grouped by Meter, under a small live preview; the Meters
+    // themselves change at once too.
+    widgets::heading(ui, "Colours");
+    theme_preview(ui, &scene.palette, scene.theme.styling);
+    for (group, roles) in COLOUR_GROUPS {
+        widgets::heading(ui, group);
+        egui::Grid::new(("theme colours", group))
+            .num_columns(2)
+            .min_col_width(150.0)
+            .show(ui, |ui| {
+                for &role in roles {
+                    ui.label(role.label());
+                    if let Some(colour) = colour_button(ui, scene.palette[role]) {
+                        actions.push(Event::SetThemeColour {
+                            theme: current,
+                            role,
+                            colour,
+                        });
+                    }
+                    ui.end_row();
                 }
-                ui.end_row();
-            }
-        });
+            });
+    }
+}
+
+/// The Theme's colours by the Meter that uses them.
+const COLOUR_GROUPS: [(&str, &[Role]); 7] = [
+    (
+        "General",
+        &[
+            Role::Background,
+            Role::Panel,
+            Role::Grid,
+            Role::Text,
+            Role::Accent,
+        ],
+    ),
+    (
+        "Waveform",
+        &[Role::WaveformLow, Role::WaveformMid, Role::WaveformHigh],
+    ),
+    (
+        "Spectrum",
+        &[
+            Role::SpectrumLine,
+            Role::SpectrumFill,
+            Role::SpectrumPeakHold,
+            Role::SpectrumPeakDots,
+            Role::SpectrumHarmonics,
+            Role::SpectrumSecond,
+        ],
+    ),
+    (
+        "Loudness",
+        &[
+            Role::LoudnessBar,
+            Role::LoudnessPeak,
+            Role::LoudnessOverTarget,
+        ],
+    ),
+    (
+        "Stereometer",
+        &[
+            Role::StereometerTrace,
+            Role::CorrelationPositive,
+            Role::CorrelationNegative,
+        ],
+    ),
+    (
+        "Phase Scope",
+        &[
+            Role::PhaseScopeTrace,
+            Role::PhaseScopeCancel,
+            Role::PhaseScopeSum,
+            Role::PhaseScopeGrid,
+        ],
+    ),
+    ("Cepstrum", &[Role::CepstrumTrace]),
+];
+
+/// A small Meter drawn in the Theme's colours: a panel with a grid, a
+/// spectrum curve with its fill, a loudness bar and a stereo trace.
+fn theme_preview(ui: &mut egui::Ui, palette: &Palette, styling: dasmeter_core::Styling) {
+    let c = |role| colour32(palette[role]);
+    let width = ui.available_width().min(360.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 96.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let radius = styling.corner_radius.clamp(0.0, 12.0);
+    painter.rect_filled(rect, 0.0, c(Role::Background));
+    let panel = rect.shrink(6.0);
+    painter.rect_filled(panel, radius, c(Role::Panel));
+    let plot = panel.shrink(8.0);
+    let smooth = styling.look == Look::Smooth;
+    let grid = c(Role::Grid).gamma_multiply(if smooth { 0.5 } else { 1.0 });
+    for i in 1..4 {
+        let y = egui::lerp(plot.top()..=plot.bottom(), i as f32 / 4.0);
+        painter.hline(plot.x_range(), y, egui::Stroke::new(1.0, grid));
+    }
+    // Spectrum: the left two thirds.
+    let spectrum = egui::Rect::from_min_max(
+        plot.min,
+        egui::pos2(plot.left() + plot.width() * 0.62, plot.bottom()),
+    );
+    let curve: Vec<egui::Pos2> = (0..=48)
+        .map(|i| {
+            let t = i as f32 / 48.0;
+            let wave = 0.55 + 0.25 * (t * 9.0).sin() * (1.0 - t) - 0.2 * t;
+            egui::pos2(
+                egui::lerp(spectrum.x_range(), t),
+                egui::lerp(spectrum.y_range(), 1.0 - wave),
+            )
+        })
+        .collect();
+    // The fill as one mesh, so no seams show between its pieces.
+    let mut mesh = egui::Mesh::default();
+    let fill_colour = c(Role::SpectrumFill).gamma_multiply(0.5);
+    for (i, point) in curve.iter().enumerate() {
+        mesh.colored_vertex(*point, fill_colour);
+        mesh.colored_vertex(egui::pos2(point.x, spectrum.bottom()), fill_colour);
+        if i > 0 {
+            let n = (i * 2) as u32;
+            mesh.add_triangle(n - 2, n - 1, n);
+            mesh.add_triangle(n - 1, n, n + 1);
+        }
+    }
+    painter.add(mesh);
+    painter.add(egui::Shape::line(
+        curve,
+        egui::Stroke::new(1.5, c(Role::SpectrumLine)),
+    ));
+    // Loudness: a bar, over the target at the top.
+    let bar = egui::Rect::from_min_max(
+        egui::pos2(
+            plot.left() + plot.width() * 0.68,
+            plot.top() + plot.height() * 0.3,
+        ),
+        egui::pos2(plot.left() + plot.width() * 0.68 + 8.0, plot.bottom()),
+    );
+    painter.rect_filled(bar, 2.0, c(Role::LoudnessBar));
+    let over = egui::Rect::from_min_max(
+        egui::pos2(bar.left(), plot.top() + plot.height() * 0.15),
+        egui::pos2(bar.right(), bar.top()),
+    );
+    painter.rect_filled(over, 2.0, c(Role::LoudnessOverTarget));
+    // Stereo: a few dots in a cloud at the right.
+    let centre = egui::pos2(plot.left() + plot.width() * 0.86, plot.center().y);
+    for i in 0..40 {
+        let a = i as f32 * 2.399;
+        let r = 4.0 + (i as f32).sqrt() * 4.2;
+        let p = centre + egui::vec2(a.cos() * r * 0.6, a.sin() * r);
+        if plot.contains(p) {
+            painter.circle_filled(p, 1.3, c(Role::StereometerTrace));
+        }
+    }
+    painter.text(
+        plot.left_top() + egui::vec2(2.0, 0.0),
+        egui::Align2::LEFT_TOP,
+        "Preview",
+        egui::FontId::proportional(10.0),
+        c(Role::Text).gamma_multiply(0.6),
+    );
 }
 
 /// The roles a Meter draws with, which it can override.
@@ -1948,7 +2174,8 @@ fn preset_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     }
 }
 
-/// App settings, the Theme, the Bar, then every setting of every Meter.
+/// App settings, the Theme, the Bar, then every setting of every Meter,
+/// under headers that open and close (Classic; Smooth has a sidebar).
 fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     missing_displays_note(ui, scene, actions);
     egui::CollapsingHeader::new("Presets")
@@ -1956,48 +2183,7 @@ fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         .show(ui, |ui| preset_settings(ui, scene, actions));
     egui::CollapsingHeader::new("App")
         .default_open(true)
-        .show(ui, |ui| {
-            listen_to(ui, scene, actions);
-            let mut mode = scene.mode;
-            let modes = [(LayoutMode::Bar, "Bar"), (LayoutMode::Window, "Window")];
-            if choice(ui, "Layout", &mut mode, &modes) {
-                actions.push(Event::SetMode(mode));
-            }
-            let mut app = scene.app;
-            let mut changed = ui
-                .add(
-                    Slider::new(
-                        &mut app.frame_rate_cap,
-                        limits::MIN_FRAME_RATE_CAP..=scene.max_frame_rate_cap,
-                    )
-                    .text("Frame-rate cap")
-                    .suffix(" fps"),
-                )
-                .changed();
-            changed |= ui
-                .checkbox(&mut app.check_for_updates, "Check for updates daily")
-                .changed();
-            if changed {
-                actions.push(Event::SetApp(app));
-            }
-            let mut launch_at_login = scene.launch_at_login;
-            if ui
-                .checkbox(&mut launch_at_login, "Launch at login")
-                .changed()
-            {
-                actions.push(Event::SetLaunchAtLogin(launch_at_login));
-            }
-            if cfg!(target_os = "macos") {
-                let mut show_in_dock = scene.show_in_dock;
-                if ui
-                    .checkbox(&mut show_in_dock, "Show in Dock")
-                    .on_hover_text("The menu bar icon is always there")
-                    .changed()
-                {
-                    actions.push(Event::SetShowInDock(show_in_dock));
-                }
-            }
-        });
+        .show(ui, |ui| app_settings(ui, scene, actions));
     egui::CollapsingHeader::new("Theme")
         .default_open(false)
         .show(ui, |ui| theme_settings(ui, scene, actions));
@@ -2006,43 +2192,202 @@ fn panel_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         .show(ui, |ui| bar_settings(ui, scene, actions));
     for meter_scene in all_meters(scene) {
         let meter = meter_scene.meter;
-        let title = format!("{} · {}", meter + 1, kind_name(&meter_scene.settings));
-        egui::CollapsingHeader::new(title)
+        egui::CollapsingHeader::new(meter_title(meter_scene))
             .id_salt(("meter settings", meter))
             .default_open(false)
-            .show(ui, |ui| {
-                // Both halves edit one copy, so a change in each is one event.
-                let mut edited = Actions::new();
-                basic(ui, meter, meter_scene.settings, &mut edited);
-                let settings = edited
-                    .iter()
-                    .find_map(|event| match event {
-                        Event::SetMeter { settings, .. } => Some(*settings),
-                        _ => None,
-                    })
-                    .unwrap_or(meter_scene.settings);
-                ui.separator();
-                advanced(ui, meter, settings, &mut edited);
-                ui.separator();
-                meter_colours(ui, scene, meter_scene, &mut edited);
-                if let Some(last) = edited
-                    .iter()
-                    .rev()
-                    .find(|e| matches!(e, Event::SetMeter { .. }))
-                    .copied()
-                {
-                    edited.retain(|e| !matches!(e, Event::SetMeter { .. }));
-                    edited.push(last);
-                }
-                actions.extend(edited);
-            });
+            .show(ui, |ui| meter_settings(ui, scene, meter_scene, actions));
     }
+}
+
+fn meter_title(meter_scene: &MeterScene) -> String {
+    format!(
+        "{} · {}",
+        meter_scene.meter + 1,
+        kind_name(&meter_scene.settings)
+    )
+}
+
+/// A page of the settings sidebar.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Presets,
+    App,
+    Theme,
+    Bar,
+    Meter(usize),
+}
+
+/// The settings in Smooth: a sidebar of pages at the left, the chosen
+/// page at the right, scrolling on its own.
+fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    let id = egui::Id::new("settings page");
+    let meters = all_meters(scene);
+    let mut page = ui.data(|d| d.get_temp::<Page>(id)).unwrap_or(Page::Presets);
+    // A removed Meter's page falls back to the first.
+    if let Page::Meter(m) = page
+        && !meters.iter().any(|s| s.meter == m)
+    {
+        page = Page::Presets;
+    }
+    egui::Panel::left("settings sidebar")
+        .resizable(false)
+        .exact_size(150.0)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 4)))
+        .show(ui, |ui| {
+            widgets::heading(ui, "Settings");
+            for (choice, name) in [
+                (Page::Presets, "Presets"),
+                (Page::App, "App"),
+                (Page::Theme, "Theme"),
+                (Page::Bar, "Bar"),
+            ] {
+                page_button(ui, &mut page, choice, name);
+            }
+            widgets::heading(ui, "Meters");
+            for meter_scene in &meters {
+                page_button(
+                    ui,
+                    &mut page,
+                    Page::Meter(meter_scene.meter),
+                    &meter_title(meter_scene),
+                );
+            }
+        });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+            left: 12,
+            right: 4,
+            top: 4,
+            bottom: 4,
+        }))
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt(("settings page", page_key(page)))
+                .show(ui, |ui| {
+                    missing_displays_note(ui, scene, actions);
+                    match page {
+                        Page::Presets => preset_settings(ui, scene, actions),
+                        Page::App => app_settings(ui, scene, actions),
+                        Page::Theme => theme_settings(ui, scene, actions),
+                        Page::Bar => bar_settings(ui, scene, actions),
+                        Page::Meter(meter) => {
+                            if let Some(meter_scene) = meters.iter().find(|s| s.meter == meter) {
+                                meter_settings(ui, scene, meter_scene, actions);
+                            }
+                        }
+                    }
+                });
+        });
+    ui.data_mut(|d| d.insert_temp(id, page));
+}
+
+fn page_key(page: Page) -> usize {
+    match page {
+        Page::Presets => usize::MAX,
+        Page::App => usize::MAX - 1,
+        Page::Theme => usize::MAX - 2,
+        Page::Bar => usize::MAX - 3,
+        Page::Meter(meter) => meter,
+    }
+}
+
+fn page_button(ui: &mut egui::Ui, page: &mut Page, choice: Page, name: &str) {
+    let button = egui::Button::selectable(*page == choice, name)
+        .min_size(egui::vec2(ui.available_width(), 24.0));
+    if ui.add(button).clicked() {
+        *page = choice;
+    }
+}
+
+/// Where Das-Meter listens, the layout, frame rate and start-up.
+fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    listen_to(ui, scene, actions);
+    let mut mode = scene.mode;
+    let modes = [(LayoutMode::Bar, "Bar"), (LayoutMode::Window, "Window")];
+    if choice(ui, "Layout", &mut mode, &modes) {
+        actions.push(Event::SetMode(mode));
+    }
+    let mut app = scene.app;
+    let mut changed = ui
+        .add(
+            Slider::new(
+                &mut app.frame_rate_cap,
+                limits::MIN_FRAME_RATE_CAP..=scene.max_frame_rate_cap,
+            )
+            .text("Frame-rate cap")
+            .suffix(" fps"),
+        )
+        .changed();
+    changed |= ui
+        .add(Toggle::new(
+            &mut app.check_for_updates,
+            "Check for updates daily",
+        ))
+        .changed();
+    if changed {
+        actions.push(Event::SetApp(app));
+    }
+    let mut launch_at_login = scene.launch_at_login;
+    if ui
+        .add(Toggle::new(&mut launch_at_login, "Launch at login"))
+        .changed()
+    {
+        actions.push(Event::SetLaunchAtLogin(launch_at_login));
+    }
+    if cfg!(target_os = "macos") {
+        let mut show_in_dock = scene.show_in_dock;
+        if ui
+            .add(Toggle::new(&mut show_in_dock, "Show in Dock"))
+            .on_hover_text("The menu bar icon is always there")
+            .changed()
+        {
+            actions.push(Event::SetShowInDock(show_in_dock));
+        }
+    }
+}
+
+/// Every setting of one Meter, and its colours.
+fn meter_settings(
+    ui: &mut egui::Ui,
+    scene: &Scene,
+    meter_scene: &MeterScene,
+    actions: &mut Actions,
+) {
+    let meter = meter_scene.meter;
+    // Both halves edit one copy, so a change in each is one event.
+    let mut edited = Actions::new();
+    basic(ui, meter, meter_scene.settings, &mut edited);
+    let settings = edited
+        .iter()
+        .find_map(|event| match event {
+            Event::SetMeter { settings, .. } => Some(*settings),
+            _ => None,
+        })
+        .unwrap_or(meter_scene.settings);
+    ui.separator();
+    advanced(ui, meter, settings, &mut edited);
+    ui.separator();
+    meter_colours(ui, scene, meter_scene, &mut edited);
+    if let Some(last) = edited
+        .iter()
+        .rev()
+        .find(|e| matches!(e, Event::SetMeter { .. }))
+        .copied()
+    {
+        edited.retain(|e| !matches!(e, Event::SetMeter { .. }));
+        edited.push(last);
+    }
+    actions.extend(edited);
 }
 
 /// The settings panel filling its own window.
 fn settings_window(root: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     egui::CentralPanel::default().show(root, |ui| {
-        egui::ScrollArea::vertical().show(ui, |ui| panel_contents(ui, scene, actions));
+        if widgets::is_smooth(ui.ctx()) {
+            sidebar_contents(ui, scene, actions);
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| panel_contents(ui, scene, actions));
+        }
     });
 }
 
@@ -2057,10 +2402,23 @@ fn settings_panel(ctx: &egui::Context, scene: &Scene, actions: &mut Actions) {
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size(egui::vec2(420.0, (screen.height() - 24.0).max(200.0)))
+        .default_size(egui::vec2(
+            if widgets::is_smooth(ctx) {
+                560.0
+            } else {
+                420.0
+            },
+            (screen.height() - 24.0).max(200.0),
+        ))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
-        .vscroll(true)
-        .show(ctx, |ui| panel_contents(ui, scene, actions));
+        .vscroll(!widgets::is_smooth(ctx))
+        .show(ctx, |ui| {
+            if widgets::is_smooth(ui.ctx()) {
+                sidebar_contents(ui, scene, actions);
+            } else {
+                panel_contents(ui, scene, actions);
+            }
+        });
     if !open {
         actions.push(Event::ShowSettings(false));
     }
