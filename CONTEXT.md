@@ -61,8 +61,12 @@ A saved setup: which Meters are shown, how they are arranged, their settings and
 _Avoid_: Profile, scene
 
 **Theme**:
-A named set of colours and styling (background opacity, line thickness, spacing, text size) that decides how Meters and the app look. Each Preset picks a Theme, or a light/dark pair that follows the system; several Presets can share one.
+A named set of colours and styling (background opacity, line thickness, spacing, text size, Look) that decides how Meters and the app look. Each Preset picks a Theme, or a light/dark pair that follows the system; several Presets can share one.
 _Avoid_: Skin, style, colour scheme
+
+**Look**:
+How a Theme is drawn, part of its styling: **Classic** (flat panels, plain lines) or **Smooth** (depth, faded grids, soft glows, floating panels). Any Theme can be drawn either way; colours stay the Theme's.
+_Avoid_: Skin, mode, version
 
 ### Layout
 
