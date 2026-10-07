@@ -8,12 +8,14 @@
 //! Time comes in with every call as the time since the app started, so tests
 //! drive the core with a fake clock.
 
+mod activity;
 pub mod displays;
 pub mod docs;
 pub mod layout;
 pub mod meters;
 pub mod onboarding;
 pub mod panes;
+pub mod phase_scope;
 pub mod presets;
 pub mod scene;
 pub mod settings;
@@ -29,23 +31,25 @@ pub use layout::{
     BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
 };
 pub use meters::{
-    CepstrumMeterSettings, CursorReadout, LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings,
-    MeterView, SpectrumMeterSettings, StereoDrawing, StereometerMeterSettings, WaveformColouring,
-    WaveformMeterSettings,
+    BigReading, CepstrumMeterSettings, CursorReadout, CycleLength, LoudnessMeterSettings, LufsBar,
+    MeterKind, MeterSettings, MeterView, PhaseScopeMeterSettings, SpectrogramMeterSettings,
+    SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings, SpectrumZoom, Steadiness,
+    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};
+pub use phase_scope::{Fit, PhaseScopeView, ScopeOverlay, ScopeTrace};
 pub use presets::{
     BuiltIn, MeterPreset, PresetData, PresetFile, PresetInfo, PresetOp, PresetScene, RoleColour,
     StoredSettings, ThemeRef,
 };
 pub use scene::{
-    ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene, MeterState, Note, Scene,
-    SendPluginItem, SourceItem, SourceLabel, WindowScene,
+    BarSettingsScene, ChannelDisplay, Frame, Level, LoudnessDisplay, MeterMenu, MeterScene,
+    MeterState, Note, OverlayScene, Scene, SendPluginItem, SourceItem, SourceLabel, WindowScene,
 };
 pub use settings::AppSettings;
-pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState};
-pub use theme::{Colour, LineWeight, Palette, Role, Styling, Theme};
+pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState, Timing};
+pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 
 use meters::Meter;
@@ -76,6 +80,10 @@ pub enum Event<'a> {
     /// The pointer moved to this point of a window (fractions, 0–1 from the
     /// top-left), or left it.
     Pointer(Option<(WindowKey, [f32; 2])>),
+    /// The user tapped a Phase Scope's tempo: two or more taps in a row set it.
+    TapTempo {
+        meter: usize,
+    },
     /// A Meter's settings changed. `meter` is its index in the window.
     SetMeter {
         meter: usize,
@@ -87,15 +95,22 @@ pub enum Event<'a> {
     /// The Send Plugins the transport lists now, gone ones included. The shell
     /// sends this every few hundred milliseconds while listening to Send Plugins.
     SendPlugins(&'a [SendPlugin]),
-    /// Interleaved stereo frames from one Send Plugin, at its sample rate.
+    /// Interleaved stereo frames from one Send Plugin, at its sample rate,
+    /// with where its DAW was at the first frame if it says.
     SendPluginAudio {
         id: u64,
         frames: &'a [f32],
+        timing: Option<Timing>,
     },
     /// The user picked a Send Plugin for a Meter (its Source item, or its list).
     PickSendPlugin {
         meter: usize,
         id: u64,
+    },
+    /// The user picked a Phase Scope's Overlay Source (`None` removes it).
+    PickOverlay {
+        meter: usize,
+        id: Option<u64>,
     },
     /// "Use for all Meters": every Meter takes the Send Plugin this one shows.
     UseForAllMeters {
@@ -110,6 +125,12 @@ pub enum Event<'a> {
     /// It closes an open menu; otherwise it picks from a "Pick a Send Plugin"
     /// list, or resets a Loudness Meter.
     Click {
+        window: WindowKey,
+        at: [f32; 2],
+    },
+    /// The left button went up at this point of the window: ends a box
+    /// dragged over a Spectrum, which then zooms into it.
+    Release {
         window: WindowKey,
         at: [f32; 2],
     },
@@ -133,8 +154,13 @@ pub enum Event<'a> {
     DisplayRefreshRate(u32),
     /// The display the Bar is on: its whole and usable area.
     Display(Display),
-    /// Dock the Bar to this edge.
+    /// Dock the Bar to this edge (also after it was moved off one).
     SetEdge(Edge),
+    /// The Bar was dragged off its edge (⌘-drag): its top-left corner to
+    /// `to`, in logical px on screen.
+    MoveBar {
+        to: [f32; 2],
+    },
     /// The Bar's thickness was dragged to this many logical pixels.
     SetBarThickness(f32),
     /// The divider after the Bar's `divider`-th Meter was dragged to `at`
@@ -187,6 +213,16 @@ pub enum Event<'a> {
         split: SplitId,
         at: f32,
     },
+    /// Add a Meter of `kind`, on default settings, next to this one: after it
+    /// in the Bar, or in a pane split off it in Window mode.
+    AddMeter {
+        meter: usize,
+        kind: MeterKind,
+    },
+    /// Take this Meter out of the Bar (the Bar keeps at least one).
+    RemoveFromBar {
+        meter: usize,
+    },
     /// Show another kind of Meter in this Meter's pane, on default settings.
     AssignMeter {
         meter: usize,
@@ -211,6 +247,11 @@ pub enum Event<'a> {
     /// Copy a Theme into an editable one and use it.
     DuplicateTheme {
         theme: usize,
+    },
+    /// Rename a Theme from the themes folder.
+    RenameTheme {
+        theme: usize,
+        name: &'a str,
     },
     /// Edit one colour role of a Theme from the themes folder.
     SetThemeColour {
@@ -328,6 +369,12 @@ struct MeterSlot {
     /// On Send Plugins: the ID and sample rate of the Send Plugin whose audio
     /// the analyser has, and when it was last fed (audio or idle silence).
     showing: Option<Showing>,
+    /// A Phase Scope's Overlay Source pick. Never followed by other Meters.
+    overlay: Option<Pick>,
+    /// The ID of the Overlay Source whose audio the Phase Scope takes.
+    overlay_showing: Option<u64>,
+    /// How lit it is: dims in silence in the Smooth Look.
+    activity: activity::Activity,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -349,6 +396,9 @@ pub struct AppCore {
     send_plugins: Vec<SendPlugin>,
     meters: Vec<MeterSlot>,
     pointer: Option<(WindowKey, [f32; 2])>,
+    /// A box being dragged over a Spectrum: its window, its Meter and where
+    /// it started, as fractions of the plot.
+    dragging: Option<(WindowKey, usize, [f32; 2])>,
     platform: Platform,
     mode: LayoutMode,
     layout: BarLayout,
@@ -383,6 +433,7 @@ pub struct AppCore {
     /// The scene last handed to the shell, and when.
     drawn: Option<Scene>,
     drawn_at: Option<Duration>,
+    taps: phase_scope::Taps,
 }
 
 impl Default for AppCore {
@@ -433,9 +484,13 @@ impl AppCore {
                     show_source_label: false,
                     overrides: Vec::new(),
                     showing: None,
+                    overlay: None,
+                    overlay_showing: None,
+                    activity: activity::Activity::default(),
                 })
                 .collect(),
             pointer: None,
+            dragging: None,
             note_until: None,
             note: Note::OutputChanged,
             silent_since: None,
@@ -454,6 +509,7 @@ impl AppCore {
             drawn: None,
             drawn_at: None,
             onboarding: Onboarding::default(),
+            taps: phase_scope::Taps::default(),
         }
     }
 
@@ -749,6 +805,7 @@ impl AppCore {
             .meters
             .iter()
             .filter_map(|slot| slot.showing.map(|showing| showing.id))
+            .chain(self.meters.iter().filter_map(|slot| slot.overlay_showing))
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -789,6 +846,7 @@ impl AppCore {
             Audio(_)
             | SendPluginAudio { .. }
             | Pointer(_)
+            | Release { .. }
             | Visible(_)
             | CaptureStarted { .. }
             | CaptureFailed(_)
@@ -952,6 +1010,7 @@ impl AppCore {
                 .map(|slot| MeterPreset {
                     settings: slot.meter.settings(),
                     send_plugin: slot.pick.clone(),
+                    overlay: slot.overlay.clone(),
                     show_source_label: slot.show_source_label,
                     overrides: slot
                         .overrides
@@ -988,6 +1047,9 @@ impl AppCore {
                 show_source_label: m.show_source_label,
                 overrides: m.overrides.iter().map(|o| (o.role, o.colour)).collect(),
                 showing: None,
+                overlay: m.overlay.clone(),
+                overlay_showing: None,
+                activity: activity::Activity::default(),
             })
             .collect();
         self.layout = data.bar;
@@ -1063,6 +1125,7 @@ impl AppCore {
                 for (i, slot) in self.meters.iter_mut().enumerate() {
                     if fed.contains(&i) {
                         slot.meter.process(frames);
+                        slot.activity.hear(frames, now);
                     }
                 }
             }
@@ -1075,6 +1138,26 @@ impl AppCore {
                 for slot in &mut self.meters {
                     slot.meter.pointer_changed();
                 }
+                if let (Some((window, meter, start)), Some((over, at))) = (self.dragging, pointer)
+                    && over == window
+                    && let Some((to, _)) = self.plot_point(window, meter, at)
+                {
+                    self.meters[meter].meter.drag_box(start, to);
+                }
+            }
+            Event::TapTempo { meter } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let MeterSettings::PhaseScope(mut settings) = slot.meter.settings() else {
+                    return;
+                };
+                let Some(tempo) = self.taps.tap(meter, now) else {
+                    return;
+                };
+                settings.tempo = tempo;
+                slot.meter
+                    .set_settings(MeterSettings::PhaseScope(settings).clamped());
             }
             Event::SetMeter { meter, settings } => match self.meters.get_mut(meter) {
                 Some(slot) => slot.meter.set_settings(settings.clamped()),
@@ -1109,15 +1192,19 @@ impl AppCore {
                 self.follow_renames();
                 self.route(now);
             }
-            Event::SendPluginAudio { id, frames } => {
+            Event::SendPluginAudio { id, frames, timing } => {
                 let wanted = self.fed_meters();
                 let mut fed = false;
                 for (i, slot) in self.meters.iter_mut().enumerate() {
                     if !wanted.contains(&i) {
                         continue;
                     }
+                    if slot.overlay_showing == Some(id) {
+                        slot.meter.process_overlay(frames, timing);
+                    }
                     if let Some(showing) = slot.showing.as_mut().filter(|s| s.id == id) {
-                        slot.meter.process(frames);
+                        slot.meter.process_timed(frames, timing);
+                        slot.activity.hear(frames, now);
                         showing.fed_at = now;
                         fed = true;
                     }
@@ -1134,6 +1221,26 @@ impl AppCore {
                     return;
                 }
                 self.meters[meter].pick = Some(Pick::of(plugin));
+                self.route(now);
+            }
+            Event::PickOverlay { meter, id } => {
+                let Some(slot) = self.meters.get(meter) else {
+                    return;
+                };
+                let pick = match id {
+                    None => None,
+                    Some(id) => {
+                        let offered = self.overlay_choices(meter);
+                        let Some(plugin) = offered.into_iter().find(|p| p.id == id) else {
+                            return;
+                        };
+                        Some(Pick::of(plugin))
+                    }
+                };
+                if slot.overlay == pick {
+                    return;
+                }
+                self.meters[meter].overlay = pick;
                 self.route(now);
             }
             Event::UseForAllMeters { meter } => {
@@ -1163,9 +1270,24 @@ impl AppCore {
                     // A Meter's Start listening button.
                     self.handle(Event::StartListening, now);
                 } else if let Some(meter) = self.meter_at(window, at) {
-                    self.handle(Event::ResetLoudness { meter }, now);
+                    if self.meters[meter].meter.zooms() {
+                        self.press_on_spectrum(window, meter, at);
+                    } else {
+                        self.handle(Event::ResetLoudness { meter }, now);
+                    }
                 }
                 return;
+            }
+            Event::Release { window, at } => {
+                let Some((from, meter, start)) = self.dragging.take() else {
+                    return;
+                };
+                if from == window
+                    && let Some((to, _)) = self.plot_point(window, meter, at)
+                {
+                    self.meters[meter].meter.drag_box(start, to);
+                }
+                self.meters[meter].meter.end_drag();
             }
             Event::OpenMenu { window, at } => {
                 let Some(meter) = self.meter_at(window, at) else {
@@ -1187,10 +1309,19 @@ impl AppCore {
                 self.display = Some(display);
             }
             Event::SetEdge(edge) => {
-                if edge == self.layout.edge {
+                if edge == self.layout.edge && self.layout.moved.is_none() {
                     return;
                 }
                 self.layout.edge = edge;
+                self.layout.moved = None;
+            }
+            Event::MoveBar { to } => {
+                let Some(display) = self.bar_display() else {
+                    return;
+                };
+                if !self.layout.move_to(to, &display) {
+                    return;
+                }
             }
             Event::SetBarThickness(thickness) => {
                 if thickness.is_nan() {
@@ -1310,6 +1441,54 @@ impl AppCore {
                     return;
                 }
             }
+            Event::AddMeter { meter, kind } => {
+                if meter >= self.meters.len() {
+                    return;
+                }
+                // On the side nearest where the menu was opened; to the
+                // right otherwise.
+                let side = self.menu_side(meter).unwrap_or(Side::Right);
+                let added = match self.mode {
+                    LayoutMode::Bar => {
+                        if !self.layout.meters.iter().any(|(m, _)| *m == meter) {
+                            return;
+                        }
+                        // Before it when opened in its first half along the Bar.
+                        let along_x = matches!(self.layout.edge, Edge::Top | Edge::Bottom);
+                        let before = self.menu_half(meter, along_x).unwrap_or(false);
+                        let new = self.spare_meter(meter);
+                        self.layout.add_beside(meter, new, before).then_some(new)
+                    }
+                    LayoutMode::Window => {
+                        let new = self.spare_meter(meter);
+                        let (direction, first) = match side {
+                            Side::Left => (Direction::SideBySide, true),
+                            Side::Right => (Direction::SideBySide, false),
+                            Side::Above => (Direction::Stacked, true),
+                            Side::Below => (Direction::Stacked, false),
+                        };
+                        self.window
+                            .tree
+                            .split_pane_beside(meter, direction, new, first)
+                            .then_some(new)
+                    }
+                };
+                let Some(new) = added else {
+                    return;
+                };
+                if self.meters[new].meter.settings().kind() != kind {
+                    self.meters[new]
+                        .meter
+                        .set_settings(MeterSettings::default_of(kind));
+                }
+                self.menu = None;
+            }
+            Event::RemoveFromBar { meter } => {
+                if self.mode != LayoutMode::Bar || !self.layout.remove(meter) {
+                    return;
+                }
+                self.menu = None;
+            }
             Event::AssignMeter { meter, kind } => {
                 let Some(slot) = self.meters.get_mut(meter) else {
                     return;
@@ -1346,6 +1525,12 @@ impl AppCore {
                 if self.themes.duplicate(theme).is_none() {
                     return;
                 }
+            }
+            Event::RenameTheme { theme, name } => {
+                let Some((old, new)) = self.themes.rename(theme, name) else {
+                    return;
+                };
+                self.presets.rename_theme(&old, &new);
             }
             Event::SetThemeColour {
                 theme,
@@ -1504,7 +1689,7 @@ impl AppCore {
     /// pick found only by name (a new ID) takes the new ID.
     fn follow_renames(&mut self) {
         for slot in &mut self.meters {
-            if let Some(pick) = &mut slot.pick {
+            for pick in [&mut slot.pick, &mut slot.overlay].into_iter().flatten() {
                 if let Some(plugin) = sources::find(pick, &self.send_plugins) {
                     *pick = Pick::of(plugin);
                 }
@@ -1541,6 +1726,7 @@ impl AppCore {
                 if slot.showing.take().is_some() {
                     slot.meter.stop();
                 }
+                slot.overlay_showing = None;
                 continue;
             };
             match slot.showing {
@@ -1552,6 +1738,7 @@ impl AppCore {
                         self.note_until = Some(now + NOTE_DURATION);
                     }
                     slot.meter.start(sample_rate);
+                    slot.overlay_showing = None; // a fresh analyser
                     slot.showing = Some(Showing {
                         id,
                         sample_rate,
@@ -1573,6 +1760,50 @@ impl AppCore {
                     showing.fed_at = now;
                 }
             }
+        }
+        // Phase Scopes take their Overlay Source while it's there.
+        for meter in 0..self.meters.len() {
+            let target = self.overlay_plugin(meter).map(|p| p.id);
+            let slot = &mut self.meters[meter];
+            if slot.showing.is_none() || slot.overlay_showing == target {
+                continue;
+            }
+            slot.meter.set_overlay(target.is_some());
+            slot.overlay_showing = target;
+        }
+    }
+
+    /// The Send Plugins a Phase Scope may take as its Overlay Source: usable
+    /// ones from the same DAW as the one it shows, but not that one. None on
+    /// System Capture or for other Meters.
+    fn overlay_choices(&self, meter: usize) -> Vec<&SendPlugin> {
+        let Some(main) = self.overlay_main(meter) else {
+            return Vec::new();
+        };
+        self.send_plugins
+            .iter()
+            .filter(|p| p.usable() && p.host_pid == main.host_pid && p.id != main.id)
+            .collect()
+    }
+
+    /// The Overlay Source a Phase Scope takes now: its pick, if it's there
+    /// and still in the same DAW as the Send Plugin the Meter shows.
+    fn overlay_plugin(&self, meter: usize) -> Option<&SendPlugin> {
+        let pick = self.meters[meter].overlay.as_ref()?;
+        let main = self.overlay_main(meter)?;
+        sources::find(pick, &self.send_plugins)
+            .filter(|p| p.usable() && p.host_pid == main.host_pid && p.id != main.id)
+    }
+
+    /// The Send Plugin a Meter shows, if it's a Phase Scope on Send Plugins
+    /// and so can take an Overlay Source.
+    fn overlay_main(&self, meter: usize) -> Option<&SendPlugin> {
+        if self.listen_to != ListenTo::SendPlugins || !self.meters[meter].meter.is_phase_scope() {
+            return None;
+        }
+        match self.resolve(meter) {
+            Resolved::Plugin(main) => Some(main),
+            _ => None,
         }
     }
 
@@ -1652,6 +1883,9 @@ impl AppCore {
             show_source_label: self.meters[like].show_source_label,
             overrides: self.meters[like].overrides.clone(),
             showing: None,
+            overlay: self.meters[like].overlay.clone(),
+            overlay_showing: None,
+            activity: activity::Activity::default(),
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {
             Some(i) => {
@@ -1696,6 +1930,102 @@ impl AppCore {
     }
 
     /// The Meter at `point` (window fractions) in the last scene drawn.
+    /// Where `at` (window fractions) falls on a Meter's plot, as fractions
+    /// of the plot (outside it below 0 or above 1), and the plot's size in
+    /// logical px once the window's size is known.
+    fn plot_point(
+        &self,
+        window: WindowKey,
+        meter: usize,
+        at: [f32; 2],
+    ) -> Option<([f32; 2], Option<[f32; 2]>)> {
+        let scene = self.drawn_window(window)?;
+        let frame = scene.meters.iter().find(|m| m.meter == meter)?.frame;
+        let local = [
+            (at[0] - frame.x) / frame.width,
+            (at[1] - frame.y) / frame.height,
+        ];
+        let inset = meters::METER_INSET;
+        Some(
+            match scene
+                .frame
+                .map(|r| [r.width * frame.width, r.height * frame.height])
+            {
+                Some([w, h]) if w > 4.0 * inset && h > 4.0 * inset => {
+                    let (w, h) = (w - 2.0 * inset, h - 2.0 * inset);
+                    (
+                        [
+                            (local[0] * (w + 2.0 * inset) - inset) / w,
+                            (local[1] * (h + 2.0 * inset) - inset) / h,
+                        ],
+                        Some([w, h]),
+                    )
+                }
+                _ => (local, None),
+            },
+        )
+    }
+
+    /// The left button went down on a Spectrum: closes its zoom window on
+    /// the close button, does nothing elsewhere in it, and otherwise starts
+    /// a box to zoom into.
+    fn press_on_spectrum(&mut self, window: WindowKey, meter: usize, at: [f32; 2]) {
+        let Some((point, size)) = self.plot_point(window, meter, at) else {
+            return;
+        };
+        let slot = &mut self.meters[meter].meter;
+        if let Some([left, top, right, bottom]) = slot.zoom_panel() {
+            let inside = (left..=right).contains(&point[0]) && (top..=bottom).contains(&point[1]);
+            if inside {
+                // The close button: the title bar's square at the right.
+                let [button_w, button_h] = size.map_or([0.05, 0.08], |[w, h]| {
+                    [meters::ZOOM_TITLE_HEIGHT / w, meters::ZOOM_TITLE_HEIGHT / h]
+                });
+                if point[0] >= right - button_w && point[1] <= top + button_h {
+                    slot.close_zoom();
+                    self.changed = true;
+                }
+                return;
+            }
+        }
+        self.dragging = Some((window, meter, point));
+        slot.drag_box(point, point);
+        self.changed = true;
+    }
+
+    /// Where in `meter` its open menu was opened, as fractions of the Meter.
+    fn menu_point(&self, meter: usize) -> Option<[f32; 2]> {
+        let menu = self.menu.filter(|m| m.meter == meter)?;
+        self.drawn_window(menu.window)?
+            .meters
+            .iter()
+            .find(|m| m.meter == meter)?
+            .frame
+            .locate(menu.at)
+    }
+
+    /// The edge of `meter` nearest where its menu was opened.
+    fn menu_side(&self, meter: usize) -> Option<Side> {
+        let [u, v] = self.menu_point(meter)?;
+        let edges = [
+            (u, Side::Left),
+            (1.0 - u, Side::Right),
+            (v, Side::Above),
+            (1.0 - v, Side::Below),
+        ];
+        edges
+            .into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, side)| side)
+    }
+
+    /// Whether the menu was opened in the first half of `meter` along x
+    /// (`along_x`) or y.
+    fn menu_half(&self, meter: usize, along_x: bool) -> Option<bool> {
+        let [u, v] = self.menu_point(meter)?;
+        Some(if along_x { u < 0.5 } else { v < 0.5 })
+    }
+
     fn meter_at(&self, window: WindowKey, point: [f32; 2]) -> Option<usize> {
         self.drawn_window(window)?
             .meters
@@ -1737,7 +2067,7 @@ impl AppCore {
             self.note_until = None;
         }
         self.changed = false;
-        let scene = self.build_scene(note_until.is_some());
+        let scene = self.build_scene(note_until.is_some(), now);
         if self.drawn.as_ref() == Some(&scene) {
             // Nothing visible changes any more, and the silence has outlasted
             // every peak hold: the Meters have settled.
@@ -1791,7 +2121,8 @@ impl AppCore {
             title: "Das-Meter".to_owned(),
             frame: self.bar_display().map(|display| bar.frame_on(&display)),
             on_top: bar.screen != ScreenMode::NormalWindow,
-            reserve_space: bar.screen == ScreenMode::ReserveSpace,
+            // Moved off its edge, it no longer takes screen space.
+            reserve_space: bar.screen == ScreenMode::ReserveSpace && bar.moved.is_none(),
             over_fullscreen: bar.show_over_fullscreen,
             screen: Some(bar.screen),
             edge: Some(bar.edge),
@@ -1840,20 +2171,21 @@ impl AppCore {
         (placed, vec![window])
     }
 
-    fn build_scene(&mut self, note: bool) -> Scene {
+    fn build_scene(&mut self, note: bool, now: Duration) -> Scene {
         let (placed, mut windows) = match self.mode {
             LayoutMode::Bar => self.bar_windows(),
             LayoutMode::Window => self.pane_windows(),
         };
         for (key, i, frame) in placed {
             let pointer = self.pointer.filter(|(w, _)| *w == key).map(|(_, p)| p);
+            let hovered = pointer.and_then(|p| frame.locate(p)).is_some();
             let (state, source) = match self.listen_to {
                 ListenTo::SystemCapture => {
                     let state = match &self.capture {
                         Capture::Starting if !self.may_capture() => MeterState::NotListening,
                         Capture::Starting => MeterState::Starting,
                         Capture::Failed(reason) => MeterState::Unavailable(reason.clone()),
-                        Capture::Live => self.live_state(i, frame, pointer),
+                        Capture::Live => self.live_state(i, frame, pointer, now),
                     };
                     let source = SourceLabel {
                         name: "System Capture".to_owned(),
@@ -1863,11 +2195,56 @@ impl AppCore {
                 }
                 ListenTo::SendPlugins => match self.resolve(i) {
                     Resolved::Plugin(plugin) => {
+                        let (name, rgb) = (plugin.name.clone(), plugin.colour);
+                        let overlay = self.meters[i].overlay.as_ref().map(|pick| {
+                            match self.overlay_plugin(i) {
+                                Some(p) => (Some(colour(p.colour)), None),
+                                None => (None, Some(pick.name.clone())),
+                            }
+                        });
+                        let mut state = self.live_state(i, frame, pointer, now);
+                        if let MeterState::Live(MeterView::PhaseScope { scope, .. }) = &mut state {
+                            scope.colour = Some(colour(rgb));
+                            let suggestions = matches!(
+                                self.meters[i].meter.settings(),
+                                MeterSettings::PhaseScope(s) if s.suggestions
+                            );
+                            match overlay {
+                                Some((colour, None)) => {
+                                    if let Some(shown) = &mut scope.overlay {
+                                        shown.colour = colour;
+                                        if suggestions {
+                                            let other = self
+                                                .overlay_plugin(i)
+                                                .map_or_else(String::new, |p| p.name.clone());
+                                            shown.advice = shown
+                                                .fits
+                                                .iter()
+                                                .map(|fit| phase_scope::advice(fit, &name, &other))
+                                                .collect();
+                                        }
+                                    }
+                                }
+                                Some((_, waiting)) => {
+                                    scope.overlay = Some(ScopeOverlay {
+                                        waiting,
+                                        ..ScopeOverlay::default()
+                                    });
+                                }
+                                None => {}
+                            }
+                            if !scope.said_tempo && scope.note.is_none() {
+                                scope.note = Some(format!(
+                                    "No tempo from {name}: {:.1} BPM typed in",
+                                    scope.tempo
+                                ));
+                            }
+                        }
                         let source = SourceLabel {
-                            name: plugin.name.clone(),
-                            colour: Some(colour(plugin.colour)),
+                            name,
+                            colour: Some(colour(rgb)),
                         };
-                        (self.live_state(i, frame, pointer), Some(source))
+                        (state, Some(source))
                     }
                     Resolved::Waiting(name) => {
                         let source = SourceLabel {
@@ -1880,6 +2257,12 @@ impl AppCore {
                     Resolved::Nothing => (MeterState::NoSendPlugins, None),
                 },
             };
+            let styling = self.themes.current().styling;
+            let activity = if styling.look == Look::Smooth && styling.dim_when_silent {
+                self.meters[i].activity.level(now)
+            } else {
+                1.0
+            };
             let slot = &self.meters[i];
             let source = source.filter(|_| slot.show_source_label);
             let picked = match self.listen_to {
@@ -1890,8 +2273,28 @@ impl AppCore {
                 .iter_mut()
                 .find(|w| w.key == key)
                 .expect("placed in a window");
+            let overlay = slot.meter.is_phase_scope().then(|| OverlayScene {
+                picked: match self.listen_to {
+                    ListenTo::SendPlugins => slot
+                        .overlay
+                        .as_ref()
+                        .map(|pick| self.overlay_plugin(i).map_or(pick.id, |p| p.id)),
+                    ListenTo::SystemCapture => slot.overlay.as_ref().map(|pick| pick.id),
+                },
+                choices: self
+                    .overlay_choices(i)
+                    .into_iter()
+                    .map(|p| SendPluginItem {
+                        id: p.id,
+                        label: p.label(),
+                        colour: colour(p.colour),
+                        pickable: true,
+                    })
+                    .collect(),
+            });
             window.meters.push(MeterScene {
                 meter: i,
+                overlay,
                 frame,
                 state,
                 source,
@@ -1899,6 +2302,8 @@ impl AppCore {
                 picked,
                 show_source_label: slot.show_source_label,
                 overrides: slot.overrides.clone(),
+                activity,
+                hovered,
             });
         }
         let send_plugins = self
@@ -1929,12 +2334,24 @@ impl AppCore {
             launch_at_login: self.presets.settings.launch_at_login,
             app: self.app,
             max_frame_rate_cap: self.max_frame_rate_cap(),
+            bar: scene::BarSettingsScene {
+                edge: self.layout.edge,
+                thickness: self.layout.thickness,
+                screen: self.layout.screen,
+                over_fullscreen: self.layout.show_over_fullscreen,
+            },
         }
     }
 
-    fn live_state(&mut self, meter: usize, frame: Frame, pointer: Option<[f32; 2]>) -> MeterState {
+    fn live_state(
+        &mut self,
+        meter: usize,
+        frame: Frame,
+        pointer: Option<[f32; 2]>,
+        now: Duration,
+    ) -> MeterState {
         let pointer = pointer.and_then(|p| frame.locate(p));
-        match self.meters[meter].meter.view(pointer) {
+        match self.meters[meter].meter.view(pointer, now) {
             Some(view) => MeterState::Live(view.clone()),
             None => MeterState::Starting,
         }
@@ -2006,4 +2423,13 @@ fn feed_silence(meter: &mut Meter, frames: usize) {
         meter.process(&silence[..2 * n]);
         left -= n;
     }
+}
+
+/// A side of a Meter, where Add Meter puts the new one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+    Above,
+    Below,
 }

@@ -1,5 +1,7 @@
 //! The Waveform: columns scrolling right to left, newest at the right edge,
 //! one lane per trace (L or M above, R or S below), coloured by band energy.
+//! It scrolls smoothly: the core says how many columns are still to come in
+//! (`lag`), and everything is drawn that far right of its place.
 
 use dasmeter_analysis::{ChannelView, WaveformColumn};
 use dasmeter_core::{Colour, Role, WaveformColouring, WaveformMeterSettings};
@@ -14,6 +16,7 @@ pub fn draw(
     settings: &WaveformMeterSettings,
     traces: &[Vec<WaveformColumn>],
     completed: u64,
+    lag: f32,
 ) {
     let names: &[&str] = match settings.analysis.channel_view {
         ChannelView::Mono => &[""],
@@ -30,18 +33,12 @@ pub fn draw(
         c.colour(Role::WaveformHigh),
     ];
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
-    let thin = c.px(1.0).max(1.0);
 
     for (lane, columns) in traces.iter().enumerate() {
         let top = area.y + lane_height * lane as f32;
         let centre = top + lane_height / 2.0;
         let half = lane_height / 2.0 - c.px(2.0);
-        let axis = Area {
-            y: centre - thin / 2.0,
-            height: thin,
-            ..area
-        };
-        c.shapes.rect(axis, grid);
+        c.grid_h(area, centre, grid, true);
         if let Some(name) = names.get(lane).filter(|n| !n.is_empty()) {
             c.text(name, area.x, top, 10.0, dim, Align::Left);
         }
@@ -52,8 +49,18 @@ pub fn draw(
         let per_pixel = (1.0 / column_width).max(1.0);
         let merged = merge(columns, completed, capacity, per_pixel, pixels);
         let width = column_width.max(1.0);
+        // How far the playhead (the newest column less the lag) sits from
+        // the right edge of the newest group, in columns.
+        let numbered = completed.max(columns.len() as u64);
+        let groups = f64::from(per_pixel.max(1.0));
+        let newest_group = ((numbered.max(1) - 1) as f64 / groups).floor();
+        let behind = (numbered as f64 - f64::from(lag) - (newest_group + 1.0) * groups) as f32;
         for (right_edge, column) in merged {
-            let x = area.right() - right_edge * column_width;
+            let x = area.right() - (right_edge + behind) * column_width;
+            if x >= area.right() {
+                continue;
+            }
+            let width = width.min(area.right() - x);
             let y = |sample: f32| centre - settings.analysis.height(sample) * half;
             match settings.colouring {
                 WaveformColouring::Solid => {
@@ -100,9 +107,8 @@ fn envelope(x: f32, width: f32, top: f32, bottom: f32) -> Area {
 /// Merges columns into groups of `per_pixel` by their number in time (not by
 /// age), so a group keeps the same columns, and so the same height, while it
 /// scrolls; grouping by age moved every boundary with each new column and made
-/// the whole Waveform shimmer. Groups move a whole group (a pixel) at a time.
-/// Returns each group's distance from the right edge (in columns) and its
-/// merged column. `completed` is the newest column's number plus one.
+/// the whole Waveform shimmer. Returns how far each group's left edge is
+/// from the right edge of the newest group (in columns), and its merged column. `completed` is the newest column's number plus one.
 fn merge(
     columns: &[WaveformColumn],
     completed: u64,

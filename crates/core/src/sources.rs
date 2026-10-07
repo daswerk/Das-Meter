@@ -27,6 +27,8 @@ pub struct SendPlugin {
     pub state: SendPluginState,
     /// It writes an older layout than the app reads: listed, but it can't be listened to.
     pub outdated: bool,
+    /// The DAW it runs in: Send Plugins with the same one share a clock.
+    pub host_pid: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,10 +57,28 @@ impl SendPlugin {
     }
 }
 
+/// Where a Send Plugin's DAW is, at the first frame of a block of its audio.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
+    /// Quarter notes per minute.
+    pub tempo: f64,
+    /// The song position, in quarter notes.
+    pub beats: f64,
+    /// The song position where the current bar began, in quarter notes.
+    pub bar_start: f64,
+    /// Beats per bar, and the note value of a beat.
+    pub signature: (u16, u16),
+    /// Whether the DAW is playing. A stopped DAW still says its tempo.
+    pub playing: bool,
+}
+
 /// A Meter's pick: the Send Plugin's ID, and its name for finding it again
 /// (a Preset loaded later) and for "Waiting for <name>".
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Pick {
+    /// Written in TOML's integer range (a signed 64-bit number), which a
+    /// Send Plugin ID can be past; read back either way.
+    #[serde(with = "id_in_toml_range")]
     pub id: u64,
     pub name: String,
 }
@@ -117,5 +137,20 @@ pub(crate) fn resolve<'a>(
         (Some(_), Some(_)) => Resolved::Choose,
         (None, _) if listed.iter().any(|p| p.state != SendPluginState::Gone) => Resolved::Choose,
         (None, _) => Resolved::Nothing,
+    }
+}
+
+/// A Send Plugin ID as a signed 64-bit number with the same bits, the
+/// largest integer TOML can hold.
+mod id_in_toml_range {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(id: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_i64(i64::from_ne_bytes(id.to_ne_bytes()))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+        let id = i64::deserialize(deserializer)?;
+        Ok(u64::from_ne_bytes(id.to_ne_bytes()))
     }
 }

@@ -133,15 +133,15 @@ impl Biquad {
 
 /// A Linkwitz-Riley 4th-order filter: two identical Butterworth biquads in series.
 #[derive(Clone, Copy, Default)]
-struct Lr4([Biquad; 2]);
+pub struct Lr4([Biquad; 2]);
 
 impl Lr4 {
-    fn new(sample_rate: u32, frequency: f32, high_pass: bool) -> Lr4 {
+    pub fn new(sample_rate: u32, frequency: f32, high_pass: bool) -> Lr4 {
         let stage = Biquad::butterworth(sample_rate, frequency, high_pass);
         Lr4([stage, stage])
     }
 
-    fn run(&mut self, x: f32) -> f32 {
+    pub fn run(&mut self, x: f32) -> f32 {
         let y = self.0[0].run(x);
         self.0[1].run(y)
     }

@@ -2,9 +2,13 @@
 //! drawing that Meter's part of the scene with the palette's colour roles.
 
 mod cepstrum;
+mod heatmap;
 mod labels;
 mod loudness;
+mod phase_scope;
 mod shapes;
+mod smooth;
+mod spectrogram;
 mod spectrum;
 mod stereometer;
 mod waveform;
@@ -14,6 +18,7 @@ use dasmeter_core::{
 };
 
 use crate::gpu::{Gpu, Text};
+use heatmap::Heatmap;
 use labels::{Align, Labels, Style};
 pub use shapes::Area;
 use shapes::Shapes;
@@ -21,12 +26,20 @@ use shapes::Shapes;
 /// What a Meter's drawing code draws with: shapes, labels, colours and the scale factor.
 pub struct Canvas<'a> {
     pub shapes: &'a mut Shapes,
+    /// Shapes drawn over the heat map (and under the labels).
+    pub overlay: &'a mut Shapes,
+    pub heatmap: &'a mut Heatmap,
     labels: &'a mut Labels,
     palette: &'a Palette,
     /// Physical pixels per logical pixel.
     pub scale: f32,
     /// The Theme's styling: line weight, text size, shape cues.
     pub styling: Styling,
+    /// Text that would fall in this area is left out: something drawn over
+    /// it (labels are drawn after all shapes) covers it.
+    pub covered: Option<Area>,
+    /// Whether the pointer is over the Meter: Smooth brightens its grid.
+    pub hovered: bool,
 }
 
 impl Canvas<'_> {
@@ -46,11 +59,34 @@ impl Canvas<'_> {
 
     /// Secondary text: labels, units, scales.
     pub fn dim(&self) -> Colour {
-        self.palette[Role::Text].faded(0.55)
+        // Smooth labels sit quieter so the traces lead.
+        let dim = if self.smooth() { 0.45 } else { 0.55 };
+        self.palette[Role::Text].faded(dim)
+    }
+
+    /// Whether text at `x`, `y` would run into the covered area.
+    fn hidden(&self, text: &str, x: f32, y: f32, size: f32, align: Align) -> bool {
+        let Some(covered) = self.covered else {
+            return false;
+        };
+        let height = self.px(size) * self.styling.text_scale;
+        let width = 0.6 * height * text.chars().count() as f32;
+        let left = match align {
+            Align::Left => x,
+            Align::Centre => x - width / 2.0,
+            Align::Right => x - width,
+        };
+        left < covered.right()
+            && left + width > covered.x
+            && y < covered.bottom()
+            && y + height > covered.y
     }
 
     /// Text whose top edge is at `y`, `size` logical pixels high.
     pub fn text(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
+        if self.hidden(text, x, y, size, align) {
+            return;
+        }
         let style = Style {
             size: self.px(size) * self.styling.text_scale,
             colour,
@@ -61,6 +97,9 @@ impl Canvas<'_> {
     }
 
     pub fn bold(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
+        if self.hidden(text, x, y, size, align) {
+            return;
+        }
         let style = Style {
             size: self.px(size) * self.styling.text_scale,
             colour,
@@ -78,11 +117,15 @@ pub struct Look<'a> {
     pub styling: Styling,
     /// Physical pixels per logical pixel.
     pub scale: f32,
+    /// Whether it's the Bar (thin Meters, smaller corners).
+    pub bar: bool,
 }
 
 /// Draws one Meter (or the notes over a window) into its area.
 pub struct MeterRenderer {
     shapes: Shapes,
+    heatmap: Heatmap,
+    overlay: Shapes,
     labels: Labels,
 }
 
@@ -90,6 +133,8 @@ impl MeterRenderer {
     pub fn new(gpu: &Gpu, text: &mut Text) -> MeterRenderer {
         MeterRenderer {
             shapes: Shapes::new(gpu),
+            heatmap: Heatmap::new(gpu),
+            overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
         }
     }
@@ -97,20 +142,28 @@ impl MeterRenderer {
     fn canvas<'a>(&'a mut self, palette: &'a Palette, scale: f32, styling: Styling) -> Canvas<'a> {
         Canvas {
             shapes: &mut self.shapes,
+            overlay: &mut self.overlay,
+            heatmap: &mut self.heatmap,
             labels: &mut self.labels,
             palette,
             scale,
             styling,
+            covered: None,
+            hovered: false,
         }
     }
 
     fn begin(&mut self, gpu: &Gpu, area: Area) {
         self.shapes.begin(gpu, area);
+        self.heatmap.begin();
+        self.overlay.begin(gpu, area);
         self.labels.clear();
     }
 
     fn finish(&mut self, gpu: &Gpu, text: &mut Text, area: Area) {
         self.shapes.prepare(gpu);
+        self.heatmap.prepare(gpu);
+        self.overlay.prepare(gpu);
         self.labels.prepare(gpu, text, area);
     }
 
@@ -128,9 +181,20 @@ impl MeterRenderer {
         // The Meter's own colour overrides go over the Theme's.
         let palette = look.palette.with(&meter.overrides);
         let mut c = self.canvas(&palette, scale, styling);
-        let panel = c.colour(Role::Panel).faded(styling.background_opacity);
-        c.shapes
-            .rounded_rect(area, c.px(styling.corner_radius), panel);
+        c.hovered = meter.hovered;
+        let radius = c.px(styling.corner_radius);
+        if c.smooth() {
+            // Thin Bar Meters get smaller corners.
+            let radius = if look.bar {
+                radius.min(c.px(6.0))
+            } else {
+                radius
+            };
+            smooth::panel(&mut c, area, radius, styling.background_opacity);
+        } else {
+            let panel = c.colour(Role::Panel).faded(styling.background_opacity);
+            c.shapes.rounded_rect(area, radius, panel);
+        }
         let inner = area.inset(c.px(10.0));
         match &meter.state {
             MeterState::Starting => {
@@ -223,21 +287,33 @@ impl MeterRenderer {
                     settings,
                     traces,
                     completed,
-                } => waveform::draw(&mut c, inner, settings, traces, *completed),
+                    lag,
+                } => waveform::draw(&mut c, inner, settings, traces, *completed, *lag),
                 MeterView::Spectrum {
                     settings,
                     spectrum,
                     range,
                     cursor,
                     peak,
+                    selecting,
+                    zoom,
+                    pointer,
+                    held_peaks,
                 } => spectrum::draw(
                     &mut c,
+                    area,
                     inner,
                     settings,
                     spectrum,
                     *range,
-                    cursor.as_ref(),
-                    peak.as_ref(),
+                    spectrum::Marks {
+                        cursor: cursor.as_ref(),
+                        peak: peak.as_ref(),
+                        held_peaks,
+                        pointer: *pointer,
+                    },
+                    *selecting,
+                    zoom.as_deref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)
@@ -252,6 +328,7 @@ impl MeterRenderer {
                     values,
                     quefrency_range,
                     pitch,
+                    hover,
                 } => cepstrum::draw(
                     &mut c,
                     inner,
@@ -259,7 +336,29 @@ impl MeterRenderer {
                     values,
                     *quefrency_range,
                     pitch.as_ref(),
+                    hover.as_ref(),
                 ),
+                MeterView::Spectrogram {
+                    settings,
+                    columns,
+                    range,
+                    lag,
+                    selecting,
+                    zoom,
+                    ..
+                } => spectrogram::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    columns,
+                    *range,
+                    *lag,
+                    *selecting,
+                    zoom.as_ref(),
+                ),
+                MeterView::PhaseScope { settings, scope } => {
+                    phase_scope::draw(&mut c, inner, settings, scope)
+                }
             },
         }
         if let Some(source) = &meter.source {
@@ -282,7 +381,37 @@ impl MeterRenderer {
             };
             c.text(&source.name, x - width, y, 10.0, dim, Align::Right);
         }
+        // In silence the Smooth Look dims the Meter under a veil of its panel.
+        if c.smooth() && meter.activity < 1.0 {
+            let veil = c
+                .colour(Role::Panel)
+                .faded(smooth::SILENT_DIM * (1.0 - meter.activity));
+            let radius = if look.bar {
+                radius.min(c.px(6.0))
+            } else {
+                radius
+            };
+            c.overlay.rounded_rect(area, radius, veil);
+        }
         self.finish(gpu, text, area);
+    }
+
+    /// Lays out what's under the Meters: in the Smooth Look, the window's
+    /// gradient and a soft shadow under each Meter's panel (`areas`).
+    pub fn prepare_backdrop(
+        &mut self,
+        gpu: &Gpu,
+        text: &mut Text,
+        window: Area,
+        look: Look,
+        areas: &[Area],
+    ) {
+        self.begin(gpu, window);
+        let mut c = self.canvas(look.palette, look.scale, look.styling);
+        if c.smooth() {
+            smooth::backdrop(&mut c, window, areas, look.styling.background_opacity);
+        }
+        self.finish(gpu, text, window);
     }
 
     /// Lays out the notes along the bottom of a window.
@@ -314,8 +443,22 @@ impl MeterRenderer {
     }
 
     pub fn render(&self, text: &Text, pass: &mut wgpu::RenderPass) {
+        // The shapes set the Meter's scissor, which clips the rest too.
         self.shapes.render(pass);
+        self.heatmap.render(pass);
+        self.overlay.render(pass);
         self.labels.render(text, pass);
+    }
+}
+
+/// `a` blended toward `b` by `t` (0 to 1), alpha too.
+pub fn mix(a: Colour, b: Colour, t: f32) -> Colour {
+    let channel = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Colour {
+        r: channel(a.r, b.r),
+        g: channel(a.g, b.g),
+        b: channel(a.b, b.b),
+        a: channel(a.a, b.a),
     }
 }
 

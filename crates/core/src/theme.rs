@@ -99,6 +99,10 @@ pub enum Role {
     SpectrumLine,
     SpectrumFill,
     SpectrumPeakHold,
+    SpectrumPeakDots,
+    SpectrumHarmonics,
+    /// The second trace, R or Side, when the Spectrum shows two.
+    SpectrumSecond,
     // Loudness Meter.
     LoudnessBar,
     LoudnessPeak,
@@ -110,6 +114,11 @@ pub enum Role {
     StereometerTrace,
     // Cepstrum.
     CepstrumTrace,
+    // Phase Scope.
+    PhaseScopeTrace,
+    PhaseScopeCancel,
+    PhaseScopeSum,
+    PhaseScopeGrid,
 }
 
 impl Role {
@@ -127,6 +136,9 @@ impl Role {
             Role::SpectrumLine => "spectrum_line",
             Role::SpectrumFill => "spectrum_fill",
             Role::SpectrumPeakHold => "spectrum_peak_hold",
+            Role::SpectrumPeakDots => "spectrum_peak_dots",
+            Role::SpectrumHarmonics => "spectrum_harmonics",
+            Role::SpectrumSecond => "spectrum_second",
             Role::LoudnessBar => "loudness_bar",
             Role::LoudnessPeak => "loudness_peak",
             Role::LoudnessOverTarget => "loudness_over_target",
@@ -134,6 +146,10 @@ impl Role {
             Role::CorrelationNegative => "correlation_negative",
             Role::StereometerTrace => "stereometer_trace",
             Role::CepstrumTrace => "cepstrum_trace",
+            Role::PhaseScopeTrace => "phase_scope_trace",
+            Role::PhaseScopeCancel => "phase_scope_cancel",
+            Role::PhaseScopeSum => "phase_scope_sum",
+            Role::PhaseScopeGrid => "phase_scope_grid",
         }
     }
 
@@ -151,6 +167,9 @@ impl Role {
             Role::SpectrumLine => "Spectrum line",
             Role::SpectrumFill => "Spectrum fill",
             Role::SpectrumPeakHold => "Spectrum peak hold",
+            Role::SpectrumPeakDots => "Spectrum peak dots",
+            Role::SpectrumHarmonics => "Spectrum harmonics",
+            Role::SpectrumSecond => "Spectrum R / Side",
             Role::LoudnessBar => "Loudness bar",
             Role::LoudnessPeak => "Loudness peak",
             Role::LoudnessOverTarget => "Loudness over target",
@@ -158,10 +177,14 @@ impl Role {
             Role::CorrelationNegative => "Correlation negative",
             Role::StereometerTrace => "Stereometer trace",
             Role::CepstrumTrace => "Cepstrum trace",
+            Role::PhaseScopeTrace => "Phase Scope trace",
+            Role::PhaseScopeCancel => "Phase Scope cancelling",
+            Role::PhaseScopeSum => "Phase Scope sum",
+            Role::PhaseScopeGrid => "Phase Scope Cycle grid",
         }
     }
 
-    pub const ALL: [Role; 18] = [
+    pub const ALL: [Role; 25] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -173,6 +196,9 @@ impl Role {
         Role::SpectrumLine,
         Role::SpectrumFill,
         Role::SpectrumPeakHold,
+        Role::SpectrumPeakDots,
+        Role::SpectrumHarmonics,
+        Role::SpectrumSecond,
         Role::LoudnessBar,
         Role::LoudnessPeak,
         Role::LoudnessOverTarget,
@@ -180,6 +206,10 @@ impl Role {
         Role::CorrelationNegative,
         Role::StereometerTrace,
         Role::CepstrumTrace,
+        Role::PhaseScopeTrace,
+        Role::PhaseScopeCancel,
+        Role::PhaseScopeSum,
+        Role::PhaseScopeGrid,
     ];
 }
 
@@ -204,6 +234,9 @@ impl Palette {
             Role::SpectrumLine => Colour::rgb(0xc3, 0x9b, 0xff),
             Role::SpectrumFill => Colour::rgb(0x7a, 0x3f, 0xd6),
             Role::SpectrumPeakHold => Colour::rgb(0xe8, 0xe8, 0xe8),
+            Role::SpectrumPeakDots => Colour::rgb(0xc3, 0x9b, 0xff),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd2, 0x6e),
+            Role::SpectrumSecond => Colour::rgb(0x5e, 0xc8, 0xff),
             Role::LoudnessBar => Colour::rgb(0x2f, 0xbf, 0x71),
             Role::LoudnessPeak => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::LoudnessOverTarget => Colour::rgb(0xff, 0x8a, 0x3d),
@@ -211,6 +244,10 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::StereometerTrace => Colour::rgb(0x7f, 0xe0, 0xc8),
             Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xb6),
+            Role::PhaseScopeTrace => Colour::rgb(0x8c, 0xc8, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xf0, 0x3e, 0x3e),
+            Role::PhaseScopeSum => Colour::rgb(0xe8, 0xe8, 0xe8),
+            Role::PhaseScopeGrid => Colour::rgb(0x40, 0x47, 0x50),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -233,6 +270,9 @@ impl Palette {
             Role::SpectrumLine => Colour::rgb(0x6b, 0x2f, 0xc7),
             Role::SpectrumFill => Colour::rgb(0xc5, 0xa6, 0xf2),
             Role::SpectrumPeakHold => Colour::rgb(0x4a, 0x50, 0x58),
+            Role::SpectrumPeakDots => Colour::rgb(0x6b, 0x2f, 0xc7),
+            Role::SpectrumHarmonics => Colour::rgb(0xd9, 0x7a, 0x00),
+            Role::SpectrumSecond => Colour::rgb(0x0a, 0x7c, 0xc2),
             Role::LoudnessBar => Colour::rgb(0x1f, 0x9d, 0x5a),
             Role::LoudnessPeak => Colour::rgb(0x2a, 0x2e, 0x33),
             Role::LoudnessOverTarget => Colour::rgb(0xe0, 0x6a, 0x10),
@@ -240,6 +280,10 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xd6, 0x28, 0x28),
             Role::StereometerTrace => Colour::rgb(0x0f, 0x8f, 0x7a),
             Role::CepstrumTrace => Colour::rgb(0xc2, 0x2f, 0x7a),
+            Role::PhaseScopeTrace => Colour::rgb(0x1f, 0x6f, 0xc2),
+            Role::PhaseScopeCancel => Colour::rgb(0xd6, 0x28, 0x28),
+            Role::PhaseScopeSum => Colour::rgb(0x2a, 0x2e, 0x33),
+            Role::PhaseScopeGrid => Colour::rgb(0xc4, 0xc9, 0xcf),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -261,6 +305,9 @@ impl Palette {
             Role::SpectrumLine => Colour::rgb(0xff, 0xff, 0xff),
             Role::SpectrumFill => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::SpectrumPeakHold => Colour::rgb(0xff, 0xd6, 0x00),
+            Role::SpectrumPeakDots => Colour::rgb(0xff, 0xff, 0xff),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd6, 0x00),
+            Role::SpectrumSecond => Colour::rgb(0x00, 0xe5, 0xff),
             Role::LoudnessBar => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::LoudnessPeak => Colour::rgb(0xff, 0xff, 0xff),
             Role::LoudnessOverTarget => Colour::rgb(0xff, 0x9f, 0x1c),
@@ -268,6 +315,147 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::StereometerTrace => Colour::rgb(0xff, 0xff, 0xff),
             Role::CepstrumTrace => Colour::rgb(0x3d, 0xa5, 0xff),
+            Role::PhaseScopeTrace => Colour::rgb(0xff, 0xff, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x9f, 0x1c),
+            Role::PhaseScopeSum => Colour::rgb(0xff, 0xd6, 0x00),
+            Role::PhaseScopeGrid => Colour::rgb(0x90, 0x90, 0x90),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
+    /// The built-in Midnight Purple palette: a black body, dark grey panels and purple.
+    pub fn midnight_purple() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x0a, 0x0a, 0x0d),
+            Role::Panel => Colour::rgb(0x17, 0x15, 0x1c),
+            Role::Grid => Colour::rgb(0x2e, 0x2a, 0x38),
+            Role::Text => Colour::rgb(0xe6, 0xe1, 0xf0),
+            Role::Accent => Colour::rgb(0xb4, 0x7c, 0xff),
+            Role::WaveformLow => Colour::rgb(0xff, 0x5c, 0x8a),
+            Role::WaveformMid => Colour::rgb(0xb4, 0x7c, 0xff),
+            Role::WaveformHigh => Colour::rgb(0x6e, 0x8b, 0xff),
+            Role::SpectrumLine => Colour::rgb(0xc9, 0xa2, 0xff),
+            Role::SpectrumFill => Colour::rgb(0x5b, 0x2a, 0xa8),
+            Role::SpectrumPeakHold => Colour::rgb(0xec, 0xe6, 0xf5),
+            Role::SpectrumPeakDots => Colour::rgb(0xc9, 0xa2, 0xff),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xcf, 0x6e),
+            Role::SpectrumSecond => Colour::rgb(0xff, 0x7a, 0xd9),
+            Role::LoudnessBar => Colour::rgb(0xa0, 0x70, 0xff),
+            Role::LoudnessPeak => Colour::rgb(0xec, 0xe6, 0xf5),
+            Role::LoudnessOverTarget => Colour::rgb(0xff, 0x7a, 0x59),
+            Role::CorrelationPositive => Colour::rgb(0x57, 0xd6, 0x8d),
+            Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::StereometerTrace => Colour::rgb(0xd4, 0xa8, 0xff),
+            Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xd9),
+            Role::PhaseScopeTrace => Colour::rgb(0xb4, 0x8c, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::PhaseScopeSum => Colour::rgb(0xf0, 0xe8, 0xff),
+            Role::PhaseScopeGrid => Colour::rgb(0x35, 0x2f, 0x42),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
+    /// The built-in Deep Turquoise palette: black and dark teal with turquoise.
+    pub fn deep_turquoise() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x05, 0x0a, 0x0b),
+            Role::Panel => Colour::rgb(0x0b, 0x17, 0x18),
+            Role::Grid => Colour::rgb(0x1d, 0x33, 0x35),
+            Role::Text => Colour::rgb(0xd6, 0xee, 0xee),
+            Role::Accent => Colour::rgb(0x2e, 0xe6, 0xd6),
+            Role::WaveformLow => Colour::rgb(0xff, 0x6b, 0x5c),
+            Role::WaveformMid => Colour::rgb(0x2e, 0xe6, 0xd6),
+            Role::WaveformHigh => Colour::rgb(0x3d, 0x9b, 0xff),
+            Role::SpectrumLine => Colour::rgb(0x4f, 0xf0, 0xe0),
+            Role::SpectrumFill => Colour::rgb(0x0d, 0x6f, 0x6a),
+            Role::SpectrumPeakHold => Colour::rgb(0xe0, 0xf5, 0xf5),
+            Role::SpectrumPeakDots => Colour::rgb(0x4f, 0xf0, 0xe0),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd1, 0x66),
+            Role::SpectrumSecond => Colour::rgb(0x7a, 0xa8, 0xff),
+            Role::LoudnessBar => Colour::rgb(0x22, 0xc7, 0xb8),
+            Role::LoudnessPeak => Colour::rgb(0xe0, 0xf5, 0xf5),
+            Role::LoudnessOverTarget => Colour::rgb(0xff, 0x8a, 0x3d),
+            Role::CorrelationPositive => Colour::rgb(0x3d, 0xdc, 0x97),
+            Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x5e),
+            Role::StereometerTrace => Colour::rgb(0x6f, 0xf5, 0xe6),
+            Role::CepstrumTrace => Colour::rgb(0xff, 0x8f, 0xb3),
+            Role::PhaseScopeTrace => Colour::rgb(0x5f, 0xe8, 0xff),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x5e),
+            Role::PhaseScopeSum => Colour::rgb(0xea, 0xfc, 0xfc),
+            Role::PhaseScopeGrid => Colour::rgb(0x23, 0x40, 0x44),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
+    /// The built-in Graphite palette: neutral greys with light grey and white, colour kept for warnings.
+    pub fn graphite() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x0e, 0x0e, 0x0f),
+            Role::Panel => Colour::rgb(0x1a, 0x1a, 0x1c),
+            Role::Grid => Colour::rgb(0x33, 0x33, 0x36),
+            Role::Text => Colour::rgb(0xe6, 0xe6, 0xe6),
+            Role::Accent => Colour::rgb(0xd0, 0xd0, 0xd0),
+            Role::WaveformLow => Colour::rgb(0x8e, 0x8e, 0x93),
+            Role::WaveformMid => Colour::rgb(0xc8, 0xc8, 0xcc),
+            Role::WaveformHigh => Colour::rgb(0xff, 0xff, 0xff),
+            Role::SpectrumLine => Colour::rgb(0xf0, 0xf0, 0xf0),
+            Role::SpectrumFill => Colour::rgb(0x50, 0x50, 0x55),
+            Role::SpectrumPeakHold => Colour::rgb(0xff, 0xff, 0xff),
+            Role::SpectrumPeakDots => Colour::rgb(0xf0, 0xf0, 0xf0),
+            Role::SpectrumHarmonics => Colour::rgb(0xbd, 0xbd, 0xbd),
+            Role::SpectrumSecond => Colour::rgb(0x8f, 0xa3, 0xb8),
+            Role::LoudnessBar => Colour::rgb(0xbf, 0xbf, 0xc4),
+            Role::LoudnessPeak => Colour::rgb(0xff, 0xff, 0xff),
+            Role::LoudnessOverTarget => Colour::rgb(0xe0, 0x7a, 0x5a),
+            Role::CorrelationPositive => Colour::rgb(0x7f, 0xc9, 0x9a),
+            Role::CorrelationNegative => Colour::rgb(0xe0, 0x5a, 0x5a),
+            Role::StereometerTrace => Colour::rgb(0xe0, 0xe0, 0xe0),
+            Role::CepstrumTrace => Colour::rgb(0xcf, 0xcf, 0xd4),
+            Role::PhaseScopeTrace => Colour::rgb(0xe8, 0xe8, 0xe8),
+            Role::PhaseScopeCancel => Colour::rgb(0xe0, 0x5a, 0x5a),
+            Role::PhaseScopeSum => Colour::rgb(0xff, 0xff, 0xff),
+            Role::PhaseScopeGrid => Colour::rgb(0x3c, 0x3c, 0x40),
+        };
+        Palette {
+            colours: Role::ALL.map(colour),
+        }
+    }
+
+    /// The built-in Nocturne palette, made for the Smooth Look: a deep
+    /// blue-violet black with gold, cyan, green and pink-purple.
+    pub fn nocturne() -> Palette {
+        let colour = |role| match role {
+            Role::Background => Colour::rgb(0x0d, 0x0c, 0x14),
+            Role::Panel => Colour::rgb(0x17, 0x16, 0x1f),
+            Role::Grid => Colour::rgb(0x2b, 0x2a, 0x3a),
+            Role::Text => Colour::rgb(0xe4, 0xe2, 0xee),
+            Role::Accent => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::WaveformLow => Colour::rgb(0xff, 0x6b, 0x81),
+            Role::WaveformMid => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::WaveformHigh => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::SpectrumLine => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::SpectrumFill => Colour::rgb(0x8a, 0x6a, 0x1c),
+            Role::SpectrumPeakHold => Colour::rgb(0xec, 0xe9, 0xf5),
+            Role::SpectrumPeakDots => Colour::rgb(0xff, 0xe0, 0x8a),
+            Role::SpectrumHarmonics => Colour::rgb(0xc7, 0x92, 0xff),
+            Role::SpectrumSecond => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::LoudnessBar => Colour::rgb(0x3d, 0xdc, 0x84),
+            Role::LoudnessPeak => Colour::rgb(0xec, 0xe9, 0xf5),
+            Role::LoudnessOverTarget => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::CorrelationPositive => Colour::rgb(0x3d, 0xdc, 0x84),
+            Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::StereometerTrace => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::CepstrumTrace => Colour::rgb(0xd2, 0x7b, 0xff),
+            Role::PhaseScopeTrace => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::PhaseScopeSum => Colour::rgb(0xf2, 0xf0, 0xfa),
+            Role::PhaseScopeGrid => Colour::rgb(0x34, 0x32, 0x4a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -287,6 +475,24 @@ impl Palette {
 impl IndexMut<Role> for Palette {
     fn index_mut(&mut self, role: Role) -> &mut Colour {
         &mut self.colours[role as usize]
+    }
+}
+
+/// How a Theme is drawn: Classic (flat panels, plain lines) or Smooth
+/// (depth, faded grids, soft glows, floating panels). Colours stay the Theme's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Look {
+    Classic,
+    #[default]
+    Smooth,
+}
+
+impl Look {
+    fn key(self) -> &'static str {
+        match self {
+            Look::Classic => "classic",
+            Look::Smooth => "smooth",
+        }
     }
 }
 
@@ -333,6 +539,20 @@ pub struct Styling {
     /// Shape or pattern cues besides colour (hatching over target, a marker
     /// for negative correlation), for colour-blind viewers. High contrast has them.
     pub shape_cues: bool,
+    /// How it's drawn. Default Smooth; the rest below only count there.
+    pub look: Look,
+    /// How strongly traces and big numbers glow, 0 (none) to 1. Default 0.6.
+    pub glow: f32,
+    /// How much of a plot grid lines fade out over toward each edge, 0 to
+    /// 0.4. Default 0.15.
+    pub grid_fade: f32,
+    /// How much lighter the background is at the top than the bottom, 0 to 1.
+    /// Default 0.5.
+    pub gradient: f32,
+    /// How much darker the panels' corners are, 0 to 1. Default 0.35.
+    pub vignette: f32,
+    /// Whether a Meter dims gently while no audio arrives. Default on.
+    pub dim_when_silent: bool,
 }
 
 impl Default for Styling {
@@ -341,9 +561,15 @@ impl Default for Styling {
             background_opacity: 1.0,
             line: LineWeight::Normal,
             gap: 6.0,
-            corner_radius: 4.0,
+            corner_radius: 10.0,
             text_scale: 1.0,
             shape_cues: false,
+            look: Look::Smooth,
+            glow: 0.6,
+            grid_fade: 0.15,
+            gradient: 0.5,
+            vignette: 0.35,
+            dim_when_silent: true,
         }
     }
 }
@@ -352,6 +578,7 @@ impl Default for Styling {
 pub const GAP_RANGE: (f32, f32) = (0.0, 24.0);
 pub const CORNER_RANGE: (f32, f32) = (0.0, 16.0);
 pub const TEXT_SCALE_RANGE: (f32, f32) = (0.9, 1.5);
+pub const GRID_FADE_RANGE: (f32, f32) = (0.0, 0.4);
 
 impl Styling {
     /// These values kept within their ranges.
@@ -365,6 +592,10 @@ impl Styling {
             gap: clamp(self.gap, GAP_RANGE, d.gap),
             corner_radius: clamp(self.corner_radius, CORNER_RANGE, d.corner_radius),
             text_scale: clamp(self.text_scale, TEXT_SCALE_RANGE, 1.0),
+            glow: clamp(self.glow, (0.0, 1.0), d.glow),
+            grid_fade: clamp(self.grid_fade, GRID_FADE_RANGE, d.grid_fade),
+            gradient: clamp(self.gradient, (0.0, 1.0), d.gradient),
+            vignette: clamp(self.vignette, (0.0, 1.0), d.vignette),
             ..self
         }
     }
@@ -382,6 +613,10 @@ pub struct Theme {
 pub const DARK: &str = "Dark";
 pub const LIGHT: &str = "Light";
 pub const HIGH_CONTRAST: &str = "High contrast";
+pub const MIDNIGHT_PURPLE: &str = "Midnight Purple";
+pub const DEEP_TURQUOISE: &str = "Deep Turquoise";
+pub const GRAPHITE: &str = "Graphite";
+pub const NOCTURNE: &str = "Nocturne";
 
 /// The Theme file layout's version.
 const FILE_VERSION: i64 = 1;
@@ -415,9 +650,26 @@ impl Theme {
         }
     }
 
+    /// A built-in with the default styling.
+    fn plain(name: &str, palette: Palette) -> Theme {
+        Theme {
+            name: name.to_owned(),
+            palette,
+            styling: Styling::default(),
+        }
+    }
+
     /// The built-ins, in the order they're listed.
-    pub fn built_ins() -> [Theme; 3] {
-        [Theme::dark(), Theme::light(), Theme::high_contrast()]
+    pub fn built_ins() -> [Theme; 7] {
+        [
+            Theme::dark(),
+            Theme::light(),
+            Theme::high_contrast(),
+            Theme::plain(MIDNIGHT_PURPLE, Palette::midnight_purple()),
+            Theme::plain(DEEP_TURQUOISE, Palette::deep_turquoise()),
+            Theme::plain(GRAPHITE, Palette::graphite()),
+            Theme::plain(NOCTURNE, Palette::nocturne()),
+        ]
     }
 
     /// The Theme as a TOML file.
@@ -441,6 +693,12 @@ impl Theme {
         styling.insert("corner_radius".into(), f64::from(s.corner_radius).into());
         styling.insert("text_scale".into(), f64::from(s.text_scale).into());
         styling.insert("shape_cues".into(), s.shape_cues.into());
+        styling.insert("look".into(), s.look.key().into());
+        styling.insert("glow".into(), f64::from(s.glow).into());
+        styling.insert("grid_fade".into(), f64::from(s.grid_fade).into());
+        styling.insert("gradient".into(), f64::from(s.gradient).into());
+        styling.insert("vignette".into(), f64::from(s.vignette).into());
+        styling.insert("dim_when_silent".into(), s.dim_when_silent.into());
         file.insert("styling".into(), styling.into());
         file.to_string()
     }
@@ -467,6 +725,15 @@ impl Theme {
             ..Theme::dark()
         };
         if let Some(colours) = file.get("colours").and_then(toml::Value::as_table) {
+            // Before it had its own role the second trace drew in the accent.
+            if !colours.contains_key(Role::SpectrumSecond.key())
+                && let Some(accent) = colours
+                    .get(Role::Accent.key())
+                    .and_then(toml::Value::as_str)
+                    .and_then(Colour::from_hex)
+            {
+                theme.palette[Role::SpectrumSecond] = accent;
+            }
             for role in Role::ALL {
                 if let Some(colour) = colours
                     .get(role.key())
@@ -495,10 +762,23 @@ impl Theme {
                 Some("thick") => LineWeight::Thick,
                 _ => s.line,
             };
-            s.shape_cues = styling
-                .get("shape_cues")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(s.shape_cues);
+            let switch = |key: &str, or: bool| {
+                styling
+                    .get(key)
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(or)
+            };
+            s.shape_cues = switch("shape_cues", s.shape_cues);
+            s.dim_when_silent = switch("dim_when_silent", s.dim_when_silent);
+            s.look = match styling.get("look").and_then(toml::Value::as_str) {
+                Some("classic") => Look::Classic,
+                Some("smooth") => Look::Smooth,
+                _ => s.look,
+            };
+            s.glow = number("glow").unwrap_or(s.glow);
+            s.grid_fade = number("grid_fade").unwrap_or(s.grid_fade);
+            s.gradient = number("gradient").unwrap_or(s.gradient);
+            s.vignette = number("vignette").unwrap_or(s.vignette);
             *s = s.clamped();
         }
         Ok(theme)

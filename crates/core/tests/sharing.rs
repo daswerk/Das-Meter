@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use dasmeter_core::sharing::SharedPreset;
 use dasmeter_core::{
-    AppCore, BuiltIn, Colour, DisplayRef, Edge, Event, Fingerprint, Note, PresetData, PresetOp,
-    Role, Scene, Theme, ThemeFile,
+    AppCore, BuiltIn, Colour, DisplayRef, Edge, Event, Fingerprint, Note, Pick, PresetData,
+    PresetOp, Role, Scene, Theme, ThemeFile,
 };
 
 struct App {
@@ -253,4 +253,20 @@ fn a_malformed_file_is_refused_without_side_effects() {
         );
         assert_eq!(scene.notes, [Note::ImportFailed]);
     }
+}
+
+#[test]
+fn an_exported_file_with_a_too_large_send_plugin_id_imports() {
+    let big = u64::MAX - 7;
+    let mut data = PresetData::built_in(BuiltIn::Bar);
+    data.meters[0].send_plugin = Some(Pick {
+        id: big,
+        name: "Kick".into(),
+    });
+    let text = SharedPreset::new(data, Vec::new()).to_toml();
+    // Earlier versions wrote the ID past TOML's integer range.
+    let old = text.replace("id = -8", "id = 18446744073709551608");
+    assert_ne!(old, text);
+    let (read, _) = SharedPreset::from_toml(&old).unwrap();
+    assert_eq!(read.meters[0].send_plugin.as_ref().map(|p| p.id), Some(big));
 }

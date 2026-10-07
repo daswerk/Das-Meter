@@ -7,11 +7,14 @@
 use std::time::Duration;
 
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
-use dasmeter_analysis::{CepstrumSettings, PeakHold, SpectrumStyle, StereoScaling};
+use dasmeter_analysis::{
+    CepstrumSettings, PeakHold, SpectrogramSettings, SpectrumStyle, StereoScaling,
+};
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, SpectrumMeterSettings,
-    StereometerMeterSettings, WaveformMeterSettings,
+    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrumMeterSettings, StereometerMeterSettings,
+    WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -91,6 +94,9 @@ pub const LOUDNESS_BAR: (f64, f64) = (-120.0, 6.0);
 pub const CEPSTRUM_FFT_SIZES: [usize; 3] = dasmeter_analysis::cepstrum::FFT_SIZES;
 pub const CEPSTRUM_PITCH: (f32, f32) = dasmeter_analysis::cepstrum::PITCH_LIMITS;
 pub const CEPSTRUM_SMOOTHING: (Duration, Duration) = (Duration::ZERO, Duration::from_secs(1));
+/// The Spectrogram's FFT sizes and span choices (seconds).
+pub const SPECTROGRAM_FFT_SIZES: [usize; 4] = dasmeter_analysis::spectrogram::FFT_SIZES;
+pub const SPECTROGRAM_SPANS: [u64; 4] = [5, 10, 20, 30];
 /// The Stereometer's persistence.
 pub const STEREO_PERSISTENCE: (Duration, Duration) =
     (Duration::from_millis(5), Duration::from_millis(340));
@@ -99,6 +105,14 @@ pub const STEREO_GAIN: (f32, f32) = (0.25, 16.0);
 /// The Stereometer's correlation averaging time.
 pub const CORRELATION_TIME: (Duration, Duration) =
     (Duration::from_millis(50), Duration::from_secs(3));
+/// The Phase Scope's typed-in tempo, in BPM.
+pub const PHASE_SCOPE_TEMPO: (f32, f32) = (30.0, 300.0);
+/// The Phase Scope's manual gain, in dB.
+pub const PHASE_SCOPE_GAIN: (f32, f32) = (-24.0, 48.0);
+/// The Phase Scope's correlation cut-off, in Hz.
+pub const PHASE_SCOPE_CUTOFF: (f32, f32) = (40.0, 500.0);
+/// How far the Phase Scope's Overlay Source can be moved, in ms.
+pub const PHASE_SCOPE_OFFSET: (f32, f32) = (-50.0, 50.0);
 /// The narrowest a range (dB or Hz ratio) may get, so a Meter never divides by nothing.
 const MIN_DB_SPAN: f32 = 6.0;
 
@@ -149,6 +163,8 @@ impl MeterSettings {
             MeterSettings::Loudness(s) => MeterSettings::Loudness(s.clamped()),
             MeterSettings::Stereometer(s) => MeterSettings::Stereometer(s.clamped()),
             MeterSettings::Cepstrum(s) => MeterSettings::Cepstrum(s.clamped()),
+            MeterSettings::Spectrogram(s) => MeterSettings::Spectrogram(s.clamped()),
+            MeterSettings::PhaseScope(s) => MeterSettings::PhaseScope(s.clamped()),
         }
     }
 }
@@ -260,6 +276,36 @@ impl CepstrumMeterSettings {
     }
 }
 
+impl SpectrogramMeterSettings {
+    fn clamped(mut self) -> Self {
+        let defaults = SpectrogramSettings::default();
+        let a = &mut self.analysis;
+        if !SPECTROGRAM_FFT_SIZES.contains(&a.fft_size) {
+            a.fft_size = defaults.fft_size;
+        }
+        a.slope = nearest(a.slope, &SPECTRUM_SLOPES, |s| s);
+        let (low, high) = a.frequency_range;
+        let low = clamp_f32(low, SPECTRUM_FREQUENCIES, defaults.frequency_range.0);
+        let high = clamp_f32(high, SPECTRUM_FREQUENCIES, defaults.frequency_range.1);
+        // At least an octave shown.
+        a.frequency_range = if high >= low * 2.0 {
+            (low, high)
+        } else {
+            (
+                low.min(SPECTRUM_FREQUENCIES.1 / 2.0),
+                (low * 2.0).min(SPECTRUM_FREQUENCIES.1),
+            )
+        };
+        let (floor, top) = a.db_range;
+        let floor = clamp_f32(floor, SPECTRUM_DB, defaults.db_range.0);
+        let top = clamp_f32(top, SPECTRUM_DB, defaults.db_range.1);
+        a.db_range = (floor.min(top - MIN_DB_SPAN), top.max(floor + MIN_DB_SPAN));
+        let seconds = nearest(a.span.as_secs_f32(), &SPECTROGRAM_SPANS, |s| s as f32);
+        a.span = Duration::from_secs(seconds);
+        self
+    }
+}
+
 impl StereometerMeterSettings {
     fn clamped(mut self) -> Self {
         let defaults = StereometerMeterSettings::default();
@@ -275,6 +321,27 @@ impl StereometerMeterSettings {
             a.scaling = StereoScaling::Fixed {
                 gain: clamp_f32(gain, STEREO_GAIN, 1.0),
             };
+        }
+        self
+    }
+}
+
+impl PhaseScopeMeterSettings {
+    fn clamped(mut self) -> Self {
+        let defaults = PhaseScopeMeterSettings::default();
+        // To 0.1 BPM, as typed or tapped.
+        self.tempo =
+            (clamp_f32(self.tempo, PHASE_SCOPE_TEMPO, defaults.tempo) * 10.0).round() / 10.0;
+        self.gain = clamp_f32(self.gain, PHASE_SCOPE_GAIN, defaults.gain);
+        self.cutoff = clamp_f32(self.cutoff, PHASE_SCOPE_CUTOFF, defaults.cutoff);
+        self.overlay_offset = clamp_f32(
+            self.overlay_offset,
+            PHASE_SCOPE_OFFSET,
+            defaults.overlay_offset,
+        );
+        // Mono or Left and Right only.
+        if self.channel_view == dasmeter_analysis::ChannelView::MidSide {
+            self.channel_view = dasmeter_analysis::ChannelView::Mono;
         }
         self
     }

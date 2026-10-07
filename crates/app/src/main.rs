@@ -26,6 +26,7 @@ mod theme_files;
 mod ui;
 #[cfg(target_os = "macos")]
 mod updates;
+mod widgets;
 
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, mpsc};

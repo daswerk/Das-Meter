@@ -157,3 +157,41 @@ fn offers_a_small_fixed_embedded_window() {
     drop(plugin);
     remove_table(&name);
 }
+
+#[test]
+fn the_daws_beat_reaches_the_app() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let name = table("timing");
+    let mut plugin = Instance::new(&name, None, 512);
+    let mut reader = Reader::open_named(&name).unwrap();
+    let slot = slots(&mut reader)[0].slot;
+    reader.set_listened(slot, true);
+    let (mut left, mut right) = (ramp(256, 0.5), ramp(256, 0.5));
+    let mut out = [vec![0.0; 256], vec![0.0; 256]];
+
+    // No transport from the host: nothing said.
+    plugin.process(&mut left, &mut right, &mut out);
+    assert!(reader.timing(slot).is_none());
+
+    // 128 BPM in 7/8, playing, half a quarter note into a bar at 14.
+    let transport = Instance::transport(128.0, 14.5, 14.0, (7, 8), true);
+    plugin.process_at(&mut left, &mut right, &mut out, Some(&transport));
+    let said = reader.timing(slot).expect("timing");
+    assert_eq!(said.frame, 256, "at the block's first frame");
+    let t = said.timing;
+    assert_eq!(t.tempo, 128.0);
+    assert!((t.beats - 14.5).abs() < 1e-6, "{}", t.beats);
+    assert!((t.bar_start - 14.0).abs() < 1e-6);
+    assert_eq!(t.signature, (7, 8));
+    assert!(t.playing);
+
+    // Stopped.
+    let transport = Instance::transport(128.0, 20.0, 18.5, (7, 8), false);
+    plugin.process_at(&mut left, &mut right, &mut out, Some(&transport));
+    let said = reader.timing(slot).expect("timing");
+    assert_eq!(said.frame, 512);
+    assert!(!said.timing.playing);
+
+    drop(plugin);
+    remove_table(&name);
+}

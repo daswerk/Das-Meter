@@ -198,6 +198,13 @@ pub struct BarLayout {
     /// The display the Bar docks on; `None` for the main display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<DisplayRef>,
+    /// Where the Bar was dragged to (⌘-drag), relative to the display's
+    /// top-left (not its usable area, which shifts when the Bar stops
+    /// reserving space): the corner on its edge's side (top-left, or the bottom
+    /// or right for a Bar of that edge), so resizing from its inner edge
+    /// leaves that side put. `None` while it docks to its edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved: Option<(f32, f32)>,
 }
 
 impl BarLayout {
@@ -213,6 +220,7 @@ impl BarLayout {
             meters: (0..count).map(|meter| (meter, share)).collect(),
             pop_outs: Vec::new(),
             display: None,
+            moved: None,
         }
     }
 
@@ -246,6 +254,57 @@ impl BarLayout {
             }
         };
         let t = self.thickness_on(display);
+        let docked = self.docked(u, t);
+        let Some((x, y)) = self.moved else {
+            return docked;
+        };
+        // Moved: the same size wherever it was put, kept clear of the menu
+        // bar and Dock.
+        let (f, origin) = (display.usable, display.frame);
+        let (mut x, mut y) = (origin.x + x, origin.y + y);
+        match self.edge {
+            Edge::Bottom => y -= docked.height,
+            Edge::Right => x -= docked.width,
+            Edge::Top | Edge::Left => {}
+        }
+        Rect {
+            x: x.clamp(f.x, (f.right() - docked.width).max(f.x)),
+            y: y.clamp(f.y, (f.bottom() - docked.height).max(f.y)),
+            ..docked
+        }
+    }
+
+    /// Moves the Bar off its edge so its top-left corner is at `to` on
+    /// screen (logical px), kept on `display`.
+    pub fn move_to(&mut self, to: [f32; 2], display: &Display) -> bool {
+        if to.iter().any(|v| !v.is_finite()) {
+            return false;
+        }
+        let u = display.frame;
+        let mut moved = self.clone();
+        moved.moved = Some((0.0, 0.0));
+        let size = moved.frame_on(display);
+        let anchor = |frame: Rect| match self.edge {
+            Edge::Top | Edge::Left => (frame.x - u.x, frame.y - u.y),
+            Edge::Bottom => (frame.x - u.x, frame.bottom() - u.y),
+            Edge::Right => (frame.right() - u.x, frame.y - u.y),
+        };
+        moved.moved = Some(anchor(Rect {
+            x: to[0],
+            y: to[1],
+            ..size
+        }));
+        // Stored as it shows, kept on the display, so the next drag doesn't jump.
+        let at = Some(anchor(moved.frame_on(display)));
+        if at == self.moved {
+            return false;
+        }
+        self.moved = at;
+        true
+    }
+
+    /// The Bar along its edge in `u` (the usable area, cut to its span), `t` thick.
+    fn docked(&self, u: Rect, t: f32) -> Rect {
         match self.edge {
             Edge::Top => Rect { height: t, ..u },
             Edge::Bottom => Rect {
@@ -274,8 +333,11 @@ impl BarLayout {
         if at.is_nan() || length <= 0.0 {
             return false;
         }
-        let fraction = ((at - origin) / length).clamp(0.0, 1.0);
         let min = (MIN_LENGTH / length).min(1.0);
+        if self.moved.is_some() {
+            return self.move_moved_end(end, at, display, min);
+        }
+        let fraction = ((at - origin) / length).clamp(0.0, 1.0);
         let (mut start, mut end_at) = self.span;
         match end {
             BarEnd::Start => start = fraction.min(end_at - min).max(0.0),
@@ -285,6 +347,38 @@ impl BarLayout {
             return false;
         }
         self.span = (start, end_at);
+        true
+    }
+
+    /// Moves one end of a moved Bar to `at` along it, the other end put.
+    fn move_moved_end(&mut self, end: BarEnd, at: f32, display: &Display, min: f32) -> bool {
+        let frame = self.frame_on(display);
+        let horizontal = self.edge.horizontal();
+        let (length, first, last) = if horizontal {
+            (display.usable.width, frame.x, frame.right())
+        } else {
+            (display.usable.height, frame.y, frame.bottom())
+        };
+        let (first, last) = match end {
+            BarEnd::Start => (at.min(last - min * length).max(last - length), last),
+            BarEnd::End => (first, at.max(first + min * length).min(first + length)),
+        };
+        // Kept from where it started along its edge, for when it docks again.
+        let share = (last - first) / length;
+        let start = self.span.0.min(1.0 - share).max(0.0);
+        let span = (start, start + share);
+        if span == self.span && first == if horizontal { frame.x } else { frame.y } {
+            return false;
+        }
+        self.span = span;
+        let (x, y) = self.moved.unwrap_or_default();
+        let u = display.frame;
+        // The corner on the start side moves with the start end.
+        self.moved = Some(if horizontal {
+            (first - u.x, y)
+        } else {
+            (x, first - u.y)
+        });
         true
     }
 
@@ -351,6 +445,41 @@ impl BarLayout {
             .position(|(m, _)| *m > meter)
             .unwrap_or(self.meters.len());
         self.meters.insert(at, (meter, share));
+        true
+    }
+
+    /// Puts `new` into the Bar right after `after`, sharing its space half and half.
+    pub fn add_after(&mut self, after: usize, new: usize) -> bool {
+        self.add_beside(after, new, false)
+    }
+
+    /// Puts `new` into the Bar next to `beside`, before or after it, sharing
+    /// its space half and half.
+    pub fn add_beside(&mut self, beside: usize, new: usize, before: bool) -> bool {
+        let Some(index) = self.meters.iter().position(|(m, _)| *m == beside) else {
+            return false;
+        };
+        if self.meters.iter().any(|(m, _)| *m == new) {
+            return false;
+        }
+        let half = self.meters[index].1 / 2.0;
+        self.meters[index].1 = half;
+        let at = if before { index } else { index + 1 };
+        self.meters.insert(at, (new, half));
+        true
+    }
+
+    /// Takes `meter` out of the Bar; the others share its space. The Bar
+    /// keeps at least one Meter.
+    pub fn remove(&mut self, meter: usize) -> bool {
+        let Some(index) = self.meters.iter().position(|(m, _)| *m == meter) else {
+            return false;
+        };
+        if self.meters.len() == 1 {
+            return false;
+        }
+        self.meters.remove(index);
+        self.normalise();
         true
     }
 

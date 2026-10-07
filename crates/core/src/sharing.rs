@@ -63,7 +63,9 @@ impl SharedPreset {
     /// Reads a file; anything that isn't a Das-Meter Preset, or has an
     /// unreadable Theme in it, is refused whole.
     pub fn from_toml(text: &str) -> Result<(PresetData, Vec<Theme>), String> {
-        let shared: SharedPreset = toml::from_str(text).map_err(|e| e.to_string())?;
+        let shared: SharedPreset = toml::from_str(text)
+            .or_else(|e| toml::from_str(&crate::presets::wrap_large_ids(text)).map_err(|_| e))
+            .map_err(|e: toml::de::Error| e.to_string())?;
         if shared.format != FORMAT {
             return Err("not a Das-Meter Preset".into());
         }

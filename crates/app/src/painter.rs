@@ -9,6 +9,8 @@ use crate::meters::{Area, Look, MeterRenderer};
 /// Draws a scene with the GPU: one renderer per Meter, one for the notes, and
 /// their shared text, then the menus and panel on top.
 pub struct Painter {
+    /// The window's background and the Meters' shadows, under them all.
+    backdrop: MeterRenderer,
     meters: Vec<MeterRenderer>,
     notes: MeterRenderer,
     pub text: Text,
@@ -37,6 +39,7 @@ impl Painter {
     pub fn new(gpu: Gpu) -> Painter {
         let mut text = Text::new(&gpu);
         Painter {
+            backdrop: MeterRenderer::new(&gpu, &mut text),
             meters: Vec::new(),
             notes: MeterRenderer::new(&gpu, &mut text),
             text,
@@ -79,7 +82,9 @@ impl Painter {
             palette,
             styling,
             scale,
+            bar: key == Some(WindowKey::Bar),
         };
+        let mut areas = Vec::with_capacity(meters.len());
         for (renderer, meter) in self.meters.iter_mut().zip(meters) {
             let frame = meter.frame;
             let area = Area {
@@ -104,6 +109,7 @@ impl Painter {
                 height,
             };
             renderer.prepare(&self.gpu, &mut self.text, area, look, meter);
+            areas.push(area);
         }
         let window = Area {
             x: 0.0,
@@ -111,6 +117,8 @@ impl Painter {
             width,
             height,
         };
+        self.backdrop
+            .prepare_backdrop(&self.gpu, &mut self.text, window, look, &areas);
         let notes = scene
             .filter(|_| key == Some(WindowKey::Bar))
             .map_or(&[][..], |scene| &scene.notes[..]);
@@ -161,6 +169,7 @@ impl Painter {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            self.backdrop.render(&self.text, &mut pass);
             for renderer in self.meters.iter().take(meters.len()) {
                 renderer.render(&self.text, &mut pass);
             }

@@ -1,12 +1,12 @@
 //! The Cepstrum: the cepstrum of the mono sum as a filled curve, from the
 //! shortest period (highest pitch, left) to the longest, labelled in the pitch
 //! each period stands for, and a line on the pitch found with its frequency
-//! and note.
+//! and note. Under the pointer, the pitch of the period there.
 
-use dasmeter_core::{CepstrumMeterSettings, CursorReadout, Role};
+use dasmeter_core::{CepstrumMeterSettings, Colour, CursorReadout, Role};
 
 use super::labels::Align;
-use super::shapes::Area;
+use super::shapes::{Area, smooth};
 use super::{Canvas, map};
 
 /// Pitches marked on the axis, in Hz.
@@ -30,6 +30,7 @@ pub fn draw(
     values: &[f32],
     (short, long): (f32, f32),
     pitch: Option<&CursorReadout>,
+    hover: Option<&CursorReadout>,
 ) {
     let (grid, dim) = (c.colour(Role::Grid), c.dim());
     let thin = c.px(1.0).max(1.0);
@@ -45,14 +46,7 @@ pub fn draw(
             continue;
         }
         let x = x_of_period(period);
-        c.shapes.rect(
-            Area {
-                x: x - thin / 2.0,
-                width: thin,
-                ..plot
-            },
-            grid.faded(0.6),
-        );
+        c.grid_v(plot, x, grid.faded(0.6), false);
         let half = c.px(9.0 * 0.6) * name.len() as f32 / 2.0;
         if last_label.is_none_or(|last| x - half > last + c.px(4.0)) {
             c.text(name, x, axis.y + c.px(2.0), 9.0, dim, Align::Centre);
@@ -66,21 +60,27 @@ pub fn draw(
     let top = plot.y + c.px(22.0);
     let y_of = |v: f32| base - v.clamp(0.0, 1.0) * (base - top);
     let step = plot.width / values.len().max(1) as f32;
-    for (i, &value) in values.iter().enumerate() {
-        let y = y_of(value);
-        let column = Area {
-            x: plot.x + i as f32 * step,
-            y,
-            width: step.max(thin),
-            height: (base - y).max(0.0),
-        };
-        c.shapes.rect(column, trace.faded(0.35));
-    }
-    let stroke = c.stroke(1.5);
-    for (i, pair) in values.windows(2).enumerate() {
-        let x = plot.x + (i as f32 + 0.5) * step;
+    let points: Vec<[f32; 2]> = values
+        .iter()
+        .enumerate()
+        .map(|(i, &value)| [plot.x + (i as f32 + 0.5) * step, y_of(value)])
+        .collect();
+    let curve = smooth(&points, c.px(2.0));
+    let fill = trace.faded(0.35);
+    c.edge_faded(plot, &curve, |c, piece, strength| {
+        let fill = fill.faded(strength);
+        c.fill_under(piece, base, fill, fill);
+    });
+    c.edge_faded(plot, &curve, |c, piece, strength| {
+        c.glow(piece, trace.faded(strength));
+    });
+    c.edge_faded(plot, &curve, |c, piece, strength| {
         c.shapes
-            .line([x, y_of(pair[0])], [x + step, y_of(pair[1])], stroke, trace);
+            .polyline(piece, c.stroke(1.5), trace.faded(strength));
+    });
+
+    if let Some(hover) = hover {
+        hover_readout(c, plot, hover);
     }
 
     // The pitch found: a line at its period, its frequency and note on top.
@@ -109,19 +109,55 @@ pub fn draw(
         },
         accent,
     );
-    let mut readout = if pitch.frequency < 1_000.0 {
-        format!("{:.1} Hz", pitch.frequency)
+    let readout = pitch_text(pitch);
+    beside(c, plot, x, plot.y + c.px(2.0), 11.0, &readout, text);
+}
+
+/// "110.0 Hz  A2 +3¢".
+fn pitch_text(at: &CursorReadout) -> String {
+    let mut readout = if at.frequency < 1_000.0 {
+        format!("{:.1} Hz", at.frequency)
     } else {
-        format!("{:.2} kHz", pitch.frequency / 1_000.0)
+        format!("{:.2} kHz", at.frequency / 1_000.0)
     };
-    if let Some(note) = pitch.note {
+    if let Some(note) = at.note {
         readout += &format!("  {note} {:+.0}¢", note.cents);
     }
-    let width = c.px(11.0 * 0.6) * readout.chars().count() as f32;
+    readout
+}
+
+/// `text` at `y` just right of `x`, or left of it if it would run out of `plot`.
+fn beside(c: &mut Canvas, plot: Area, x: f32, y: f32, size: f32, text: &str, colour: Colour) {
+    let width = c.px(size * 0.6) * text.chars().count() as f32;
     let start = if x + c.px(4.0) + width <= plot.right() {
         x + c.px(4.0)
     } else {
         (x - c.px(4.0) - width).max(plot.x)
     };
-    c.text(&readout, start, plot.y + c.px(2.0), 11.0, text, Align::Left);
+    let pad = c.px(3.0);
+    c.backdrop(Area {
+        x: start - pad,
+        y: y - pad,
+        width: width + 2.0 * pad,
+        height: c.px(size) * c.styling.text_scale + 2.0 * pad,
+    });
+    c.text(text, start, y, size, colour, Align::Left);
+}
+
+/// A faint line under the pointer, with the pitch of the period there
+/// under the found pitch's readout.
+fn hover_readout(c: &mut Canvas, plot: Area, hover: &CursorReadout) {
+    let x = plot.x + hover.x.clamp(0.0, 1.0) * plot.width;
+    let thin = c.px(1.0).max(1.0);
+    let text = c.colour(Role::Text);
+    c.overlay.rect(
+        Area {
+            x: x - thin / 2.0,
+            width: thin,
+            ..plot
+        },
+        text.faded(0.5),
+    );
+    let readout = pitch_text(hover);
+    beside(c, plot, x, plot.y + c.px(18.0), 10.0, &readout, text);
 }

@@ -9,6 +9,7 @@ mod channel_view;
 pub mod loudness;
 pub mod seconds;
 pub mod signals;
+pub mod spectrogram;
 pub mod spectrum;
 pub mod stereometer;
 pub mod test_signal;
@@ -20,11 +21,12 @@ pub use channel_view::ChannelView;
 pub use loudness::{
     ChannelLevels, LoudnessAnalyser, LoudnessReadings, LoudnessSettings, PeakHold, RmsMode,
 };
+pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};
 pub use spectrum::{
     Note, Spectrum, SpectrumAnalyser, SpectrumSettings, SpectrumStyle, SpectrumTrace,
-    WindowFunction, note_name,
+    WindowFunction, catmull_rom, note_name,
 };
 pub use stereometer::{
     StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,
 };
-pub use waveform::{WaveformAnalyser, WaveformColumn, WaveformScale, WaveformSettings};
+pub use waveform::{Lr4, WaveformAnalyser, WaveformColumn, WaveformScale, WaveformSettings};
