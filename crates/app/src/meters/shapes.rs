@@ -337,12 +337,7 @@ pub fn smooth(points: &[[f32; 2]], step: f32) -> Vec<[f32; 2]> {
         curve.push(a);
         for k in 1..steps {
             let t = k as f32 / steps as f32;
-            let (t2, t3) = (t * t, t * t * t);
-            let y = 0.5
-                * (2.0 * a[1]
-                    + (b[1] - before) * t
-                    + (2.0 * before - 5.0 * a[1] + 4.0 * b[1] - after) * t2
-                    + (3.0 * a[1] - before - 3.0 * b[1] + after) * t3);
+            let y = dasmeter_analysis::catmull_rom([before, a[1], b[1], after], t);
             curve.push([a[0] + (b[0] - a[0]) * t, y.clamp(low, high)]);
         }
     }

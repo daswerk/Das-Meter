@@ -92,8 +92,8 @@ To show it, right-click a Meter and choose **Show ▸ Spectrogram**, or
 The waveform over one **Cycle**, one beat or one bar, held still so every
 beat lands in the same place: a kick on the beat stays put, and you can watch
 how its attack and tail sit against the bass. The newest Cycle is drawn sharp
-with the few before it fading behind. It's drawn as it plays, like a
-scope's beam sweeping across, so a fade-out fades smoothly.
+with the few before it fading behind. It's drawn as it plays, column by
+column, so a fade-out fades smoothly.
 
 On a Send Plugin it follows the DAW: its tempo, its beat and, for a bar
 Cycle, its time signature. When the DAW stops, it keeps running at the last

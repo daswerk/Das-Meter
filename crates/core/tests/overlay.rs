@@ -296,6 +296,19 @@ impl App {
     /// Plays `seconds` of the DAW at 120 BPM with Kick and Bass both
     /// listened to, each frame's samples given by `kick` and `bass`.
     fn play_both(&mut self, seconds: f64, kick: impl Fn(u64) -> f32, bass: impl Fn(u64) -> f32) {
+        self.play_both_late(seconds, kick, bass, 0);
+    }
+
+    /// As `play_both`, the Bass's blocks reaching the app `late` blocks
+    /// after the Kick's.
+    fn play_both_late(
+        &mut self,
+        seconds: f64,
+        kick: impl Fn(u64) -> f32,
+        bass: impl Fn(u64) -> f32,
+        late: usize,
+    ) {
+        let mut queue = std::collections::VecDeque::new();
         let blocks = (seconds * f64::from(RATE) / BLOCK as f64).round() as u64;
         for b in 0..blocks {
             let first = b * BLOCK;
@@ -308,12 +321,22 @@ impl App {
                 playing: true,
             });
             self.now += Duration::from_secs_f64(BLOCK as f64 / f64::from(RATE));
-            for (id, audio) in [(KICK, &kick as &dyn Fn(u64) -> f32), (BASS, &bass)] {
-                let stereo: Vec<f32> = (first..first + BLOCK)
+            let block = |audio: &dyn Fn(u64) -> f32| -> Vec<f32> {
+                (first..first + BLOCK)
                     .flat_map(|f| [audio(f), audio(f)])
-                    .collect();
+                    .collect()
+            };
+            let stereo = block(&kick);
+            self.send(Event::SendPluginAudio {
+                id: KICK,
+                frames: &stereo,
+                timing,
+            });
+            queue.push_back((block(&bass), timing));
+            if queue.len() > late {
+                let (stereo, timing) = queue.pop_front().expect("queued");
                 self.send(Event::SendPluginAudio {
-                    id,
+                    id: BASS,
                     frames: &stereo,
                     timing,
                 });
@@ -446,15 +469,19 @@ fn suggestions_show_only_when_turned_on() {
     app.play_both(4.0, &kick, |f| -kick(f));
     let overlay = app.scope().overlay.unwrap();
     assert!(
+        overlay.fits.is_empty() && overlay.advice.is_empty(),
+        "off by default"
+    );
+
+    app.set(|s| s.suggestions = true);
+    app.play_both(2.0, &kick, |f| -kick(f));
+    let overlay = app.scope().overlay.unwrap();
+    assert!(
         matches!(overlay.fits.as_slice(), [Fit::Flip { .. }]),
         "{:?}",
         overlay.fits
     );
-    assert!(overlay.advice.is_empty(), "off by default");
-
-    app.set(|s| s.suggestions = true);
-    app.play_both(1.0, &kick, |f| -kick(f));
-    let advice = app.scope().overlay.unwrap().advice;
+    let advice = overlay.advice;
     assert_eq!(advice.len(), 1, "{advice:?}");
     assert!(
         advice[0].contains("Flip") && advice[0].contains("Bass"),
@@ -465,6 +492,7 @@ fn suggestions_show_only_when_turned_on() {
 #[test]
 fn a_late_bass_is_told_how_far_to_move() {
     let mut app = App::with_bass();
+    app.set(|s| s.suggestions = true);
     let kick = sine(55.0, 0.3);
     // 3 ms late: about a sixth of a period out.
     app.play_both(4.0, &kick, delayed(&kick, 144));
@@ -491,6 +519,7 @@ fn a_late_bass_is_told_how_far_to_move() {
 #[test]
 fn lows_at_different_pitches_are_told_to_tune() {
     let mut app = App::with_bass();
+    app.set(|s| s.suggestions = true);
     // A semitone apart: they drift in and out of phase, so no move helps.
     app.play_both(4.0, sine(55.0, 0.3), sine(58.27, 0.3));
     let overlay = app.scope().overlay.unwrap();
@@ -503,7 +532,6 @@ fn lows_at_different_pitches_are_told_to_tune() {
     assert!((other - 58.27).abs() < 1.5, "{other}");
     assert!(!overlay.fits.iter().any(|f| matches!(f, Fit::Move { .. })));
 
-    app.set(|s| s.suggestions = true);
     app.play_both(1.0, sine(55.0, 0.3), sine(58.27, 0.3));
     let advice = app.scope().overlay.unwrap().advice;
     assert!(
@@ -515,6 +543,32 @@ fn lows_at_different_pitches_are_told_to_tune() {
 #[test]
 fn tracks_in_phase_get_no_suggestion() {
     let mut app = App::with_bass();
+    app.set(|s| s.suggestions = true);
     app.play_both(4.0, sine(55.0, 0.3), sine(55.0, 0.2));
     assert!(app.scope().overlay.unwrap().fits.is_empty());
+}
+
+#[test]
+fn an_overlay_arriving_late_is_still_lined_up() {
+    let mut app = App::with_bass();
+    app.set(|s| s.suggestions = true);
+    let kick = sine(55.0, 0.3);
+    // The Bass's audio reaches the app 8 blocks (85 ms) after the Kick's.
+    app.play_both_late(4.0, &kick, &kick, 8);
+    let scope = app.scope();
+    let overlay = scope.overlay.unwrap();
+    assert!(
+        overlay.correlation.unwrap() > 0.98,
+        "{:?}",
+        overlay.correlation
+    );
+    // The same audio, so the same trace: no column cut before the Bass got there.
+    let main = &scope.traces[0];
+    for i in 0..main.max.len() {
+        assert!(
+            (overlay.trace.max[i] - main.max[i]).abs() <= 0.02,
+            "column {i}"
+        );
+    }
+    assert!(overlay.fits.is_empty(), "{:?}", overlay.fits);
 }

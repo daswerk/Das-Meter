@@ -199,7 +199,8 @@ pub struct BarLayout {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<DisplayRef>,
     /// Where the Bar was dragged to (⌘-drag), relative to the display's
-    /// usable area: the corner on its edge's side (top-left, or the bottom
+    /// top-left (not its usable area, which shifts when the Bar stops
+    /// reserving space): the corner on its edge's side (top-left, or the bottom
     /// or right for a Bar of that edge), so resizing from its inner edge
     /// leaves that side put. `None` while it docks to its edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,9 +258,10 @@ impl BarLayout {
         let Some((x, y)) = self.moved else {
             return docked;
         };
-        // Moved: the same size wherever it was put, kept on the display.
-        let (f, usable) = (display.frame, display.usable);
-        let (mut x, mut y) = (usable.x + x, usable.y + y);
+        // Moved: the same size wherever it was put, kept clear of the menu
+        // bar and Dock.
+        let (f, origin) = (display.usable, display.frame);
+        let (mut x, mut y) = (origin.x + x, origin.y + y);
         match self.edge {
             Edge::Bottom => y -= docked.height,
             Edge::Right => x -= docked.width,
@@ -278,7 +280,7 @@ impl BarLayout {
         if to.iter().any(|v| !v.is_finite()) {
             return false;
         }
-        let u = display.usable;
+        let u = display.frame;
         let mut moved = self.clone();
         moved.moved = Some((0.0, 0.0));
         let size = moved.frame_on(display);
@@ -361,13 +363,16 @@ impl BarLayout {
             BarEnd::Start => (at.min(last - min * length).max(last - length), last),
             BarEnd::End => (first, at.max(first + min * length).min(first + length)),
         };
-        let span = (0.0, (last - first) / length);
+        // Kept from where it started along its edge, for when it docks again.
+        let share = (last - first) / length;
+        let start = self.span.0.min(1.0 - share).max(0.0);
+        let span = (start, start + share);
         if span == self.span && first == if horizontal { frame.x } else { frame.y } {
             return false;
         }
         self.span = span;
         let (x, y) = self.moved.unwrap_or_default();
-        let u = display.usable;
+        let u = display.frame;
         // The corner on the start side moves with the start end.
         self.moved = Some(if horizontal {
             (first - u.x, y)

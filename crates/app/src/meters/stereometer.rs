@@ -65,13 +65,10 @@ fn layout(area: Area, scale: f32, view: StereoView, bars: usize) -> Layout {
         (scope, bars)
     };
     // Room for the label above the half circle, or round the full one.
-    let (top, bottom, side) = match view {
-        StereoView::Polar => (px(14.0), px(4.0), px(8.0)),
-        StereoView::Lissajous => (px(4.0), px(4.0), px(4.0)),
-    };
-    let halves = match view {
-        StereoView::Polar => 1.0,
-        StereoView::Lissajous => 2.0,
+    // Halves: the radius fits once up a half circle, twice across a full one.
+    let (top, bottom, side, halves) = match view {
+        StereoView::Polar => (px(14.0), px(4.0), px(8.0), 1.0),
+        StereoView::Lissajous => (px(4.0), px(4.0), px(4.0), 2.0),
     };
     let across = (scope.width / 2.0 - side).max(1.0);
     let up = ((scope.height - top - bottom) / halves).max(1.0);
@@ -184,7 +181,7 @@ pub fn draw(
 
     // Correlation: −1 to +1, filled from 0, negative-coloured below the threshold.
     let correlation_area = layout.bars[0];
-    let bar = |c: &mut Canvas, area, value, colour, labels| {
+    let draw_bar = |c: &mut Canvas, area, value, colour, labels| {
         if layout.vertical {
             upright_bar(c, area, value, colour, labels);
         } else {
@@ -201,7 +198,7 @@ pub fn draw(
     } else {
         colour
     };
-    bar(
+    draw_bar(
         c,
         correlation_area,
         readings.correlation,
@@ -213,12 +210,20 @@ pub fn draw(
     let warn = readings.correlation < settings.correlation_threshold && !readings.no_signal;
     if c.styling.shape_cues && warn {
         let text = c.colour(Role::Text);
-        let y = correlation_area.y;
-        c.bold("!", correlation_area.x, y, 12.0, text, Align::Left);
+        // Beside an upright bar's top, clear of its "+1".
+        let (x, y) = if layout.vertical {
+            (
+                correlation_area.x + c.px(13.0),
+                correlation_area.y + c.px(14.0),
+            )
+        } else {
+            (correlation_area.x, correlation_area.y)
+        };
+        c.bold("!", x, y, 12.0, text, Align::Left);
     }
     if let Some(&balance_area) = layout.bars.get(1) {
         let accent = c.colour(Role::Accent);
-        bar(c, balance_area, readings.balance, accent, ["L", "C", "R"]);
+        draw_bar(c, balance_area, readings.balance, accent, ["L", "C", "R"]);
     }
 }
 

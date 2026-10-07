@@ -659,20 +659,14 @@ fn point_level(bins: &[f32], point: &PointBins) -> f32 {
         let last = bins.len() - 1;
         let below = (point.centre.floor() as usize).min(last);
         let at = |i: usize| bins[i.min(last)];
-        let (p0, p1, p2, p3) = (
+        let points = [
             at(below.saturating_sub(1)),
             at(below),
             at(below + 1),
             at(below + 2),
-        );
-        let t = point.centre - below as f32;
-        let (t2, t3) = (t * t, t * t * t);
-        let level = 0.5
-            * (2.0 * p1
-                + (p2 - p0) * t
-                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3);
-        return level.clamp(p1.min(p2), p1.max(p2));
+        ];
+        let level = catmull_rom(points, point.centre - below as f32);
+        return level.clamp(points[1].min(points[2]), points[1].max(points[2]));
     }
     let span = &bins[point.first..point.end];
     if point.average {
@@ -681,6 +675,16 @@ fn point_level(bins: &[f32], point: &PointBins) -> f32 {
     } else {
         span.iter().copied().fold(SPECTRUM_FLOOR_DB, f32::max)
     }
+}
+
+/// The Catmull-Rom curve through `p[1]` (at `t` = 0) and `p[2]` (at 1),
+/// bent by the points either side.
+pub fn catmull_rom([p0, p1, p2, p3]: [f32; 4], t: f32) -> f32 {
+    let (t2, t3) = (t * t, t * t * t);
+    0.5 * (2.0 * p1
+        + (p2 - p0) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3)
 }
 
 fn shown_range(sample_rate: u32, settings: &SpectrumSettings) -> (f32, f32) {

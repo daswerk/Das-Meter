@@ -24,7 +24,7 @@ pub use loudness::{
 pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};
 pub use spectrum::{
     Note, Spectrum, SpectrumAnalyser, SpectrumSettings, SpectrumStyle, SpectrumTrace,
-    WindowFunction, note_name,
+    WindowFunction, catmull_rom, note_name,
 };
 pub use stereometer::{
     StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,

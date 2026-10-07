@@ -67,7 +67,7 @@ _Avoid_: Skin, style, colour scheme
 ### Layout
 
 **Bar**:
-A strip of Meters docked to one screen edge. On Windows it can reserve its strip so other windows make room; on macOS it floats.
+A strip of Meters docked to one screen edge, or ⌘-dragged off it to anywhere on its display (it keeps lying along its edge's direction). Docked on Windows it can reserve its strip so other windows make room; on macOS it floats.
 _Avoid_: Dock, strip, toolbar
 
 **Pop-out**:
