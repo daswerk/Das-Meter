@@ -4,6 +4,9 @@
 //! events into the app core, draws the scene when the core says so, and
 //! otherwise sleeps.
 
+// A Windows release build is a GUI app: no console window behind it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod benchmark;
 mod capture;
 mod gpu;
