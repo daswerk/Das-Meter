@@ -69,9 +69,12 @@ fn process_makes_no_allocations() {
     let mut right = vec![-0.25_f32; 4_096];
     let mut run = |plugin: &mut Instance, block: usize, times: usize| {
         let mut out = [vec![0.0_f32; block], vec![0.0_f32; block]];
+        let transport = Instance::transport(120.0, 3.25, 0.0, (4, 4), true);
         allocations_during(|| {
-            for _ in 0..times {
-                plugin.process(&mut left[..block], &mut right[..block], &mut out);
+            for i in 0..times {
+                // With and without the host's transport.
+                let transport = (i % 2 == 0).then_some(&transport);
+                plugin.process_at(&mut left[..block], &mut right[..block], &mut out, transport);
             }
         })
     };

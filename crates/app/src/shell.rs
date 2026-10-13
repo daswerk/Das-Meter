@@ -19,6 +19,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId, WindowLevel};
 
 use crate::Audio;
@@ -65,6 +66,7 @@ pub fn run() {
         theme_folder: Vec::new(),
         theme_scan_at: Duration::ZERO,
         menu_anchor: None,
+        modifiers: ModifiersState::empty(),
         ui_view: None,
         ui_wake: None,
         #[cfg(target_os = "macos")]
@@ -112,6 +114,9 @@ enum Drag {
     End(BarEnd),
     /// A divider between Window mode's panes.
     Split(SplitId, Direction),
+    /// The whole Bar, ⌘-dragged off its edge, held at this point (logical
+    /// px in the Bar window).
+    Move([f32; 2]),
 }
 
 /// How often the themes folder is looked at, so a Theme file that comes back
@@ -119,13 +124,13 @@ enum Drag {
 const THEME_SCAN_EVERY: Duration = Duration::from_secs(2);
 
 /// How close to a divider or the Bar's inner edge the pointer grabs it, in logical px.
-const GRAB: f32 = 5.0;
+const GRAB: f32 = 6.0;
 
 /// The menu window's size for placing it before its content is measured.
 /// (It opens at 1 × 1 px and takes its content's size on its first frame, so
 /// nothing bigger flashes up.)
 const MENU_SIZE: (f32, f32) = (300.0, 420.0);
-const SETTINGS_SIZE: (f32, f32) = (460.0, 640.0);
+const SETTINGS_SIZE: (f32, f32) = (760.0, 720.0);
 
 struct AppWindow {
     role: Role,
@@ -201,6 +206,8 @@ struct Shell {
     theme_scan_at: Duration,
     /// Where the open menu was right-clicked, on screen.
     menu_anchor: Option<[f32; 2]>,
+    /// The modifier keys held: ⌘ (Ctrl elsewhere) drags the Bar around.
+    modifiers: ModifiersState,
     /// The scene without the Meters' live content, as the menu and panel last drew it.
     ui_view: Option<Scene>,
     /// When an egui layer asked to be drawn again (an animation, a tooltip).
@@ -240,6 +247,9 @@ fn ui_view(scene: &Scene) -> Scene {
                     picked: meter.picked,
                     show_source_label: meter.show_source_label,
                     overrides: meter.overrides.clone(),
+                    overlay: meter.overlay.clone(),
+                    activity: 1.0,
+                    hovered: false,
                 })
                 .collect(),
             key: window.key,
@@ -270,6 +280,7 @@ fn ui_view(scene: &Scene) -> Scene {
         launch_at_login: scene.launch_at_login,
         app: scene.app,
         max_frame_rate_cap: scene.max_frame_rate_cap,
+        bar: scene.bar,
     }
 }
 
@@ -553,6 +564,22 @@ impl Shell {
                 .with_min_inner_size(LogicalSize::new(360.0, 240.0));
             self.open(event_loop, Role::Settings, attributes);
         }
+        // The settings stay above a Bar or Window that floats on top.
+        let above = scene.windows.iter().any(|w| w.on_top);
+        if let Some(id) = self.find(Role::Settings) {
+            let app = self.windows.get_mut(&id).expect("found");
+            if app.on_top != Some(above) {
+                #[cfg(target_os = "macos")]
+                crate::macos::set_above_floating(&app.window, above);
+                #[cfg(not(target_os = "macos"))]
+                app.window.set_window_level(if above {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                });
+                app.on_top = Some(above);
+            }
+        }
         // The menu and the panel show settings, not audio: they redraw only
         // when what they show changes.
         let ui_view = ui_view(&scene);
@@ -649,6 +676,15 @@ impl Shell {
                 Request::RenamePreset { index, name } => {
                     self.core
                         .handle(Event::RenamePreset { index, name: &name }, now);
+                }
+                Request::RenameTheme { index, name } => {
+                    self.core.handle(
+                        Event::RenameTheme {
+                            theme: index,
+                            name: &name,
+                        },
+                        now,
+                    );
                 }
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
@@ -885,6 +921,13 @@ impl Shell {
             return;
         };
         let event = match drag {
+            Drag::Move([held_x, held_y]) => {
+                // Measured on screen: the window moves while it's dragged.
+                let Some(window) = app.frame() else { return };
+                Event::MoveBar {
+                    to: [window.x + x - held_x, window.y + y - held_y],
+                }
+            }
             Drag::Divider(divider) => Event::MoveDivider {
                 divider,
                 at: if edge.horizontal() {
@@ -967,6 +1010,14 @@ impl ApplicationHandler for Shell {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let now = self.now();
+        if let WindowEvent::ModifiersChanged(modifiers) = &event {
+            self.modifiers = modifiers.state();
+        }
+        let moving = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
         let Some(app) = self.windows.get_mut(&id) else {
             return;
         };
@@ -1079,7 +1130,7 @@ impl ApplicationHandler for Shell {
                         Some(Drag::Divider(_) | Drag::End(_)) => Some(horizontal),
                         Some(Drag::Thickness) => Some(!horizontal),
                         Some(Drag::Split(_, direction)) => Some(direction == Direction::SideBySide),
-                        None => None,
+                        Some(Drag::Move(_)) | None => None,
                     };
                     app.window.set_cursor(match along {
                         Some(true) => CursorIcon::ColResize,
@@ -1100,7 +1151,34 @@ impl ApplicationHandler for Shell {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
-            } => app.drag = None,
+            } => {
+                // A divider drag ends; otherwise a box dragged over a Spectrum may.
+                if app.drag.take().is_some() {
+                    return;
+                }
+                let (Role::Meters(window), Some(cursor)) = (role, app.cursor) else {
+                    return;
+                };
+                let at = app.fraction(cursor);
+                self.core.handle(Event::Release { window, at }, now);
+            }
+            // A handle (the Bar's edge or a divider) or a ⌘-drag of the Bar
+            // wins over whatever egui shows there.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } if matches!(role, Role::Meters(_))
+                && app.cursor.is_some()
+                && (app.handle.is_some() || (moving && role == Role::Meters(WindowKey::Bar))) =>
+            {
+                app.drag = match (moving, app.cursor) {
+                    (true, Some(cursor)) if role == Role::Meters(WindowKey::Bar) => {
+                        Some(Drag::Move(cursor))
+                    }
+                    _ => app.handle,
+                };
+            }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button,
@@ -1108,10 +1186,6 @@ impl ApplicationHandler for Shell {
             } if !on_ui => {
                 let Role::Meters(window) = role else { return };
                 let Some(cursor) = app.cursor else { return };
-                if button == MouseButton::Left && app.handle.is_some() {
-                    app.drag = app.handle;
-                    return;
-                }
                 let at = app.fraction(cursor);
                 match button {
                     MouseButton::Left => self.core.handle(Event::Click { window, at }, now),

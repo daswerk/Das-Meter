@@ -53,6 +53,34 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           auval -v aufx DmSd DsWk
 
+  windows-installer:
+    name: Windows test installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the app
+        run: cargo build --release --locked -p dasmeter-app
+      - name: Send Plugin bundles (CLAP and VST3)
+        shell: bash
+        run: scripts/bundle-send-plugin.sh
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          $version = (cargo pkgid -p dasmeter-app) -replace '.*[#@]', ''
+          & $iscc "/DAppVersion=$version" "/DRoot=$PWD" installer\windows\das-meter.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Das-Meter-windows-x64-setup
+          path: target/installer/*.exe
+          if-no-files-found: error
+
   dependencies:
     name: Licences and dependencies
     runs-on: ubuntu-latest

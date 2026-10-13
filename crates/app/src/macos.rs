@@ -8,8 +8,8 @@ use dasmeter_core::{Display, Fingerprint, Rect, Screen};
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject, Sel};
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSScreen, NSView, NSWindow,
-    NSWindowCollectionBehavior,
+    NSApplication, NSApplicationActivationPolicy, NSFloatingWindowLevel, NSNormalWindowLevel,
+    NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
 };
 use objc2_foundation::{NSArray, NSRect, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -135,6 +135,19 @@ pub fn set_over_fullscreen(window: &Window, over: bool) {
             | NSWindowCollectionBehavior::FullScreenAuxiliary
     } else {
         NSWindowCollectionBehavior::Managed
+    });
+}
+
+/// Puts `window` just above floating windows (a Bar or Window that floats
+/// on top), so it can't end up behind them; or back at the normal level.
+pub fn set_above_floating(window: &Window, above: bool) {
+    let Some(ns_window) = ns_window(window) else {
+        return;
+    };
+    ns_window.setLevel(if above {
+        NSFloatingWindowLevel + 1
+    } else {
+        NSNormalWindowLevel
     });
 }
 

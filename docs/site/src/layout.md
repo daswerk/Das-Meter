@@ -8,6 +8,15 @@ settings.
 A strip of Meters docked to a screen edge. Drag its inner edge to change its
 thickness, drag between Meters to share out the space, and drag its ends to
 make it shorter. Choose the edge in the settings (**Bar ▸ Edge**).
+Hold **⌘** (Ctrl on Windows) and drag the Bar to put it anywhere on the
+screen; it keeps its size, can still be resized there, and stops reserving
+space. Picking an edge docks it again.
+
+The Bar holds as many Meters as you like, of any kind. **Add Meter** in a
+Meter's right-click menu puts a new one next to it, sharing its space, on the
+side you right-clicked: the menu names that side (**Add Meter on the left**).
+**Change Meter** swaps the Meter you right-clicked for another kind, and
+**Remove from Bar** takes one out.
 
 - **Float on Top** (**Window ▸ Float on Top**) keeps it above other windows.
 - **Reserve space** (Windows) makes other windows make room for the Bar.
@@ -21,8 +30,11 @@ its right-click menu; **Dock back** (or closing the window) returns it.
 ## Window mode
 
 All Meters in one ordinary window, split into panes. Drag the dividers to
-resize panes; **Split side by side**, **Split stacked** and **Close pane**
-are in a Meter's right-click menu.
+resize panes; **Add Meter**, **Change Meter**, **Split side by side**,
+**Split stacked** and **Remove Meter** are in a Meter's right-click menu.
+**Add Meter** splits the pane you right-clicked on the side nearest the
+pointer: right-click the upper part of a Meter and the new one goes above
+it, near its right edge and it goes to the right.
 **Always on top** is in the settings.
 
 ## Fullscreen apps
