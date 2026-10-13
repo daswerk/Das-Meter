@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use dasmeter_analysis::{
     CepstrumAnalyser, CepstrumSettings, ChannelView, LoudnessAnalyser, LoudnessSettings,
-    SpectrogramAnalyser, SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings,
-    StereoReadings, StereoView, StereometerAnalyser, StereometerSettings, WaveformAnalyser,
-    WaveformColumn, WaveformSettings, note_name,
+    Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
+    SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView,
+    StereometerAnalyser, StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings,
+    note_name,
 };
 
 use crate::phase_scope::{PhaseScope, PhaseScopeView};
@@ -290,6 +291,14 @@ impl Default for CepstrumMeterSettings {
     }
 }
 
+/// The Oscilloscope: the wave itself over a few milliseconds, held still on
+/// its rising edge.
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct OscilloscopeMeterSettings {
+    pub analysis: OscilloscopeSettings,
+}
+
 /// The Spectrogram: the Spectrum of the mono sum over time, scrolling left.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -391,6 +400,7 @@ pub enum MeterSettings {
     Cepstrum(CepstrumMeterSettings),
     Spectrogram(SpectrogramMeterSettings),
     PhaseScope(PhaseScopeMeterSettings),
+    Oscilloscope(OscilloscopeMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -403,10 +413,11 @@ pub enum MeterKind {
     Cepstrum,
     Spectrogram,
     PhaseScope,
+    Oscilloscope,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 7] = [
+    pub const ALL: [MeterKind; 8] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -414,6 +425,7 @@ impl MeterKind {
         MeterKind::Cepstrum,
         MeterKind::Spectrogram,
         MeterKind::PhaseScope,
+        MeterKind::Oscilloscope,
     ];
 }
 
@@ -432,6 +444,9 @@ impl MeterSettings {
                 MeterSettings::Spectrogram(SpectrogramMeterSettings::default())
             }
             MeterKind::PhaseScope => MeterSettings::PhaseScope(PhaseScopeMeterSettings::default()),
+            MeterKind::Oscilloscope => {
+                MeterSettings::Oscilloscope(OscilloscopeMeterSettings::default())
+            }
         }
     }
 
@@ -444,6 +459,7 @@ impl MeterSettings {
             MeterSettings::Cepstrum(_) => MeterKind::Cepstrum,
             MeterSettings::Spectrogram(_) => MeterKind::Spectrogram,
             MeterSettings::PhaseScope(_) => MeterKind::PhaseScope,
+            MeterSettings::Oscilloscope(_) => MeterKind::Oscilloscope,
         }
     }
 
@@ -457,6 +473,7 @@ impl MeterSettings {
             MeterSettings::Cepstrum(_) => "Cepstrum",
             MeterSettings::Spectrogram(_) => "Spectrogram",
             MeterSettings::PhaseScope(_) => "Phase Scope",
+            MeterSettings::Oscilloscope(_) => "Oscilloscope",
         }
     }
 }
@@ -552,6 +569,12 @@ pub enum MeterView {
         settings: PhaseScopeMeterSettings,
         scope: Box<PhaseScopeView>,
     },
+    Oscilloscope {
+        settings: OscilloscopeMeterSettings,
+        /// The traces (one, or two for L/R and M/S), the window, whether it
+        /// is held still and the auto gain.
+        scope: Oscilloscope,
+    },
 }
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
@@ -600,6 +623,7 @@ enum Analyser {
     Cepstrum(Box<CepstrumAnalyser>),
     Spectrogram(Box<SpectrogramAnalyser>),
     PhaseScope(Box<PhaseScope>),
+    Oscilloscope(Box<OscilloscopeAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -902,6 +926,9 @@ impl Meter {
                 a.set_settings(s.analysis)
             }
             (Some(Analyser::PhaseScope(a)), MeterSettings::PhaseScope(s)) => a.set_settings(s),
+            (Some(Analyser::Oscilloscope(a)), MeterSettings::Oscilloscope(s)) => {
+                a.set_settings(s.analysis)
+            }
             _ => debug_assert!(!same_kind),
         }
         if !same_kind {
@@ -918,6 +945,7 @@ impl Meter {
             Analyser::Cepstrum(a) => a.sample_rate(),
             Analyser::Spectrogram(a) => a.sample_rate(),
             Analyser::PhaseScope(a) => a.sample_rate(),
+            Analyser::Oscilloscope(a) => a.sample_rate(),
         })
     }
 
@@ -947,6 +975,7 @@ impl Meter {
             Some(Analyser::Loudness(a)) => a.process(frames),
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
+            Some(Analyser::Oscilloscope(a)) => a.process(frames),
             Some(Analyser::Spectrogram(a)) => {
                 let before = a.completed();
                 a.process(frames);
@@ -1139,6 +1168,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::PhaseScope(s) => {
             Analyser::PhaseScope(Box::new(PhaseScope::new(sample_rate, *s)))
         }
+        MeterSettings::Oscilloscope(s) => {
+            Analyser::Oscilloscope(Box::new(OscilloscopeAnalyser::new(sample_rate, s.analysis)))
+        }
     }
 }
 
@@ -1300,6 +1332,12 @@ fn build_view(
             settings,
             scope: Box::new(a.view()),
         },
+        (Analyser::Oscilloscope(a), MeterSettings::Oscilloscope(settings)) => {
+            MeterView::Oscilloscope {
+                settings,
+                scope: a.update().clone(),
+            }
+        }
         _ => unreachable!("a Meter's analyser always matches its settings"),
     }
 }

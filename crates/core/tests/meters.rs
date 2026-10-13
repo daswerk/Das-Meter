@@ -891,3 +891,49 @@ fn the_waveform_scrolls_between_blocks_and_stands_still_in_silence() {
     app.feed(&both(&silence(frames(RATE, 6.0))));
     assert_eq!(lag(&app.settle()), 0.0);
 }
+
+#[test]
+fn an_oscilloscope_holds_the_wave_still_from_its_rising_edge() {
+    let mut app = App::playing();
+    app.send(Event::SetMeter {
+        meter: SPECTRUM,
+        settings: MeterSettings::default_of(dasmeter_core::MeterKind::Oscilloscope),
+    });
+    let scope = |app: &mut App| match &app.draw()[SPECTRUM] {
+        MeterView::Oscilloscope { scope, .. } => scope.clone(),
+        other => panic!("{other:?}"),
+    };
+    app.feed(&both(&sine(RATE, 440.0, -12.0, 0.0, frames(RATE, 2.0))));
+    let first = scope(&mut app);
+    assert_eq!(first.traces.len(), 1, "mono by default");
+    assert!(first.triggered);
+    assert_eq!(first.window, Duration::from_millis(20));
+    // Starts on the rising edge, and auto gain (rising over half a second)
+    // has filled the height.
+    let trace = &first.traces[0];
+    assert!(
+        trace[0].abs() < 0.05 && trace[1] > trace[0],
+        "{:?}",
+        &trace[..3]
+    );
+    let peak = trace.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(peak > 0.8, "{peak}");
+
+    // L/R: two traces.
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Oscilloscope(s) = s {
+            s.analysis.channels = ChannelView::LeftRight;
+            s.analysis.window = Duration::from_secs(5);
+        }
+    });
+    let Some(MeterSettings::Oscilloscope(kept)) = app.core.meter_settings(SPECTRUM) else {
+        panic!()
+    };
+    assert_eq!(
+        kept.analysis.window,
+        Duration::from_millis(200),
+        "kept within its limits"
+    );
+    app.feed(&both(&sine(RATE, 440.0, -12.0, 0.0, frames(RATE, 0.5))));
+    assert_eq!(scope(&mut app).traces.len(), 2);
+}

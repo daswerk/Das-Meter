@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|WxH]`
+//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -320,6 +320,37 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 core.decide(now);
             }
             core.handle(Event::Pointer(Some((WindowKey::Bar, [0.4, 0.5]))), now);
+        }
+        // The Oscilloscope in the Spectrum's place, on a 220 Hz tone with a
+        // few harmonics; `oscilloscope-lr` shows Left and Right, the right
+        // quieter and a little late.
+        Some(option @ ("oscilloscope" | "oscilloscope-lr")) => {
+            let mut settings = dasmeter_core::OscilloscopeMeterSettings::default();
+            let lr = option == "oscilloscope-lr";
+            if lr {
+                settings.analysis.channels = dasmeter_analysis::ChannelView::LeftRight;
+            }
+            let settings = dasmeter_core::MeterSettings::Oscilloscope(settings);
+            core.handle(Event::SetMeter { meter: 1, settings }, now);
+            let wave = |t: f64| -> f32 {
+                let x: f64 = [(1, 1.0), (2, 0.35), (3, 0.2), (5, 0.08)]
+                    .iter()
+                    .map(|&(k, a)| a * (std::f64::consts::TAU * 220.0 * f64::from(k) * t).sin())
+                    .sum();
+                (0.2 * x) as f32
+            };
+            let tone: Vec<f32> = (0..RATE as usize)
+                .flat_map(|i| {
+                    let t = i as f64 / f64::from(RATE);
+                    let right = if lr { 0.6 * wave(t - 0.0006) } else { wave(t) };
+                    [wave(t), right]
+                })
+                .collect();
+            for block in tone.chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
         }
         // The Phase Scope in the Spectrum's place, on a kick and a bass at
         // 120 BPM: the typed-in tempo, a beat or (`phase-scope-bar`) a bar,

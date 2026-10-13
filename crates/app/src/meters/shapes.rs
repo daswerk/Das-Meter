@@ -311,6 +311,57 @@ impl Shapes {
         }
     }
 
+    /// Glows along the polyline through `points` as one ribbon: each point
+    /// is pushed out along the average of its two segments' normals, so a
+    /// sharp turn leaves no gaps or overlaps (which [`Shapes::glow_polyline`]
+    /// shows as spikes on a busy wave).
+    pub fn glow_ribbon(&mut self, points: &[[f32; 2]], width: f32, colour: Colour) {
+        if points.len() < 2 || width <= 0.0 {
+            return;
+        }
+        let normal = |a: [f32; 2], b: [f32; 2]| {
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let length = (dx * dx + dy * dy).sqrt();
+            if length == 0.0 {
+                None
+            } else {
+                Some([-dy / length, dx / length])
+            }
+        };
+        let last = points.len() - 1;
+        let normals: Vec<[f32; 2]> = (0..=last)
+            .map(|i| {
+                let before = (i > 0).then(|| normal(points[i - 1], points[i])).flatten();
+                let after = (i < last)
+                    .then(|| normal(points[i], points[i + 1]))
+                    .flatten();
+                let [x, y] = match (before, after) {
+                    (Some(a), Some(b)) => [a[0] + b[0], a[1] + b[1]],
+                    (Some(n), None) | (None, Some(n)) => n,
+                    (None, None) => [0.0, 0.0],
+                };
+                let length = (x * x + y * y).sqrt();
+                if length == 0.0 {
+                    [0.0, 0.0]
+                } else {
+                    [x / length * width, y / length * width]
+                }
+            })
+            .collect();
+        let clear = colour.faded(0.0);
+        let at = |i: usize, s: f32| {
+            [
+                points[i][0] + normals[i][0] * s,
+                points[i][1] + normals[i][1] * s,
+            ]
+        };
+        for i in 0..last {
+            let (a, b) = (points[i], points[i + 1]);
+            self.quad([at(i, 1.0), at(i + 1, 1.0), a, b], clear, colour);
+            self.quad([a, b, at(i, -1.0), at(i + 1, -1.0)], colour, clear);
+        }
+    }
+
     /// A horizontal line from `x0` to `x1` at `y`, fading in over `fade`
     /// pixels at each end.
     pub fn faded_hline(

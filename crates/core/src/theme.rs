@@ -119,6 +119,9 @@ pub enum Role {
     PhaseScopeCancel,
     PhaseScopeSum,
     PhaseScopeGrid,
+    // Oscilloscope.
+    OscilloscopeTrace,
+    OscilloscopeSecond,
 }
 
 impl Role {
@@ -150,6 +153,8 @@ impl Role {
             Role::PhaseScopeCancel => "phase_scope_cancel",
             Role::PhaseScopeSum => "phase_scope_sum",
             Role::PhaseScopeGrid => "phase_scope_grid",
+            Role::OscilloscopeTrace => "oscilloscope_trace",
+            Role::OscilloscopeSecond => "oscilloscope_second",
         }
     }
 
@@ -181,10 +186,12 @@ impl Role {
             Role::PhaseScopeCancel => "Phase Scope cancelling",
             Role::PhaseScopeSum => "Phase Scope sum",
             Role::PhaseScopeGrid => "Phase Scope Cycle grid",
+            Role::OscilloscopeTrace => "Oscilloscope trace",
+            Role::OscilloscopeSecond => "Oscilloscope R / Side",
         }
     }
 
-    pub const ALL: [Role; 25] = [
+    pub const ALL: [Role; 27] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -210,6 +217,8 @@ impl Role {
         Role::PhaseScopeCancel,
         Role::PhaseScopeSum,
         Role::PhaseScopeGrid,
+        Role::OscilloscopeTrace,
+        Role::OscilloscopeSecond,
     ];
 }
 
@@ -244,6 +253,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::StereometerTrace => Colour::rgb(0x7f, 0xe0, 0xc8),
             Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xb6),
+            Role::OscilloscopeTrace => Colour::rgb(0x6e, 0xf0, 0xa0),
+            Role::OscilloscopeSecond => Colour::rgb(0x5e, 0xc8, 0xff),
             Role::PhaseScopeTrace => Colour::rgb(0x8c, 0xc8, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::PhaseScopeSum => Colour::rgb(0xe8, 0xe8, 0xe8),
@@ -280,6 +291,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xd6, 0x28, 0x28),
             Role::StereometerTrace => Colour::rgb(0x0f, 0x8f, 0x7a),
             Role::CepstrumTrace => Colour::rgb(0xc2, 0x2f, 0x7a),
+            Role::OscilloscopeTrace => Colour::rgb(0x1f, 0x9a, 0x5a),
+            Role::OscilloscopeSecond => Colour::rgb(0x1f, 0x6f, 0xd1),
             Role::PhaseScopeTrace => Colour::rgb(0x1f, 0x6f, 0xc2),
             Role::PhaseScopeCancel => Colour::rgb(0xd6, 0x28, 0x28),
             Role::PhaseScopeSum => Colour::rgb(0x2a, 0x2e, 0x33),
@@ -315,6 +328,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::StereometerTrace => Colour::rgb(0xff, 0xff, 0xff),
             Role::CepstrumTrace => Colour::rgb(0x3d, 0xa5, 0xff),
+            Role::OscilloscopeTrace => Colour::rgb(0xff, 0xb0, 0x00),
+            Role::OscilloscopeSecond => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::PhaseScopeTrace => Colour::rgb(0xff, 0xff, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::PhaseScopeSum => Colour::rgb(0xff, 0xd6, 0x00),
@@ -349,6 +364,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::StereometerTrace => Colour::rgb(0xd4, 0xa8, 0xff),
             Role::CepstrumTrace => Colour::rgb(0xff, 0x7a, 0xd9),
+            Role::OscilloscopeTrace => Colour::rgb(0xb4, 0x8c, 0xff),
+            Role::OscilloscopeSecond => Colour::rgb(0x7f, 0xe0, 0xff),
             Role::PhaseScopeTrace => Colour::rgb(0xb4, 0x8c, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::PhaseScopeSum => Colour::rgb(0xf0, 0xe8, 0xff),
@@ -383,6 +400,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x5e),
             Role::StereometerTrace => Colour::rgb(0x6f, 0xf5, 0xe6),
             Role::CepstrumTrace => Colour::rgb(0xff, 0x8f, 0xb3),
+            Role::OscilloscopeTrace => Colour::rgb(0x5e, 0xf0, 0xe0),
+            Role::OscilloscopeSecond => Colour::rgb(0xff, 0xc8, 0x6e),
             Role::PhaseScopeTrace => Colour::rgb(0x5f, 0xe8, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x5e),
             Role::PhaseScopeSum => Colour::rgb(0xea, 0xfc, 0xfc),
@@ -417,6 +436,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xe0, 0x5a, 0x5a),
             Role::StereometerTrace => Colour::rgb(0xe0, 0xe0, 0xe0),
             Role::CepstrumTrace => Colour::rgb(0xcf, 0xcf, 0xd4),
+            Role::OscilloscopeTrace => Colour::rgb(0xe0, 0xe0, 0xe4),
+            Role::OscilloscopeSecond => Colour::rgb(0x9a, 0xa0, 0xa8),
             Role::PhaseScopeTrace => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::PhaseScopeCancel => Colour::rgb(0xe0, 0x5a, 0x5a),
             Role::PhaseScopeSum => Colour::rgb(0xff, 0xff, 0xff),
@@ -452,6 +473,8 @@ impl Palette {
             Role::CorrelationNegative => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::StereometerTrace => Colour::rgb(0x4f, 0xd8, 0xff),
             Role::CepstrumTrace => Colour::rgb(0xd2, 0x7b, 0xff),
+            Role::OscilloscopeTrace => Colour::rgb(0x8c, 0xff, 0xc8),
+            Role::OscilloscopeSecond => Colour::rgb(0x5e, 0xd8, 0xff),
             Role::PhaseScopeTrace => Colour::rgb(0xf2, 0xc9, 0x4c),
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::PhaseScopeSum => Colour::rgb(0xf2, 0xf0, 0xfa),

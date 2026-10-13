@@ -17,9 +17,10 @@ use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_UR
 use dasmeter_core::{
     BigReading, Card, CepstrumMeterSettings, Colour, CycleLength, Direction, Edge, Event,
     LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
-    MeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role, Scene, ScreenMode,
-    SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings, Steadiness, StereoDrawing,
-    StereometerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
+    MeterSettings, OscilloscopeMeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role,
+    Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings,
+    Steadiness, StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
+    WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -796,6 +797,31 @@ fn cepstrum_basic(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
         .changed()
 }
 
+fn oscilloscope_basic(ui: &mut egui::Ui, s: &mut OscilloscopeMeterSettings) -> bool {
+    let a = &mut s.analysis;
+    let mut changed = choice(ui, "Channels", &mut a.channels, &CHANNEL_VIEWS);
+    changed |= duration_slider(
+        ui,
+        "Window",
+        &mut a.window,
+        limits::OSCILLOSCOPE_WINDOW,
+        false,
+    );
+    changed |= ui
+        .add(Toggle::new(&mut a.trigger, "Hold still"))
+        .on_hover_text(
+            "Start each picture on a rising zero crossing, so a steady wave stands still",
+        )
+        .changed();
+    changed |= ui
+        .add(Toggle::new(&mut a.auto_gain, "Auto gain"))
+        .on_hover_text(
+            "Raise quiet audio to fill the height (up to +48 dB); falls at once, rises slowly",
+        )
+        .changed();
+    changed
+}
+
 fn cepstrum_advanced(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
     let a = &mut s.analysis;
     let sizes: Vec<(usize, String)> = limits::CEPSTRUM_FFT_SIZES
@@ -1047,6 +1073,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Cepstrum(w) => cepstrum_basic(ui, w),
         MeterSettings::Spectrogram(w) => spectrogram_basic(ui, w),
         MeterSettings::PhaseScope(w) => phase_scope_basic(ui, w, &mut tap),
+        MeterSettings::Oscilloscope(w) => oscilloscope_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1069,6 +1096,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Cepstrum(w) => cepstrum_advanced(ui, w),
         MeterSettings::Spectrogram(w) => spectrogram_advanced(ui, w),
         MeterSettings::PhaseScope(_) => false, // all in the menu
+        MeterSettings::Oscilloscope(_) => false, // all in the basics
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1299,6 +1327,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::Cepstrum => "Cepstrum",
         MeterKind::Spectrogram => "Spectrogram",
         MeterKind::PhaseScope => "Phase Scope",
+        MeterKind::Oscilloscope => "Oscilloscope",
     }
 }
 
@@ -1911,7 +1940,7 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
 }
 
 /// The Theme's colours by the Meter that uses them.
-const COLOUR_GROUPS: [(&str, &[Role]); 7] = [
+const COLOUR_GROUPS: [(&str, &[Role]); 8] = [
     (
         "General",
         &[
@@ -1963,6 +1992,10 @@ const COLOUR_GROUPS: [(&str, &[Role]); 7] = [
         ],
     ),
     ("Cepstrum", &[Role::CepstrumTrace]),
+    (
+        "Oscilloscope",
+        &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
+    ),
 ];
 
 /// A small Meter drawn in the Theme's colours: a panel with a grid, a
@@ -2083,6 +2116,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::PhaseScopeSum,
             Role::PhaseScopeGrid,
         ],
+        MeterSettings::Oscilloscope(_) => &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
     }
 }
 

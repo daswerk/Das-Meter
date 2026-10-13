@@ -12,9 +12,9 @@ use dasmeter_analysis::{
 };
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, PhaseScopeMeterSettings,
-    SpectrogramMeterSettings, SpectrumMeterSettings, StereometerMeterSettings,
-    WaveformMeterSettings,
+    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, OscilloscopeMeterSettings,
+    PhaseScopeMeterSettings, SpectrogramMeterSettings, SpectrumMeterSettings,
+    StereometerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -94,6 +94,10 @@ pub const LOUDNESS_BAR: (f64, f64) = (-120.0, 6.0);
 pub const CEPSTRUM_FFT_SIZES: [usize; 3] = dasmeter_analysis::cepstrum::FFT_SIZES;
 pub const CEPSTRUM_PITCH: (f32, f32) = dasmeter_analysis::cepstrum::PITCH_LIMITS;
 pub const CEPSTRUM_SMOOTHING: (Duration, Duration) = (Duration::ZERO, Duration::from_secs(1));
+
+/// The Oscilloscope's shortest and longest window.
+pub const OSCILLOSCOPE_WINDOW: (Duration, Duration) =
+    dasmeter_analysis::oscilloscope::WINDOW_LIMITS;
 /// The Spectrogram's FFT sizes and span choices (seconds).
 pub const SPECTROGRAM_FFT_SIZES: [usize; 4] = dasmeter_analysis::spectrogram::FFT_SIZES;
 pub const SPECTROGRAM_SPANS: [u64; 4] = [5, 10, 20, 30];
@@ -165,6 +169,7 @@ impl MeterSettings {
             MeterSettings::Cepstrum(s) => MeterSettings::Cepstrum(s.clamped()),
             MeterSettings::Spectrogram(s) => MeterSettings::Spectrogram(s.clamped()),
             MeterSettings::PhaseScope(s) => MeterSettings::PhaseScope(s.clamped()),
+            MeterSettings::Oscilloscope(s) => MeterSettings::Oscilloscope(s.clamped()),
         }
     }
 }
@@ -273,6 +278,14 @@ impl CepstrumMeterSettings {
         );
         a.smoothing = clamp_duration(a.smoothing, CEPSTRUM_SMOOTHING);
         self
+    }
+}
+
+impl OscilloscopeMeterSettings {
+    fn clamped(self) -> Self {
+        OscilloscopeMeterSettings {
+            analysis: self.analysis.clamped(),
+        }
     }
 }
 

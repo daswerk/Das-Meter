@@ -280,6 +280,7 @@ fn each_setting_changes_the_meter_and_its_scene() {
             MeterView::Cepstrum { settings, .. } => MeterSettings::Cepstrum(*settings),
             MeterView::Spectrogram { settings, .. } => MeterSettings::Spectrogram(*settings),
             MeterView::PhaseScope { settings, .. } => MeterSettings::PhaseScope(*settings),
+            MeterView::Oscilloscope { settings, .. } => MeterSettings::Oscilloscope(*settings),
         };
         assert_eq!(drawn, wanted[meter], "meter {meter} draws its new settings");
     }

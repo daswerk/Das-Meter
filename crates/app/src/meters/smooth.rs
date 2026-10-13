@@ -113,6 +113,18 @@ impl Canvas<'_> {
         self.shapes.glow_polyline(points, width, colour);
     }
 
+    /// As [`Canvas::glow`], drawn as one ribbon, for a trace that turns
+    /// sharply and often (the Oscilloscope's).
+    pub fn glow_ribbon(&mut self, points: &[[f32; 2]], colour: Colour) {
+        let glow = self.styling.glow;
+        if !self.smooth() || glow <= 0.0 {
+            return;
+        }
+        let width = self.px(GLOW_WIDTH) * (0.5 + 0.5 * glow);
+        let colour = self.halo(colour).faded(GLOW_ALPHA * glow);
+        self.shapes.glow_ribbon(points, width, colour);
+    }
+
     /// The fill under the curve through `points` down to `base`, shaded
     /// from `top` at the line to `bottom` at the base; Smooth fades it out to
     /// nothing at the base.

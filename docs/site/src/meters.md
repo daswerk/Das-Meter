@@ -1,6 +1,6 @@
 # Meters
 
-Das-Meter has seven kinds of Meter. Right-click one for its settings; the settings
+Das-Meter has eight kinds of Meter. Right-click one for its settings; the settings
 panel has the same settings for every Meter.
 
 ## Waveform
@@ -148,6 +148,26 @@ then the words beside the number, then the number, so the traces keep the room.
 
 To show it, right-click a Meter and choose **Change Meter ▸ Phase Scope**,
 or **Add Meter ▸ Phase Scope**.
+
+## Oscilloscope
+
+The wave itself, across a short window of time (20 ms by default, anything
+from 1 to 200 ms). With **Hold still** on, each picture starts on a rising
+zero crossing, so a steady tone stands still instead of rolling past; when
+nothing repeats (noise, silence) it runs free and the corner says "Free".
+With it off, it always shows the newest audio.
+
+**Channels** shows the mono sum, or Left and Right (or Mid and Side) drawn
+over each other, the second in its own colour. **Auto gain** raises quiet
+audio to fill the height, by up to +48 dB, and shows how much in the corner:
+it drops at once when the audio gets louder and rises over about half a
+second when it gets quieter, and holds still in silence.
+
+Lines across mark the centre and half height; the time divisions are
+labelled in milliseconds.
+
+To show it, right-click a Meter and choose **Change Meter ▸ Oscilloscope**,
+or **Add Meter ▸ Oscilloscope**.
 
 ## Small sizes
 

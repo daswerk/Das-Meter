@@ -32,9 +32,10 @@ pub use layout::{
 };
 pub use meters::{
     BigReading, CepstrumMeterSettings, CursorReadout, CycleLength, LoudnessMeterSettings, LufsBar,
-    MeterKind, MeterSettings, MeterView, PhaseScopeMeterSettings, SpectrogramMeterSettings,
-    SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings, SpectrumZoom, Steadiness,
-    StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
+    MeterKind, MeterSettings, MeterView, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings,
+    SpectrumZoom, Steadiness, StereoDrawing, StereometerMeterSettings, WaveformColouring,
+    WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};

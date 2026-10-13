@@ -42,7 +42,11 @@ _Avoid_: Waterfall, sonogram
 
 **Phase Scope**:
 The Meter that shows the waveform over one Cycle, held still so each beat lands in the same place. It can draw an Overlay Source on top to show where two tracks, such as kick and bass, push together or cancel out.
-_Avoid_: Oscilloscope, occularScope, cycle scope
+_Avoid_: occularScope, cycle scope (and Oscilloscope, which is its own Meter)
+
+**Oscilloscope**:
+The Meter that shows the wave itself over a few milliseconds, held still on a rising zero crossing so a steady tone stands still. Unlike the Phase Scope it knows nothing of tempo: its span is a fixed time.
+_Avoid_: Scope (alone), waveform view
 
 **Cycle**:
 The stretch of time a Phase Scope shows: one beat or one bar. It follows the DAW's tempo when listening to Send Plugins, and a typed-in or tapped tempo with System Capture.
@@ -53,7 +57,7 @@ The Meter for stereo image: where the sound sits between left and right, with th
 _Avoid_: Goniometer, vectorscope, correlometer
 
 **Channel View**:
-Which pair of channels a Waveform or Spectrum shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.
+Which pair of channels a Waveform, Spectrum or Oscilloscope shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.
 _Avoid_: Channel mode, routing
 
 **Preset**:

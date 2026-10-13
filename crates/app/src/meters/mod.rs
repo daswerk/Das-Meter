@@ -5,6 +5,7 @@ mod cepstrum;
 mod heatmap;
 mod labels;
 mod loudness;
+mod oscilloscope;
 mod phase_scope;
 mod shapes;
 mod smooth;
@@ -358,6 +359,9 @@ impl MeterRenderer {
                 ),
                 MeterView::PhaseScope { settings, scope } => {
                     phase_scope::draw(&mut c, inner, settings, scope)
+                }
+                MeterView::Oscilloscope { settings, scope } => {
+                    oscilloscope::draw(&mut c, inner, settings, scope)
                 }
             },
         }
