@@ -11,6 +11,8 @@ use std::time::Duration;
 
 use ebur128::{EbuR128, Mode};
 
+use crate::scales::{Ballistics, DEFAULT_VU_REFERENCE, Scale};
+
 /// Decibels below which a level reads as silence.
 pub const FLOOR_DB: f64 = f64::NEG_INFINITY;
 
@@ -61,6 +63,10 @@ pub struct LoudnessSettings {
     pub peak_hold: PeakHold,
     /// True peaks over this (dBTP) are counted. Default −1 dBTP.
     pub ceiling: f64,
+    /// The bars' scale and its ballistics. Default Peak.
+    pub scale: Scale,
+    /// 0 VU: the peak of a sine that reads it, in dBFS. Default −18.
+    pub vu_reference: f64,
 }
 
 impl Default for LoudnessSettings {
@@ -70,6 +76,8 @@ impl Default for LoudnessSettings {
             rms_mode: RmsMode::Aes17,
             peak_hold: PeakHold::For(Duration::from_secs(2)),
             ceiling: DEFAULT_CEILING_DBTP,
+            scale: Scale::Peak,
+            vu_reference: DEFAULT_VU_REFERENCE,
         }
     }
 }
@@ -90,6 +98,9 @@ pub struct ChannelLevels {
     pub clips: u32,
     /// True peaks over the ceiling since the last reset, each run counted once.
     pub true_peak_overs: u32,
+    /// The VU or PPM reading in dBFS of a sine's peak, when the scale has
+    /// ballistics; [`f64::NEG_INFINITY`] otherwise.
+    pub scale_level: f64,
 }
 
 /// Counts runs: each stretch that goes over counts once.
@@ -236,6 +247,7 @@ impl Window {
             peak_max: db(self.peak_max),
             clips: self.clips.count,
             true_peak_overs: self.true_peak_overs.count,
+            scale_level: FLOOR_DB,
         }
     }
 
@@ -287,6 +299,8 @@ pub struct LoudnessAnalyser {
     block_frames: usize,
     block_fill: usize,
     block_peaks: [f64; 2],
+    /// Each channel's VU or PPM, for those scales.
+    ballistics: [Ballistics; 2],
 }
 
 /// New audio after which the LUFS figures are asked for again: 100 ms, the
@@ -321,6 +335,7 @@ impl LoudnessAnalyser {
             block_frames: (sample_rate / TRUE_PEAK_BLOCKS_PER_SECOND).max(1) as usize,
             block_fill: 0,
             block_peaks: [0.0; 2],
+            ballistics: [Ballistics::new(settings.scale, sample_rate); 2],
         }
     }
 
@@ -360,9 +375,14 @@ impl LoudnessAnalyser {
             }
         }
         let [left, right] = &mut self.channels;
+        let ballistic = self.settings.scale.ballistic();
         for frame in interleaved.chunks_exact(2) {
             left.push(frame[0], self.hold_frames);
             right.push(frame[1], self.hold_frames);
+            if ballistic {
+                self.ballistics[0].push(frame[0]);
+                self.ballistics[1].push(frame[1]);
+            }
         }
         if let Some((lufs, since)) = self.lufs.get() {
             self.lufs.set(Some((lufs, since + whole / 2)));
@@ -442,8 +462,22 @@ impl LoudnessAnalyser {
             plr: ratio(true_peak_max, lufs.integrated),
             psr: ratio(recent_peak, lufs.short_term),
             true_peak_oversampled: self.sample_rate < NO_OVERSAMPLING_RATE,
-            left: self.channels[0].levels(self.settings.rms_mode),
-            right: self.channels[1].levels(self.settings.rms_mode),
+            left: ChannelLevels {
+                scale_level: self.scale_level(0),
+                ..self.channels[0].levels(self.settings.rms_mode)
+            },
+            right: ChannelLevels {
+                scale_level: self.scale_level(1),
+                ..self.channels[1].levels(self.settings.rms_mode)
+            },
+        }
+    }
+
+    fn scale_level(&self, channel: usize) -> f64 {
+        if self.settings.scale.ballistic() {
+            self.ballistics[channel].db()
+        } else {
+            FLOOR_DB
         }
     }
 
@@ -478,6 +512,9 @@ impl LoudnessAnalyser {
                 PeakHold::For(time) => Some(frames_in(self.sample_rate, time) as u64),
                 PeakHold::Infinite => None,
             };
+        }
+        if settings.scale != self.settings.scale {
+            self.ballistics = [Ballistics::new(settings.scale, self.sample_rate); 2];
         }
         self.settings = settings;
     }

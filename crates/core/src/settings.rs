@@ -82,6 +82,8 @@ pub const SPECTRUM_MAX_SMOOTHING: f32 = 1.0 / 3.0;
 pub const PEAK_HOLD: (Duration, Duration) = (Duration::from_millis(100), Duration::from_secs(30));
 /// The Loudness Meter's target, in LUFS.
 pub const LOUDNESS_TARGET: (f64, f64) = (-40.0, 0.0);
+/// The VU's reference: the peak of the sine that reads 0 VU, in dBFS.
+pub const VU_REFERENCE: (f64, f64) = (-24.0, -8.0);
 /// The Tuner's reference pitch, A4 in Hz.
 pub const TUNER_A4: (f32, f32) = (415.0, 466.0);
 /// The true-peak ceiling the counter counts overs of, in dBTP.
@@ -262,6 +264,8 @@ impl LoudnessMeterSettings {
         a.ceiling = (clamp_f64(a.ceiling, TRUE_PEAK_CEILING, defaults.analysis.ceiling) * 10.0)
             .round()
             / 10.0;
+        a.vu_reference =
+            clamp_f64(a.vu_reference, VU_REFERENCE, defaults.analysis.vu_reference).round();
         let (floor, top) = self.bar_range;
         let floor = clamp_f64(floor, LOUDNESS_BAR, defaults.bar_range.0);
         let top = clamp_f64(top, LOUDNESS_BAR, defaults.bar_range.1);

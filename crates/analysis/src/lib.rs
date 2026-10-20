@@ -8,6 +8,7 @@ pub mod cepstrum;
 mod channel_view;
 pub mod loudness;
 pub mod oscilloscope;
+pub mod scales;
 pub mod seconds;
 pub mod signals;
 pub mod spectrogram;
@@ -25,6 +26,7 @@ pub use loudness::{
     ChannelLevels, LoudnessAnalyser, LoudnessReadings, LoudnessSettings, PeakHold, RmsMode,
 };
 pub use oscilloscope::{Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings};
+pub use scales::{Ballistics, Scale};
 pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};
 pub use spectrum::{
     LongTerm, Note, REFERENCE_POINTS_PER_OCTAVE, REFERENCE_RANGE, Spectrum, SpectrumAnalyser,

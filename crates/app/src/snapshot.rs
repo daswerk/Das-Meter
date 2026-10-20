@@ -396,7 +396,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         Some(option)
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
-                || option == "loudness-counters"
+                || option.starts_with("loudness-")
                 || option == "spectrum-reference" =>
         {
             0
@@ -446,7 +446,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         (Some(option), _)
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
-                || option == "loudness-counters"
+                || option.starts_with("loudness-")
                 || option == "spectrum-reference" =>
         {
             (1440, 900)
@@ -831,6 +831,37 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         // shifted to a fixed key.
         Some(option) if option.starts_with("tonal-balance") => {
             now = tonal_balance(&mut core, &option["tonal-balance".len()..], now)?;
+        }
+        // The Loudness Meter alone with its bars on a scale: "loudness-scale-vu",
+        // "-ppm-din", "-ppm-nordic", "-ppm-bbc", "-ppm-ebu", "-k12", "-k14", "-k20".
+        Some(option) if option.starts_with("loudness-scale-") => {
+            use dasmeter_analysis::Scale;
+            let scale = match &option["loudness-scale-".len()..] {
+                "vu" => Scale::Vu,
+                "ppm-din" => Scale::PpmDin,
+                "ppm-nordic" => Scale::PpmNordic,
+                "ppm-bbc" => Scale::PpmBbc,
+                "ppm-ebu" => Scale::PpmEbu,
+                "k12" => Scale::K12,
+                "k14" => Scale::K14,
+                "k20" => Scale::K20,
+                other => return Err(format!("no scale {other:?}")),
+            };
+            now = solo(&mut core, "loudness", now)?;
+            let Some(dasmeter_core::MeterSettings::Loudness(mut settings)) = core.meter_settings(0)
+            else {
+                return Err("no Loudness Meter".into());
+            };
+            settings.show_bars = true;
+            settings.analysis.scale = scale;
+            core.handle(
+                Event::SetMeter {
+                    meter: 0,
+                    settings: dasmeter_core::MeterSettings::Loudness(settings),
+                },
+                now,
+            );
+            now = play(&mut core, &music(3.0), now);
         }
         // The Loudness Meter alone after music with a few clipped hits.
         Some("loudness-counters") => {
