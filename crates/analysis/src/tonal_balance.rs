@@ -769,3 +769,164 @@ impl LiveSummary {
         self.frames.iter()
     }
 }
+
+/// The narrowest a Target's range gets either side of its average, in dB:
+/// what one song alone gives, and the least a spread of songs gives.
+pub const MIN_RANGE_DB: f32 = 2.5;
+/// A song's key counts for aligning only this sure or surer.
+pub const KEY_CONFIDENCE: f32 = 0.15;
+/// The key a Target's songs are aligned to before averaging.
+pub const COMMON_KEY: Key = Key {
+    tonic: 0,
+    minor: false,
+};
+
+/// One song of a Target, as far as combining needs it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SongShape {
+    pub curve: Vec<f32>,
+    pub regions: [f32; 5],
+    pub key: Option<KeyEstimate>,
+    pub low_end_crest: [Option<f32>; 2],
+    pub low_end_mono: Option<f32>,
+}
+
+impl From<&Summary> for SongShape {
+    fn from(s: &Summary) -> SongShape {
+        SongShape {
+            curve: s.curve.clone(),
+            regions: s.regions,
+            key: s.key,
+            low_end_crest: s.low_end_crest,
+            low_end_mono: s.low_end_mono,
+        }
+    }
+}
+
+/// An average and how far either side of it is still in range.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Band {
+    pub average: f32,
+    pub range: f32,
+}
+
+impl Band {
+    /// How far `value` is outside the band: 0 inside, negative below, positive above.
+    pub fn outside(self, value: f32) -> f32 {
+        let (low, high) = (self.average - self.range, self.average + self.range);
+        if value < low {
+            value - low
+        } else if value > high {
+            value - high
+        } else {
+            0.0
+        }
+    }
+}
+
+/// A Target's songs combined: per grid point and region, an average and a
+/// range; its low end in [`COMMON_KEY`] until moved with [`in_key`](Self::in_key).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Combined {
+    pub curve: Vec<Band>,
+    pub regions: [Band; 5],
+    pub low_end_crest: [Option<Band>; 2],
+    pub low_end_mono: Option<Band>,
+    /// The key the fine low end is in now.
+    pub key: Key,
+    /// How many songs' keys were sure enough to align by.
+    pub aligned: usize,
+    pub songs: usize,
+}
+
+/// Averages and spreads.
+fn band_of(values: &[f32]) -> Option<Band> {
+    if values.is_empty() {
+        return None;
+    }
+    let n = values.len() as f32;
+    let average = values.iter().sum::<f32>() / n;
+    let spread = (values.iter().map(|v| (v - average).powi(2)).sum::<f32>() / n).sqrt();
+    Some(Band {
+        average,
+        range: spread.max(MIN_RANGE_DB),
+    })
+}
+
+/// Combines a Target's songs: each song's low end moved to [`COMMON_KEY`]
+/// (when its key is sure enough), then averaged in dB, with the spread as
+/// the range. `None` for no songs.
+pub fn combine(songs: &[SongShape]) -> Option<Combined> {
+    let first = songs.first()?;
+    let mut aligned = 0;
+    let curves: Vec<Vec<f32>> = songs
+        .iter()
+        .map(|song| match song.key {
+            Some(estimate) if estimate.confidence >= KEY_CONFIDENCE => {
+                aligned += 1;
+                shift_low_end(&song.curve, estimate.key.semitones_to(COMMON_KEY))
+            }
+            _ => song.curve.clone(),
+        })
+        .collect();
+    let points = first.curve.len();
+    let curve = (0..points)
+        .map(|i| {
+            let values: Vec<f32> = curves.iter().filter_map(|c| c.get(i).copied()).collect();
+            band_of(&values).expect("every song has a curve")
+        })
+        .collect();
+    let regions = [0, 1, 2, 3, 4].map(|r| {
+        band_of(&songs.iter().map(|s| s.regions[r]).collect::<Vec<_>>()).expect("there are songs")
+    });
+    let low_end_crest = [0, 1].map(|i| {
+        band_of(
+            &songs
+                .iter()
+                .filter_map(|s| s.low_end_crest[i])
+                .collect::<Vec<_>>(),
+        )
+    });
+    let low_end_mono = band_of(
+        &songs
+            .iter()
+            .filter_map(|s| s.low_end_mono)
+            .collect::<Vec<_>>(),
+    )
+    .map(|b| Band {
+        // Correlation lives on −1…+1: a range in dB means nothing here.
+        range: (b.range - MIN_RANGE_DB).max(0.0).max(0.1),
+        ..b
+    });
+    Some(Combined {
+        curve,
+        regions,
+        low_end_crest,
+        low_end_mono,
+        key: COMMON_KEY,
+        aligned,
+        songs: songs.len(),
+    })
+}
+
+impl Combined {
+    /// The same, its fine low end moved to `key` (the mix's).
+    pub fn in_key(&self, key: Key) -> Combined {
+        let semitones = self.key.semitones_to(key);
+        let averages: Vec<f32> = self.curve.iter().map(|b| b.average).collect();
+        let ranges: Vec<f32> = self.curve.iter().map(|b| b.range).collect();
+        let (averages, ranges) = (
+            shift_low_end(&averages, semitones),
+            shift_low_end(&ranges, semitones),
+        );
+        Combined {
+            curve: averages
+                .into_iter()
+                .zip(ranges)
+                .map(|(average, range)| Band { average, range })
+                .collect(),
+            key,
+            ..self.clone()
+        }
+    }
+}

@@ -269,3 +269,106 @@ fn a_sliding_live_summary_forgets() {
     let sub = Region::ALL.iter().position(|&r| r == Region::Sub).unwrap();
     assert!((summary.regions[sub] - plain.regions[sub]).abs() < 2.0);
 }
+
+mod targets {
+    use dasmeter_analysis::tonal_balance::{
+        Band, COMMON_KEY, Key, KeyEstimate, MIN_RANGE_DB, SongShape, combine, fine_points,
+        tonal_grid,
+    };
+
+    /// A song whose fine low end peaks two points (a semitone) per tonic step above C.
+    fn song(tonic: u8, sure: bool) -> SongShape {
+        let points = tonal_grid().len();
+        let mut curve = vec![-20.0; points];
+        let peak = 20 + 2 * usize::from(tonic);
+        curve[peak] = 0.0;
+        SongShape {
+            curve,
+            regions: [-10.0, -12.0, -15.0, -18.0, -25.0],
+            key: Some(KeyEstimate {
+                key: Key { tonic, minor: true },
+                confidence: if sure { 0.6 } else { 0.0 },
+            }),
+            low_end_crest: [Some(6.0), Some(8.0)],
+            low_end_mono: Some(0.95),
+        }
+    }
+
+    #[test]
+    fn songs_in_different_keys_line_up_before_averaging() {
+        // Peaks on F, D and E: each the fewest semitones down to C, they
+        // land on one point. (A would go three up, to the C an octave higher.)
+        let combined = combine(&[song(5, true), song(2, true), song(4, true)]).unwrap();
+        assert_eq!(combined.aligned, 3);
+        assert_eq!(combined.key, COMMON_KEY);
+        let top = combined
+            .curve
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.average.total_cmp(&b.1.average))
+            .unwrap();
+        assert_eq!(top.0, 20, "the peaks met at point 20 (C)");
+        assert!(top.1.average > -0.01);
+    }
+
+    #[test]
+    fn unsure_keys_are_left_where_they_are() {
+        let combined = combine(&[song(9, false), song(5, false)]).unwrap();
+        assert_eq!(combined.aligned, 0);
+        // Two separate peaks, each averaged with the other song's floor.
+        assert!((combined.curve[38].average + 10.0).abs() < 0.01);
+        assert!((combined.curve[30].average + 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_range_is_the_spread_but_never_narrower_than_the_minimum() {
+        let one = combine(&[song(0, true)]).unwrap();
+        assert_eq!(
+            one.regions[0],
+            Band {
+                average: -10.0,
+                range: MIN_RANGE_DB
+            }
+        );
+        let mut loud = song(0, true);
+        loud.regions[0] = 0.0;
+        let mut quiet = song(0, true);
+        quiet.regions[0] = -20.0;
+        let two = combine(&[loud, quiet]).unwrap();
+        assert_eq!(two.regions[0].average, -10.0);
+        assert!((two.regions[0].range - 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_target_moves_to_the_mix_key() {
+        let combined = combine(&[song(0, true)]).unwrap();
+        let in_e = combined.in_key(Key {
+            tonic: 4,
+            minor: false,
+        });
+        // C → E is four semitones up: the peak moves eight points.
+        let top = in_e
+            .curve
+            .iter()
+            .take(fine_points())
+            .enumerate()
+            .max_by(|a, b| a.1.average.total_cmp(&b.1.average))
+            .unwrap()
+            .0;
+        assert_eq!(top, 28);
+        assert_eq!(in_e.key.tonic, 4);
+        assert_eq!(in_e.regions, combined.regions);
+    }
+
+    #[test]
+    fn outside_tells_how_far_from_the_range() {
+        let band = Band {
+            average: -10.0,
+            range: 2.0,
+        };
+        assert_eq!(band.outside(-11.0), 0.0);
+        assert_eq!(band.outside(-6.0), 2.0);
+        assert_eq!(band.outside(-15.0), -3.0);
+        assert_eq!(combine(&[]), None);
+    }
+}
