@@ -6,6 +6,7 @@
 //! box larger and finer, with the pitch under the pointer.
 
 use dasmeter_analysis::{Spectrum, SpectrumStyle, note_name};
+use dasmeter_core::scene::ReferenceScene;
 use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings, SpectrumZoom};
 
 use super::labels::Align;
@@ -56,6 +57,7 @@ pub fn draw(
     marks: Marks,
     selecting: Option<[f32; 4]>,
     zoom: Option<&SpectrumZoom>,
+    reference: Option<&ReferenceScene>,
 ) {
     let Marks {
         cursor,
@@ -88,6 +90,7 @@ pub fn draw(
     let x_of = |f: f32| map(f.max(1.0).ln(), (low, high), area.x, area.right());
     let db_range = spectrum.db_range;
     let y_of = |db: f32| map(db, db_range, area.bottom(), area.y);
+    long_term_lines(c, area, spectrum, reference, &x_of, &y_of);
     // The loudest peak's readout pinned to the top right, a leader line from
     // the peak to it; the cursor's line and readout under it.
     if let Some(peak) = peak {
@@ -455,6 +458,93 @@ pub(super) fn frequency_marks((low, high): (f32, f32)) -> Vec<(f32, String)> {
 }
 
 /// The grid, its labels and the traces of `spectrum` in `area`.
+/// The long-term average of each trace, a calmer and thicker line in its
+/// colour, and the Reference curve dashed in the text colour (which stands
+/// apart on every Theme), named at its right end.
+fn long_term_lines(
+    c: &mut Canvas,
+    area: Area,
+    spectrum: &Spectrum,
+    reference: Option<&ReferenceScene>,
+    x_of: &dyn Fn(f32) -> f32,
+    y_of: &dyn Fn(f32) -> f32,
+) {
+    let floor = spectrum.db_range.0;
+    let points = |levels: &[f32]| -> Vec<[f32; 2]> {
+        spectrum
+            .frequencies
+            .iter()
+            .zip(levels)
+            .map(|(&f, &db)| [x_of(f), y_of(db.max(floor))])
+            .collect()
+    };
+    let colours = [c.colour(Role::SpectrumLine), c.colour(Role::SpectrumSecond)];
+    for (trace, colour) in spectrum.traces.iter().zip(colours) {
+        if trace.long_term.len() != spectrum.frequencies.len() {
+            continue;
+        }
+        let line = smooth(&points(&trace.long_term), c.px(2.0));
+        let text = c.colour(Role::Text);
+        let calm = mix(colour, text, 0.35);
+        c.edge_faded(area, &line, |c, piece, strength| {
+            c.shapes
+                .polyline(piece, c.stroke(2.5), calm.faded(0.75 * strength));
+        });
+    }
+    let Some(reference) = reference else {
+        return;
+    };
+    let ink = c.colour(Role::Text).faded(0.85);
+    if reference.levels.len() == spectrum.frequencies.len() {
+        let line = smooth(&points(&reference.levels), c.px(2.0));
+        // Dashed along the whole line, so the dashes keep their rhythm.
+        let (dash, gap) = (c.px(6.0), c.px(4.0));
+        let width = c.stroke(1.5);
+        dashed(c, &line, dash, gap, width, ink);
+        if let Some(&[_, y]) = line.last() {
+            let y = (y - c.px(13.0)).clamp(area.y + c.px(2.0), area.bottom() - c.px(26.0));
+            let right = area.right() - c.px(4.0);
+            c.text(&reference.name, right, y, 9.0, ink, Align::Right);
+        }
+    } else if reference.missing {
+        let note = format!("{} (missing)", reference.name);
+        c.text(
+            &note,
+            area.right() - c.px(4.0),
+            area.y + c.px(20.0),
+            9.0,
+            c.dim(),
+            Align::Right,
+        );
+    }
+}
+
+/// A polyline drawn in dashes `dash` long with `gap` between, measured along it.
+fn dashed(c: &mut Canvas, points: &[[f32; 2]], dash: f32, gap: f32, width: f32, colour: Colour) {
+    let period = dash + gap;
+    let mut along = 0.0f32;
+    for pair in points.windows(2) {
+        let ([x0, y0], [x1, y1]) = (pair[0], pair[1]);
+        let length = (x1 - x0).hypot(y1 - y0);
+        let mut start = 0.0;
+        while start < length {
+            let phase = (along + start) % period;
+            let step = if phase < dash {
+                dash - phase
+            } else {
+                period - phase
+            };
+            let end = (start + step).min(length);
+            if phase < dash && end > start {
+                let at = |t: f32| [x0 + (x1 - x0) * t / length, y0 + (y1 - y0) * t / length];
+                c.shapes.line(at(start), at(end), width, colour);
+            }
+            start = end;
+        }
+        along += length;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn plot(
     c: &mut Canvas,

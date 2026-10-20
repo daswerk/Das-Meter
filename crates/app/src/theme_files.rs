@@ -1,21 +1,40 @@
-//! The themes folder on disk: read into the app core, written from its edits.
+//! The themes and curves folders on disk: read into the app core, written
+//! from its edits.
 
 use std::path::PathBuf;
 use std::time::SystemTime;
 
 use dasmeter_core::{FileWrite, ThemeFile};
 
-/// Where Themes live: `themes` in Das-Meter's own folder
+/// One of Das-Meter's own folders of TOML files.
+#[derive(Clone, Copy)]
+pub enum Folder {
+    /// `themes`: Themes.
+    Themes,
+    /// `curves`: Reference curves.
+    Curves,
+}
+
+impl Folder {
+    fn name(self) -> &'static str {
+        match self {
+            Folder::Themes => "themes",
+            Folder::Curves => "curves",
+        }
+    }
+}
+
+/// Where a folder lives: in Das-Meter's own folder
 /// ([`app_folder`](crate::preset_files::app_folder)).
-pub fn folder() -> Option<PathBuf> {
-    Some(crate::preset_files::app_folder()?.join("themes"))
+pub fn folder(which: Folder) -> Option<PathBuf> {
+    Some(crate::preset_files::app_folder()?.join(which.name()))
 }
 
 /// What the folder held when last read: each file's name, size and time.
 pub type Signature = Vec<(String, u64, Option<SystemTime>)>;
 
-fn theme_paths() -> Vec<PathBuf> {
-    let Some(dir) = folder() else {
+fn paths(which: Folder) -> Vec<PathBuf> {
+    let Some(dir) = folder(which) else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -31,8 +50,8 @@ fn theme_paths() -> Vec<PathBuf> {
 }
 
 /// The folder's signature, to tell cheaply whether it changed.
-pub fn signature() -> Signature {
-    theme_paths()
+pub fn signature(which: Folder) -> Signature {
+    paths(which)
         .into_iter()
         .map(|path| {
             let meta = std::fs::metadata(&path).ok();
@@ -48,9 +67,9 @@ pub fn signature() -> Signature {
         .collect()
 }
 
-/// Every Theme file in the folder.
-pub fn read() -> Vec<ThemeFile> {
-    theme_paths()
+/// Every file in the folder.
+pub fn read(which: Folder) -> Vec<ThemeFile> {
+    paths(which)
         .into_iter()
         .filter_map(|path| {
             Some(ThemeFile {
@@ -62,15 +81,16 @@ pub fn read() -> Vec<ThemeFile> {
 }
 
 /// Writes files the core asked for: to a temporary file first, then renamed
-/// over the old one, so a Theme is never half written.
-pub fn write(writes: &[FileWrite]) {
-    let Some(dir) = folder() else { return };
+/// over the old one, so a file is never half written.
+pub fn write(which: Folder, writes: &[FileWrite]) {
+    let Some(dir) = folder(which) else { return };
     if writes.is_empty() {
         return;
     }
     if let Err(error) = std::fs::create_dir_all(&dir) {
         eprintln!(
-            "Das-Meter couldn't make the themes folder {}: {error}",
+            "Das-Meter couldn't make the {} folder {}: {error}",
+            which.name(),
             dir.display()
         );
         return;

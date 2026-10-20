@@ -56,6 +56,26 @@ How closely the lows of a Phase Scope's main Source and its Overlay Source move 
 _Avoid_: Correlation (on its own, for this number), phase match
 _Avoid_: Window, period, sweep
 
+**Reference curve**:
+A saved long-term spectrum with a name, such as a reference track's, that a Spectrum can draw behind its live trace.
+_Avoid_: Snapshot, static spectrum, profile
+
+**Tonal Balance**:
+The Meter that compares a Source's long-term spectrum, shape only, with a Target: inside or outside the Target's range, broadly in a few regions or finely across all frequencies.
+_Avoid_: Tonal balance control, EQ match
+
+**Target**:
+A named reference for tonal balance: an average curve and a range around it, taught with one or more songs.
+_Avoid_: Genre curve, preset, profile
+
+**Tuner**:
+The Meter that shows the pitch the Cepstrum finds as a note and how many cents it is off.
+_Avoid_: Pitch meter
+
+**Stereo Bands**:
+The Meter that shows correlation and width per frequency band. Its per-band correlation is named apart from the Stereometer's Correlation.
+_Avoid_: Multiband correlator, band correlation
+
 **Stereometer**:
 The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
 _Avoid_: Goniometer, vectorscope, correlometer

@@ -38,6 +38,27 @@ the Spectrum's other colours in the Theme and the Meter's own colours. With
 two traces (Left and Right, or Mid and Side), the second one's colour is
 **Spectrum R / Side**.
 
+### Long-term average and Reference curves
+
+**Long-term average** draws a second, calmer line beside the live trace: the
+average over the last **3 s**, **10 s** or **30 s**, or over everything since
+you last reset it (**Whole**). Silence is left out, so a pause doesn't pull it
+down. **Reset long-term average** in the Meter's menu starts it over.
+
+Type a name and press **Save as Reference curve** to keep the long-term
+average as a **Reference curve**, say of a reference track you just played.
+Pick a curve under **Reference curve** and it's drawn dashed behind the live
+trace, with the Spectrum's slope, so you can compare your mix with it. Each
+Spectrum remembers its curve in the Preset, and an exported Preset takes its
+curves along. Curves are files in the curves folder:
+
+- macOS: `~/Library/Application Support/Das-Meter/curves`
+- Windows: `%APPDATA%\Das-Meter\curves`
+- Linux: `~/.config/das-meter/curves`
+
+A curve is stored without the slope, 24 points per octave from 20 Hz to
+20 kHz, so changing the slope or FFT size later doesn't spoil it.
+
 ## Loudness Meter
 
 ![The Loudness Meter](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-loudness.png)

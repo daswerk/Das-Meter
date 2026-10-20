@@ -18,6 +18,8 @@ use crate::themes::ThemeScene;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
     pub windows: Vec<WindowScene>,
+    /// The Reference curves in the curves folder, by name, for menus.
+    pub reference_curves: Vec<String>,
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
     /// The Theme in use's colours; a Meter's own overrides go over them.
@@ -122,6 +124,8 @@ pub struct MeterScene {
     pub show_source_label: bool,
     /// The Meter's own colours for single roles, over the Theme's.
     pub overrides: Vec<(Role, Colour)>,
+    /// The Reference curve a Spectrum shows, if it shows one.
+    pub reference: Option<ReferenceScene>,
     /// A Phase Scope's Overlay Source item; `None` for other Meters.
     pub overlay: Option<OverlayScene>,
     /// How lit it is, 0 (dimmed in silence) to 1. Always 1 unless the Theme
@@ -129,6 +133,17 @@ pub struct MeterScene {
     pub activity: f32,
     /// Whether the pointer is over it.
     pub hovered: bool,
+}
+
+/// A Reference curve on a Spectrum.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReferenceScene {
+    pub name: String,
+    /// Its level at each of the Spectrum's points, sloped like the Spectrum,
+    /// to 0.1 dB. Empty while the curve's file is missing.
+    pub levels: Vec<f32>,
+    /// Its file isn't in the curves folder (any more).
+    pub missing: bool,
 }
 
 /// A Phase Scope's Overlay Source, for its menu.

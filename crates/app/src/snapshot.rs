@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [solo-KIND|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
+//! Hidden `--render-snapshot PATH [solo-KIND|spectrum-reference|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -315,7 +315,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
     // The silence hint only shows when nothing has played.
     let noise_for = match open {
-        Some(option) if option.starts_with("solo-") => 0,
+        Some(option) if option.starts_with("solo-") || option == "spectrum-reference" => 0,
         Some(
             "hint" | "showcase" | "showcase-bar" | "showcase-light" | "showcase-contrast"
             | "theme-settings",
@@ -358,7 +358,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             _,
         ) => (2400, 1440),
         (Some("theme-settings"), _) => (2400, 1800),
-        (Some(option), _) if option.starts_with("solo-") => (1440, 900),
+        (Some(option), _) if option.starts_with("solo-") || option == "spectrum-reference" => {
+            (1440, 900)
+        }
         _ => (WIDTH, HEIGHT),
     };
     match open {
@@ -692,6 +694,46 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 option == "phase-scope-fit",
                 now,
             );
+        }
+        // A Spectrum alone with its long-term average (10 s) and a Reference
+        // curve saved from other, darker audio.
+        Some("spectrum-reference") => {
+            now = solo(&mut core, "spectrum", now)?;
+            let Some(dasmeter_core::MeterSettings::Spectrum(mut settings)) = core.meter_settings(0)
+            else {
+                return Err("no Spectrum".into());
+            };
+            settings.analysis.long_term = dasmeter_analysis::LongTerm::Seconds(10.0);
+            core.handle(
+                Event::SetMeter {
+                    meter: 0,
+                    settings: dasmeter_core::MeterSettings::Spectrum(settings),
+                },
+                now,
+            );
+            // The reference: the music with its highs pulled down.
+            let darker: Vec<f32> = {
+                let mut state = [0.0f32; 2];
+                music(10.0)
+                    .chunks(2)
+                    .flat_map(|frame| {
+                        for (s, &x) in state.iter_mut().zip(frame) {
+                            *s += 0.08 * (x - *s);
+                        }
+                        [state[0] * 1.6, state[1] * 1.6]
+                    })
+                    .collect()
+            };
+            now = play(&mut core, &darker, now);
+            core.handle(
+                Event::SaveReferenceCurve {
+                    meter: 0,
+                    name: "Reference track",
+                },
+                now,
+            );
+            core.handle(Event::ResetLongTerm { meter: 0 }, now);
+            now = play(&mut core, &music(10.0), now);
         }
         // One Meter alone in a window, on a signal that suits it.
         Some(option) if option.starts_with("solo-") => {

@@ -172,5 +172,6 @@ fn spectrum_settings(sample_rate: u32, settings: &SpectrogramSettings) -> Spectr
         smoothing_octaves: 0.0,
         peak_hold: PeakHold::For(Duration::ZERO),
         style: SpectrumStyle::Line { points: ROWS },
+        long_term: crate::spectrum::LongTerm::Off,
     }
 }

@@ -842,6 +842,7 @@ impl Meter {
                         style: dasmeter_analysis::SpectrumStyle::Line {
                             points: ZOOM_POINTS,
                         },
+                        long_term: dasmeter_analysis::LongTerm::Off,
                         ..settings.analysis
                     },
                 ))))
@@ -880,6 +881,35 @@ impl Meter {
         a.reset();
         self.view = None;
         true
+    }
+
+    /// Starts a Spectrum's long-term average over. Other Meters have none;
+    /// returns whether this one did.
+    pub fn reset_long_term(&mut self) -> bool {
+        let Some(Analyser::Spectrum(a)) = &mut self.analyser else {
+            return false;
+        };
+        a.reset_long_term();
+        self.view = None;
+        true
+    }
+
+    /// A Spectrum's long-term average as a Reference curve: the seconds it
+    /// holds and its levels on the Reference grid. `None` for other Meters,
+    /// or while it's off or has heard nothing.
+    pub fn long_term_curve(&self) -> Option<(f64, Vec<f32>)> {
+        let Some(Analyser::Spectrum(a)) = &self.analyser else {
+            return None;
+        };
+        Some((a.long_term_seconds(), a.long_term_curve()?))
+    }
+
+    /// A Spectrum's draw-buffer frequencies, while it's analysing.
+    pub fn spectrum_frequencies(&self) -> Option<&[f32]> {
+        let Some(Analyser::Spectrum(a)) = &self.analyser else {
+            return None;
+        };
+        Some(&a.spectrum().frequencies)
     }
 
     pub fn stop(&mut self) {

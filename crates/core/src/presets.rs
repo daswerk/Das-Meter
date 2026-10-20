@@ -97,6 +97,9 @@ pub struct MeterPreset {
     /// Its own colours for single roles, over the Theme's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<RoleColour>,
+    /// The Reference curve a Spectrum shows, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 /// One colour role override.
@@ -173,6 +176,7 @@ fn meters_of(kinds: &[crate::meters::MeterKind]) -> Vec<MeterPreset> {
             overlay: None,
             show_source_label: false,
             overrides: Vec::new(),
+            reference: None,
         })
         .collect()
 }

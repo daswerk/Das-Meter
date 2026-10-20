@@ -107,7 +107,7 @@ fn exported() -> (String, String) {
 fn export_holds_the_preset_and_its_custom_themes_only() {
     let (name, text) = exported();
     assert_eq!(name, "Bar");
-    let (data, themes) = SharedPreset::from_toml(&text).unwrap();
+    let (data, themes, _) = SharedPreset::from_toml(&text).unwrap();
     assert_eq!(data.bar.edge, Edge::Top);
     assert_eq!(
         (data.theme.light.as_str(), data.theme.dark.as_str()),
@@ -133,7 +133,7 @@ fn display_serials_are_stripped() {
     data.bar.display = Some(monitor(0x384b_3132));
     data.window.display = Some(monitor(0x0bad_cafe));
     let text = SharedPreset::new(data, Vec::new()).to_toml();
-    let (read, _) = SharedPreset::from_toml(&text).unwrap();
+    let (read, _, _) = SharedPreset::from_toml(&text).unwrap();
     assert_eq!(read.bar.display, Some(monitor(0)));
     assert_eq!(read.window.display, Some(monitor(0)));
     // The rest of the monitor's identity stays, so it's still recognised.
@@ -267,6 +267,6 @@ fn an_exported_file_with_a_too_large_send_plugin_id_imports() {
     // Earlier versions wrote the ID past TOML's integer range.
     let old = text.replace("id = -8", "id = 18446744073709551608");
     assert_ne!(old, text);
-    let (read, _) = SharedPreset::from_toml(&old).unwrap();
+    let (read, _, _) = SharedPreset::from_toml(&old).unwrap();
     assert_eq!(read.meters[0].send_plugin.as_ref().map(|p| p.id), Some(big));
 }

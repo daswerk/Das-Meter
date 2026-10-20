@@ -315,6 +315,7 @@ impl MeterRenderer {
                     },
                     *selecting,
                     zoom.as_deref(),
+                    meter.reference.as_ref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)

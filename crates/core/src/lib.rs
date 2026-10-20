@@ -9,6 +9,7 @@
 //! drive the core with a fake clock.
 
 mod activity;
+pub mod curves;
 pub mod displays;
 pub mod docs;
 pub mod layout;
@@ -26,6 +27,7 @@ pub mod themes;
 
 use std::time::Duration;
 
+pub use curves::{Curves, ReferenceCurve};
 pub use displays::{DisplayRef, Fingerprint, Screen};
 pub use layout::{
     BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
@@ -265,6 +267,23 @@ pub enum Event<'a> {
         theme: usize,
         styling: Styling,
     },
+    /// The curves folder's files: its Reference curves.
+    CurveFiles(&'a [ThemeFile]),
+    /// Save a Spectrum's long-term average as a Reference curve with this
+    /// name (over one of the same name), and show it on that Spectrum.
+    SaveReferenceCurve {
+        meter: usize,
+        name: &'a str,
+    },
+    /// Show a Reference curve on a Spectrum, or (`None`) none.
+    ShowReferenceCurve {
+        meter: usize,
+        name: Option<&'a str>,
+    },
+    /// Start a Spectrum's long-term average over.
+    ResetLongTerm {
+        meter: usize,
+    },
     /// Override one colour role on one Meter, or (`None`) go back to the Theme's.
     SetOverride {
         meter: usize,
@@ -367,6 +386,8 @@ struct MeterSlot {
     show_source_label: bool,
     /// This Meter's own colours for single roles, over the Theme's.
     overrides: Vec<(Role, Colour)>,
+    /// The Reference curve a Spectrum shows, by name; kept while it's missing.
+    reference: Option<String>,
     /// On Send Plugins: the ID and sample rate of the Send Plugin whose audio
     /// the analyser has, and when it was last fed (audio or idle silence).
     showing: Option<Showing>,
@@ -423,6 +444,7 @@ pub struct AppCore {
     menu: Option<MeterMenu>,
     settings_open: bool,
     themes: themes::Themes,
+    curves: curves::Curves,
     presets: Presets,
     /// System Capture's rate, to start Meters a Preset brings.
     capture_rate: Option<u32>,
@@ -484,6 +506,7 @@ impl AppCore {
                     pick: None,
                     show_source_label: false,
                     overrides: Vec::new(),
+                    reference: None,
                     showing: None,
                     overlay: None,
                     overlay_showing: None,
@@ -502,6 +525,7 @@ impl AppCore {
             menu: None,
             settings_open: false,
             themes: themes::Themes::new(),
+            curves: curves::Curves::default(),
             presets: Presets::default(),
             capture_rate: None,
             touched: false,
@@ -524,6 +548,11 @@ impl AppCore {
     /// Theme files to write into the themes folder since the last call.
     pub fn take_writes(&mut self) -> Vec<FileWrite> {
         self.themes.take_writes()
+    }
+
+    /// Reference curve files to write into the curves folder since the last call.
+    pub fn take_curve_writes(&mut self) -> Vec<FileWrite> {
+        self.curves.take_writes()
     }
 
     fn main_screen(&self) -> Option<&Screen> {
@@ -854,6 +883,8 @@ impl AppCore {
             | DisplayRefreshRate(_)
             | Display(_)
             | ThemeFiles(_)
+            | CurveFiles(_)
+            | ResetLongTerm { .. }
             | SystemAppearance(_)
             | OpenMenu { .. }
             | CloseMenu
@@ -941,7 +972,15 @@ impl AppCore {
                 themes.push(theme.clone());
             }
         }
-        let file = sharing::SharedPreset::new(data, themes);
+        let mut curves: Vec<ReferenceCurve> = Vec::new();
+        for slot in &self.meters {
+            if let Some(curve) = slot.reference.as_deref().and_then(|n| self.curves.get(n))
+                && !curves.iter().any(|c| c.name == curve.name)
+            {
+                curves.push(curve.clone());
+            }
+        }
+        let file = sharing::SharedPreset::new(data, themes).with_curves(curves);
         Some((name, file.to_toml()))
     }
 
@@ -949,7 +988,7 @@ impl AppCore {
     /// "(2)" if they differ, installed if new), then the Preset under a free
     /// name. Returns it to open; a bad file changes nothing.
     fn import(&mut self, text: &str, now: Duration) -> Option<PresetData> {
-        let (mut data, themes) = match sharing::SharedPreset::from_toml(text) {
+        let (mut data, themes, curves) = match sharing::SharedPreset::from_toml(text) {
             Ok(file) => file,
             Err(_) => {
                 self.show_note(Note::ImportFailed, now);
@@ -971,7 +1010,40 @@ impl AppCore {
                 }
             }
         }
+        for curve in curves {
+            let original = curve.name.clone();
+            let installed = self.curves.install(curve);
+            for meter in &mut data.meters {
+                if meter.reference.as_deref() == Some(original.as_str()) {
+                    meter.reference = Some(installed.clone());
+                }
+            }
+        }
         self.presets.import(data)
+    }
+
+    /// A Spectrum's Reference curve for the scene: its name, and its levels at
+    /// the Spectrum's points with the Spectrum's slope (empty while missing).
+    fn reference_scene(&self, slot: &MeterSlot) -> Option<scene::ReferenceScene> {
+        let name = slot.reference.clone()?;
+        let MeterSettings::Spectrum(settings) = slot.meter.settings() else {
+            return None;
+        };
+        let levels = match (self.curves.get(&name), slot.meter.spectrum_frequencies()) {
+            (Some(curve), Some(frequencies)) => {
+                dasmeter_analysis::reference_at(&curve.levels, frequencies, settings.analysis.slope)
+                    .into_iter()
+                    .map(|l| (l * 10.0).round() / 10.0)
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        let missing = self.curves.get(&name).is_none();
+        Some(scene::ReferenceScene {
+            name,
+            levels,
+            missing,
+        })
     }
 
     fn show_note(&mut self, note: Note, now: Duration) {
@@ -1018,6 +1090,7 @@ impl AppCore {
                         .iter()
                         .map(|&(role, colour)| RoleColour { role, colour })
                         .collect(),
+                    reference: slot.reference.clone(),
                 })
                 .collect(),
         }
@@ -1047,6 +1120,7 @@ impl AppCore {
                 pick: m.send_plugin.clone(),
                 show_source_label: m.show_source_label,
                 overrides: m.overrides.iter().map(|o| (o.role, o.colour)).collect(),
+                reference: m.reference.clone(),
                 showing: None,
                 overlay: m.overlay.clone(),
                 overlay_showing: None,
@@ -1547,6 +1621,38 @@ impl AppCore {
                     return;
                 }
             }
+            Event::CurveFiles(files) => self.curves.load(files),
+            Event::SaveReferenceCurve { meter, name } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let Some((seconds, levels)) = slot.meter.long_term_curve() else {
+                    return;
+                };
+                let name = self
+                    .curves
+                    .save(curves::ReferenceCurve::new(name, seconds, levels));
+                slot.reference = Some(name);
+            }
+            Event::ShowReferenceCurve { meter, name } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let name = name.map(str::to_owned);
+                if slot.reference == name {
+                    return;
+                }
+                slot.reference = name;
+            }
+            Event::ResetLongTerm { meter } => {
+                if !self
+                    .meters
+                    .get_mut(meter)
+                    .is_some_and(|s| s.meter.reset_long_term())
+                {
+                    return;
+                }
+            }
             Event::SetOverride {
                 meter,
                 role,
@@ -1883,6 +1989,7 @@ impl AppCore {
             pick: self.meters[like].pick.clone(),
             show_source_label: self.meters[like].show_source_label,
             overrides: self.meters[like].overrides.clone(),
+            reference: self.meters[like].reference.clone(),
             showing: None,
             overlay: self.meters[like].overlay.clone(),
             overlay_showing: None,
@@ -2303,6 +2410,7 @@ impl AppCore {
                 picked,
                 show_source_label: slot.show_source_label,
                 overrides: slot.overrides.clone(),
+                reference: self.reference_scene(slot),
                 activity,
                 hovered,
             });
@@ -2320,6 +2428,7 @@ impl AppCore {
             .collect();
         Scene {
             windows,
+            reference_curves: self.curves.names(),
             notes: if note { vec![self.note] } else { Vec::new() },
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),

@@ -25,8 +25,9 @@ pub use loudness::{
 pub use oscilloscope::{Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings};
 pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};
 pub use spectrum::{
-    Note, Spectrum, SpectrumAnalyser, SpectrumSettings, SpectrumStyle, SpectrumTrace,
-    WindowFunction, catmull_rom, note_name,
+    LongTerm, Note, REFERENCE_POINTS_PER_OCTAVE, REFERENCE_RANGE, Spectrum, SpectrumAnalyser,
+    SpectrumSettings, SpectrumStyle, SpectrumTrace, WindowFunction, catmull_rom, note_name,
+    reference_at, reference_grid,
 };
 pub use stereometer::{
     StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,
