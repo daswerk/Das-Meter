@@ -107,6 +107,7 @@ pub enum Role {
     LoudnessBar,
     LoudnessPeak,
     LoudnessOverTarget,
+    LoudnessCounter,
     // Correlation bar.
     CorrelationPositive,
     CorrelationNegative,
@@ -150,6 +151,7 @@ impl Role {
             Role::LoudnessBar => "loudness_bar",
             Role::LoudnessPeak => "loudness_peak",
             Role::LoudnessOverTarget => "loudness_over_target",
+            Role::LoudnessCounter => "loudness_counter",
             Role::CorrelationPositive => "correlation_positive",
             Role::CorrelationNegative => "correlation_negative",
             Role::StereometerTrace => "stereometer_trace",
@@ -187,6 +189,7 @@ impl Role {
             Role::LoudnessBar => "Loudness bar",
             Role::LoudnessPeak => "Loudness peak",
             Role::LoudnessOverTarget => "Loudness over target",
+            Role::LoudnessCounter => "Loudness clips and overs",
             Role::CorrelationPositive => "Correlation positive",
             Role::CorrelationNegative => "Correlation negative",
             Role::StereometerTrace => "Stereometer trace",
@@ -204,7 +207,7 @@ impl Role {
         }
     }
 
-    pub const ALL: [Role; 31] = [
+    pub const ALL: [Role; 32] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -222,6 +225,7 @@ impl Role {
         Role::LoudnessBar,
         Role::LoudnessPeak,
         Role::LoudnessOverTarget,
+        Role::LoudnessCounter,
         Role::CorrelationPositive,
         Role::CorrelationNegative,
         Role::StereometerTrace,
@@ -280,6 +284,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0x4d, 0x8d, 0xff),
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x8a, 0x3d),
             Role::TonalBalanceUnder => Colour::rgb(0x5e, 0xc8, 0xff),
+            Role::LoudnessCounter => Colour::rgb(0xf0, 0x3e, 0x3e),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -322,6 +327,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0x2d, 0x6c, 0xdf),
             Role::TonalBalanceOver => Colour::rgb(0xe0, 0x6a, 0x10),
             Role::TonalBalanceUnder => Colour::rgb(0x0a, 0x7c, 0xc2),
+            Role::LoudnessCounter => Colour::rgb(0xd6, 0x28, 0x28),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -363,6 +369,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::TonalBalanceUnder => Colour::rgb(0x00, 0xe5, 0xff),
+            Role::LoudnessCounter => Colour::rgb(0xff, 0x9f, 0x1c),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -403,6 +410,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0x6e, 0x8b, 0xff),
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x7a, 0x59),
             Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xe0, 0xff),
+            Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -443,6 +451,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0x3d, 0x9b, 0xff),
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x8a, 0x3d),
             Role::TonalBalanceUnder => Colour::rgb(0x7a, 0xa8, 0xff),
+            Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x5e),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -483,6 +492,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0x8f, 0xa3, 0xb8),
             Role::TonalBalanceOver => Colour::rgb(0xe0, 0x7a, 0x5a),
             Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xa8, 0xd9),
+            Role::LoudnessCounter => Colour::rgb(0xe0, 0x5a, 0x5a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -524,6 +534,7 @@ impl Palette {
             Role::TonalBalanceRange => Colour::rgb(0xc7, 0x92, 0xff),
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::TonalBalanceUnder => Colour::rgb(0x4f, 0xd8, 0xff),
+            Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
         };
         Palette {
             colours: Role::ALL.map(colour),

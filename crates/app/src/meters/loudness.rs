@@ -46,6 +46,18 @@ pub fn draw(
     display: &LoudnessDisplay,
 ) {
     let (text, dim) = (c.colour(Role::Text), c.dim());
+    // The counters along the bottom, where there's room.
+    let line = c.px(14.0) * c.styling.text_scale;
+    let area = if settings.show_counters && area.height > c.px(90.0) {
+        let (rest, strip) = area.split_bottom(line + c.px(4.0));
+        if counters(c, strip, settings, display) {
+            rest
+        } else {
+            area
+        }
+    } else {
+        area
+    };
 
     // Numbers, each in its own tile: name, value and unit on one line.
     let true_peak = if display.true_peak_oversampled {
@@ -262,6 +274,95 @@ pub fn draw(
         dim,
         Align::Centre,
     );
+}
+
+/// The clip and true-peak-over counters per channel in one line, each count
+/// in the counter colour once above 0: in full ("Clips L 0 R 2  TP over
+/// −1.0  L 0 R 0") or, narrower, short ("Clips 0 2  Over 0 0"). Returns
+/// whether they fit.
+fn counters(
+    c: &mut Canvas,
+    area: Area,
+    settings: &LoudnessMeterSettings,
+    display: &LoudnessDisplay,
+) -> bool {
+    let (text, dim, alarm) = (
+        c.colour(Role::Text),
+        c.dim(),
+        c.colour(Role::LoudnessCounter),
+    );
+    let ceiling = settings.analysis.ceiling;
+    let over_name = if display.true_peak_oversampled {
+        "TP over"
+    } else {
+        "Peak over"
+    };
+    let groups = [
+        ("Clips".to_owned(), display.left.clips, display.right.clips),
+        (
+            format!("{over_name} {ceiling:.1}"),
+            display.left.true_peak_overs,
+            display.right.true_peak_overs,
+        ),
+    ];
+    let char_width = c.px(10.0 * 0.6) * c.styling.text_scale;
+    let width_of = |s: &str| char_width * s.chars().count() as f32;
+    // Each piece: its text and whether it's a count.
+    let piece = |short: bool| -> Vec<(String, Option<u32>)> {
+        let mut pieces = Vec::new();
+        for (k, (name, l, r)) in groups.iter().enumerate() {
+            let name = if short {
+                if k == 0 { "Clips" } else { "Over" }.to_owned()
+            } else {
+                name.clone()
+            };
+            pieces.push((name, None));
+            if short {
+                pieces.push((l.to_string(), Some(*l)));
+                pieces.push((r.to_string(), Some(*r)));
+            } else {
+                pieces.push(("L".to_owned(), None));
+                pieces.push((l.to_string(), Some(*l)));
+                pieces.push(("R".to_owned(), None));
+                pieces.push((r.to_string(), Some(*r)));
+            }
+        }
+        pieces
+    };
+    let space = char_width;
+    let total = |pieces: &[(String, Option<u32>)]| {
+        pieces.iter().map(|(t, _)| width_of(t) + space).sum::<f32>() + 2.0 * space
+    };
+    let full = piece(false);
+    let pieces = if total(&full) <= area.width {
+        full
+    } else {
+        let short = piece(true);
+        if total(&short) > area.width {
+            return false;
+        }
+        short
+    };
+    let mut x = area.x + (area.width - total(&pieces)) / 2.0;
+    let y = area.y + c.px(2.0);
+    for (i, (label, count)) in pieces.iter().enumerate() {
+        // A wider gap between the two groups.
+        if i > 0 && count.is_none() && pieces[i - 1].1.is_some() && !matches!(label.as_str(), "R") {
+            x += 2.0 * space;
+        }
+        let colour = match count {
+            Some(0) => text,
+            Some(_) => alarm,
+            None => dim,
+        };
+        if count.is_some() {
+            c.bold(label, x, y, 10.0, colour, Align::Left);
+        } else {
+            c.text(label, x, y, 10.0, colour, Align::Left);
+        }
+        x += width_of(label) + space;
+    }
+    true
 }
 
 /// The big reading's name (as its tile is called), level, unit and caption.

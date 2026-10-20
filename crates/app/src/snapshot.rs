@@ -386,6 +386,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         Some(option)
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
+                || option == "loudness-counters"
                 || option == "spectrum-reference" =>
         {
             0
@@ -435,6 +436,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         (Some(option), _)
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
+                || option == "loudness-counters"
                 || option == "spectrum-reference" =>
         {
             (1440, 900)
@@ -819,6 +821,18 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         // shifted to a fixed key.
         Some(option) if option.starts_with("tonal-balance") => {
             now = tonal_balance(&mut core, &option["tonal-balance".len()..], now)?;
+        }
+        // The Loudness Meter alone after music with a few clipped hits.
+        Some("loudness-counters") => {
+            now = solo(&mut core, "loudness", now)?;
+            let mut loud = music(4.0);
+            for hit in 0..3 {
+                let start = (hit * 2 * RATE as usize / 3) * 2 + 4_000;
+                for s in &mut loud[start..start + 400] {
+                    *s = (*s * 6.0).clamp(-1.0, 1.0);
+                }
+            }
+            now = play(&mut core, &loud, now);
         }
         // One Meter alone in a window, on a signal that suits it.
         Some(option) if option.starts_with("solo-") => {
