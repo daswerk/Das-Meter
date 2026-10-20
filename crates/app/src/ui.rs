@@ -23,8 +23,9 @@ use dasmeter_core::{
     LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
     MeterSettings, OscilloscopeMeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role,
     Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings,
-    Steadiness, StereoDrawing, StereometerMeterSettings, TonalBalanceMeterSettings, TonalView,
-    TunerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
+    Steadiness, StereoBandsMeterSettings, StereoDrawing, StereometerMeterSettings,
+    TonalBalanceMeterSettings, TonalView, TunerMeterSettings, WaveformColouring,
+    WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -1281,6 +1282,23 @@ fn cepstrum_basic(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
         .changed()
 }
 
+fn stereo_bands_basic(ui: &mut egui::Ui, s: &mut StereoBandsMeterSettings) -> bool {
+    let mut changed = ui
+        .add(Toggle::new(&mut s.show_width, "Show width"))
+        .on_hover_text(
+            "Each band's width: 0 mono, half-way unrelated channels, full opposite polarity",
+        )
+        .changed();
+    changed |= duration_slider(
+        ui,
+        "Averaging",
+        &mut s.time,
+        limits::CORRELATION_TIME,
+        false,
+    );
+    changed
+}
+
 fn tuner_basic(ui: &mut egui::Ui, s: &mut TunerMeterSettings) -> bool {
     ui.add(
         Slider::new(&mut s.a4, limits::TUNER_A4.0..=limits::TUNER_A4.1)
@@ -1582,6 +1600,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Oscilloscope(w) => oscilloscope_basic(ui, w),
         MeterSettings::TonalBalance(w) => tonal_balance_basic(ui, w),
         MeterSettings::Tuner(w) => tuner_basic(ui, w),
+        MeterSettings::StereoBands(w) => stereo_bands_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1607,6 +1626,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Oscilloscope(_) => false, // all in the basics
         MeterSettings::TonalBalance(w) => tonal_balance_advanced(ui, w),
         MeterSettings::Tuner(w) => tuner_advanced(ui, w),
+        MeterSettings::StereoBands(_) => false, // all in the basics
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1840,6 +1860,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::Oscilloscope => "Oscilloscope",
         MeterKind::TonalBalance => "Tonal Balance",
         MeterKind::Tuner => "Tuner",
+        MeterKind::StereoBands => "Stereo Bands",
     }
 }
 
@@ -2644,6 +2665,11 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
         MeterSettings::Oscilloscope(_) => &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
         MeterSettings::TonalBalance(_) => TONAL_BALANCE_ROLES,
         MeterSettings::Tuner(_) => &[Role::TunerInTune, Role::TunerOff],
+        MeterSettings::StereoBands(_) => &[
+            Role::CorrelationPositive,
+            Role::CorrelationNegative,
+            Role::StereometerTrace,
+        ],
     }
 }
 

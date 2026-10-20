@@ -11,6 +11,7 @@ mod shapes;
 mod smooth;
 mod spectrogram;
 mod spectrum;
+mod stereo_bands;
 mod stereometer;
 mod tonal_balance;
 mod tuner;
@@ -365,6 +366,9 @@ impl MeterRenderer {
                 }
                 MeterView::Oscilloscope { settings, scope } => {
                     oscilloscope::draw(&mut c, inner, settings, scope)
+                }
+                MeterView::StereoBands { settings, bands } => {
+                    stereo_bands::draw(&mut c, inner, settings, bands)
                 }
                 MeterView::Tuner { settings, reading } => {
                     tuner::draw(&mut c, inner, settings, reading.as_ref())

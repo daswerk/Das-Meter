@@ -192,6 +192,7 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         "oscilloscope" => MeterKind::Oscilloscope,
         "tonal-balance" => MeterKind::TonalBalance,
         "tuner" => MeterKind::Tuner,
+        "stereo-bands" => MeterKind::StereoBands,
         other => return Err(format!("no Meter kind {other:?}")),
     };
     core.handle(Event::SetMode(LayoutMode::Window), now);
@@ -216,6 +217,17 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         MeterKind::Oscilloscope => {
             let partials = [(1, 0.2), (2, 0.07), (3, 0.04), (5, 0.016)];
             play(core, &tone(220.0, &partials, 2.0), now)
+        }
+        // The music, its bass mono and its hats wide, with a pad whose
+        // Right is flipped above 2 kHz: something in every row.
+        MeterKind::StereoBands => {
+            let mut audio = music(3.0);
+            let wide = pink_noise(audio.len() / 2, -24.0, 7);
+            for (frame, w) in audio.chunks_mut(2).zip(&wide) {
+                frame[0] += w;
+                frame[1] -= w;
+            }
+            play(core, &audio, now)
         }
         // A bass note 7 cents sharp of A2.
         MeterKind::Tuner => {

@@ -120,7 +120,7 @@ def main():
 
     # Every Meter alone.
     for kind in ["waveform", "spectrum", "spectrogram", "loudness", "stereometer",
-                 "phase-scope", "cepstrum", "oscilloscope", "tuner"]:
+                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
     # The Loudness Meter's bars on four of its Scales.

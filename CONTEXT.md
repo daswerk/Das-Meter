@@ -73,7 +73,7 @@ The Meter that shows the pitch the Cepstrum finds as a note and how many cents i
 _Avoid_: Pitch meter
 
 **Stereo Bands**:
-The Meter that shows correlation and width per frequency band. Its per-band correlation is named apart from the Stereometer's Correlation.
+The Meter that shows correlation and width per octave band. Its per-band correlation is the **Band correlation**, named apart from the Stereometer's Correlation.
 _Avoid_: Multiband correlator, band correlation
 
 **Stereometer**:

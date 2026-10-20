@@ -13,6 +13,7 @@ pub mod seconds;
 pub mod signals;
 pub mod spectrogram;
 pub mod spectrum;
+pub mod stereo_bands;
 pub mod stereometer;
 pub mod test_signal;
 pub mod tonal_balance;
@@ -33,6 +34,7 @@ pub use spectrum::{
     SpectrumSettings, SpectrumStyle, SpectrumTrace, WindowFunction, catmull_rom, note_name,
     note_name_at, reference_at, reference_grid,
 };
+pub use stereo_bands::{BandReading, StereoBandsAnalyser};
 pub use stereometer::{
     StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,
 };
