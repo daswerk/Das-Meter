@@ -31,6 +31,11 @@ changing them later would silently move everyone's numbers.
   averaged exponentially with τ = 300 ms. With both channels below −90 dBFS it
   reads 0 and dims as "no signal"; with only one channel carrying signal it
   reads 0.
+- **Band correlation** (Stereo Bands): the Correlation above, per octave
+  band (31 Hz to 16 kHz; each band Left and Right through the same 4th-order
+  Butterworth high- and low-pass at its edges), averaged with τ = 300 ms by
+  default. **Width** is `S²/(M²+S²)` with `M = (L+R)/2`, `S = (L−R)/2`: 0 mono,
+  ½ unrelated, 1 opposite polarity. Below −80 dBFS a band has neither.
 - **Cycle correlation** (the Phase Scope's number, not a measurement this page
   claims): Pearson between the main and Overlay Source's lows, below the
   **Cycle correlation below** frequency, about each one's mean, over the last

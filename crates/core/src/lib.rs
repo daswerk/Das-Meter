@@ -36,11 +36,12 @@ pub use layout::{
     BarEnd, BarLayout, Display, Edge, LayoutMode, Platform, PopOut, Rect, ScreenMode, WindowKey,
 };
 pub use meters::{
-    BigReading, CepstrumMeterSettings, CursorReadout, CycleLength, LoudnessMeterSettings, LufsBar,
-    MeterKind, MeterSettings, MeterView, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
-    SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings,
-    SpectrumZoom, Steadiness, StereoDrawing, StereometerMeterSettings, TunerDisplay,
-    TunerMeterSettings, WaveformColouring, WaveformMeterSettings,
+    BandDisplay, BigReading, CepstrumMeterSettings, CursorReadout, CycleLength,
+    LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView, OscilloscopeMeterSettings,
+    PhaseScopeMeterSettings, SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring,
+    SpectrumMeterSettings, SpectrumZoom, Steadiness, StereoBandsMeterSettings, StereoDrawing,
+    StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
+    WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
 pub use panes::{Direction, Divider, Node, SplitId, WindowLayout};

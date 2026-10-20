@@ -5,9 +5,9 @@ use std::time::Duration;
 use dasmeter_analysis::{
     CepstrumAnalyser, CepstrumSettings, ChannelView, LoudnessAnalyser, LoudnessSettings,
     Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
-    SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView,
-    StereometerAnalyser, StereometerSettings, TunerAnalyser, WaveformAnalyser, WaveformColumn,
-    WaveformSettings, note_name, tonal_balance::Summary,
+    SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoBandsAnalyser,
+    StereoReadings, StereoView, StereometerAnalyser, StereometerSettings, TunerAnalyser,
+    WaveformAnalyser, WaveformColumn, WaveformSettings, note_name, tonal_balance::Summary,
 };
 
 use crate::phase_scope::{PhaseScope, PhaseScopeView};
@@ -295,6 +295,34 @@ impl Default for CepstrumMeterSettings {
     }
 }
 
+/// Stereo Bands: band correlation and width per octave band.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StereoBandsMeterSettings {
+    /// The averaging's time constant. Default 300 ms, as the Stereometer.
+    #[serde(with = "dasmeter_analysis::seconds")]
+    pub time: Duration,
+    /// Whether each band's width is shown beside its correlation. Default on.
+    pub show_width: bool,
+}
+
+impl Default for StereoBandsMeterSettings {
+    fn default() -> Self {
+        StereoBandsMeterSettings {
+            time: Duration::from_millis(300),
+            show_width: true,
+        }
+    }
+}
+
+/// One band as shown: correlation and width to 0.01, `None` when silent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandDisplay {
+    pub centre: f32,
+    pub correlation: Option<f32>,
+    pub width: Option<f32>,
+}
+
 /// The Tuner: the pitch the Cepstrum finds, as a note and how many cents
 /// it's off, steadied for reading.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -441,6 +469,7 @@ pub enum MeterSettings {
     Oscilloscope(OscilloscopeMeterSettings),
     TonalBalance(TonalBalanceMeterSettings),
     Tuner(TunerMeterSettings),
+    StereoBands(StereoBandsMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -456,10 +485,11 @@ pub enum MeterKind {
     Oscilloscope,
     TonalBalance,
     Tuner,
+    StereoBands,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 10] = [
+    pub const ALL: [MeterKind; 11] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -470,6 +500,7 @@ impl MeterKind {
         MeterKind::Oscilloscope,
         MeterKind::TonalBalance,
         MeterKind::Tuner,
+        MeterKind::StereoBands,
     ];
 }
 
@@ -495,6 +526,9 @@ impl MeterSettings {
                 MeterSettings::TonalBalance(TonalBalanceMeterSettings::default())
             }
             MeterKind::Tuner => MeterSettings::Tuner(TunerMeterSettings::default()),
+            MeterKind::StereoBands => {
+                MeterSettings::StereoBands(StereoBandsMeterSettings::default())
+            }
         }
     }
 
@@ -510,6 +544,7 @@ impl MeterSettings {
             MeterSettings::Oscilloscope(_) => MeterKind::Oscilloscope,
             MeterSettings::TonalBalance(_) => MeterKind::TonalBalance,
             MeterSettings::Tuner(_) => MeterKind::Tuner,
+            MeterSettings::StereoBands(_) => MeterKind::StereoBands,
         }
     }
 
@@ -526,6 +561,7 @@ impl MeterSettings {
             MeterSettings::Oscilloscope(_) => "Oscilloscope",
             MeterSettings::TonalBalance(_) => "Tonal Balance",
             MeterSettings::Tuner(_) => "Tuner",
+            MeterSettings::StereoBands(_) => "Stereo Bands",
         }
     }
 }
@@ -640,6 +676,11 @@ pub enum MeterView {
         /// `None` while there's no pitch (and none is held).
         reading: Option<TunerDisplay>,
     },
+    StereoBands {
+        settings: StereoBandsMeterSettings,
+        /// Lowest first; bands over Nyquist are left out.
+        bands: Vec<BandDisplay>,
+    },
 }
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
@@ -691,6 +732,7 @@ enum Analyser {
     Oscilloscope(Box<OscilloscopeAnalyser>),
     TonalBalance(Box<TonalBalanceAnalyser>),
     Tuner(Box<TunerAnalyser>),
+    StereoBands(Box<StereoBandsAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -1106,6 +1148,11 @@ impl Meter {
             }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Tuner(a)), MeterSettings::Tuner(s)) => a.set_settings(s.analysis),
+            (Some(Analyser::StereoBands(a)), MeterSettings::StereoBands(s)) => {
+                if a.time() != s.time {
+                    **a = StereoBandsAnalyser::new(sample_rate, s.time);
+                }
+            }
             (Some(Analyser::Spectrogram(a)), MeterSettings::Spectrogram(s)) => {
                 a.set_settings(s.analysis)
             }
@@ -1129,6 +1176,7 @@ impl Meter {
             Analyser::Stereometer(a) => a.sample_rate(),
             Analyser::Cepstrum(a) => a.sample_rate(),
             Analyser::Tuner(a) => a.sample_rate(),
+            Analyser::StereoBands(a) => a.sample_rate(),
             Analyser::Spectrogram(a) => a.sample_rate(),
             Analyser::PhaseScope(a) => a.sample_rate(),
             Analyser::Oscilloscope(a) => a.sample_rate(),
@@ -1163,6 +1211,7 @@ impl Meter {
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
             Some(Analyser::Tuner(a)) => a.process(frames),
+            Some(Analyser::StereoBands(a)) => a.process(frames),
             Some(Analyser::Oscilloscope(a)) => a.process(frames),
             Some(Analyser::TonalBalance(a)) => {
                 // It only looks different once a frame is added.
@@ -1360,6 +1409,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Cepstrum(s) => {
             Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
         }
+        MeterSettings::StereoBands(s) => {
+            Analyser::StereoBands(Box::new(StereoBandsAnalyser::new(sample_rate, s.time)))
+        }
         MeterSettings::Tuner(s) => {
             Analyser::Tuner(Box::new(TunerAnalyser::new(sample_rate, s.analysis)))
         }
@@ -1484,6 +1536,20 @@ fn build_view(
                 settings,
                 readings,
                 points,
+            }
+        }
+        (Analyser::StereoBands(a), MeterSettings::StereoBands(settings)) => {
+            MeterView::StereoBands {
+                settings,
+                bands: a
+                    .readings()
+                    .into_iter()
+                    .map(|b| BandDisplay {
+                        centre: b.centre,
+                        correlation: b.correlation.map(|c| round_to(c, 0.01)),
+                        width: b.width.map(|w| round_to(w, 0.01)),
+                    })
+                    .collect(),
             }
         }
         (Analyser::Tuner(a), MeterSettings::Tuner(settings)) => MeterView::Tuner {

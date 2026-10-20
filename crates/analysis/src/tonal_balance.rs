@@ -540,7 +540,7 @@ impl LowEnd {
 
 /// A second-order Butterworth section (RBJ cookbook).
 #[derive(Clone, Copy)]
-struct Biquad {
+pub(crate) struct Biquad {
     b: [f32; 3],
     a: [f32; 2],
     z: [f32; 2],
@@ -564,15 +564,15 @@ impl Biquad {
         }
     }
 
-    fn low_pass(rate: f64, f: f64) -> Biquad {
+    pub(crate) fn low_pass(rate: f64, f: f64) -> Biquad {
         Biquad::new(rate, f, false)
     }
 
-    fn high_pass(rate: f64, f: f64) -> Biquad {
+    pub(crate) fn high_pass(rate: f64, f: f64) -> Biquad {
         Biquad::new(rate, f, true)
     }
 
-    fn run(&mut self, x: f32) -> f32 {
+    pub(crate) fn run(&mut self, x: f32) -> f32 {
         let y = self.b[0] * x + self.z[0];
         self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
         self.z[1] = self.b[2] * x - self.a[1] * y;
@@ -673,8 +673,7 @@ fn sum(frames: &[&Frame]) -> Summary {
         db(power) - loudness
     });
     // Below −80 dBFS of mean square the low end counts as silent.
-    let low_end_mono = (lr[1] / n > 1e-8 && lr[2] / n > 1e-8)
-        .then(|| (lr[0] / (lr[1] * lr[2]).sqrt()).clamp(-1.0, 1.0) as f32);
+    let low_end_mono = crate::stereo_bands::correlation(lr[0] / n, lr[1] / n, lr[2] / n);
     let low_end_crest =
         [0, 1].map(|i| (crest_count[i] > 0).then(|| (crest[i][0] / crest_count[i] as f64) as f32));
     let fundamental = |region: Region| -> Option<Fundamental> {

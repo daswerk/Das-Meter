@@ -14,7 +14,7 @@ use dasmeter_analysis::{
 use crate::meters::{
     CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, OscilloscopeMeterSettings,
     PhaseScopeMeterSettings, SpectrogramMeterSettings, SpectrumMeterSettings,
-    StereometerMeterSettings, TunerMeterSettings, WaveformMeterSettings,
+    StereoBandsMeterSettings, StereometerMeterSettings, TunerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -178,6 +178,10 @@ impl MeterSettings {
             MeterSettings::Oscilloscope(s) => MeterSettings::Oscilloscope(s.clamped()),
             MeterSettings::TonalBalance(s) => MeterSettings::TonalBalance(s.clamped()),
             MeterSettings::Tuner(s) => MeterSettings::Tuner(s.clamped()),
+            MeterSettings::StereoBands(s) => MeterSettings::StereoBands(StereoBandsMeterSettings {
+                time: clamp_duration(s.time, CORRELATION_TIME),
+                ..s
+            }),
         }
     }
 }
