@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
+//! Hidden `--render-snapshot PATH [solo-KIND|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -85,6 +85,212 @@ fn music(seconds: f64) -> Vec<f32> {
         .collect()
 }
 
+/// A harmonic tone at `pitch` Hz, `seconds` long, interleaved stereo: what
+/// the Cepstrum and Oscilloscope show best.
+fn tone(pitch: f64, partials: &[(i32, f64)], seconds: f64) -> Vec<f32> {
+    (0..frames(RATE, seconds))
+        .flat_map(|i| {
+            let t = i as f64 / f64::from(RATE);
+            let x: f64 = partials
+                .iter()
+                .map(|&(k, a)| a * (std::f64::consts::TAU * pitch * f64::from(k) * t).sin())
+                .sum();
+            let x = x as f32;
+            [x, x]
+        })
+        .collect()
+}
+
+/// Feeds `audio` (interleaved stereo) to the core as System Capture would.
+fn play(core: &mut AppCore, audio: &[f32], mut now: Duration) -> Duration {
+    for block in audio.chunks(1024) {
+        now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+        core.handle(Event::Audio(block), now);
+        core.decide(now);
+    }
+    now
+}
+
+/// Meter `meter` as a Phase Scope on a Kick Send Plugin with the Bass from
+/// the same DAW as its Overlay Source, both following the DAW at 120 BPM,
+/// with suggestions on; `split` puts the sum in its own row, `fit` plays a
+/// Bass that fits.
+fn kick_with_bass_overlay(
+    core: &mut AppCore,
+    meter: usize,
+    split: bool,
+    fit: bool,
+    mut now: Duration,
+) -> Duration {
+    let settings =
+        dasmeter_core::MeterSettings::PhaseScope(dasmeter_core::PhaseScopeMeterSettings {
+            suggestions: true,
+            split_sum: split,
+            ..Default::default()
+        });
+    core.handle(Event::SetMeter { meter, settings }, now);
+    core.handle(
+        Event::SetListenTo(dasmeter_core::ListenTo::SendPlugins),
+        now,
+    );
+    let plugin = |id: u64, name: &str, colour: u32| dasmeter_core::SendPlugin {
+        id,
+        name: name.to_owned(),
+        colour,
+        mono: false,
+        sample_rate: RATE,
+        state: dasmeter_core::SendPluginState::Live,
+        outdated: false,
+        host_pid: 1,
+    };
+    let listed = [plugin(1, "Kick", 0xff_6a_3d), plugin(2, "Bass", 0x4d_a3_ff)];
+    core.handle(Event::SendPlugins(&listed), now);
+    core.handle(Event::PickSendPlugin { meter, id: 1 }, now);
+    core.handle(Event::PickOverlay { meter, id: Some(2) }, now);
+    let (kick, mut bass) = kick_and_bass_apart(8.0);
+    if fit {
+        bass = kick.iter().map(|k| k * 0.6).collect();
+    }
+    for (block, (kick, bass)) in kick.chunks(512).zip(bass.chunks(512)).enumerate() {
+        let beats = (block * 512) as f64 / f64::from(RATE) * 2.0;
+        let timing = Some(dasmeter_core::Timing {
+            tempo: 120.0,
+            beats,
+            bar_start: (beats / 4.0).floor() * 4.0,
+            signature: (4, 4),
+            playing: true,
+        });
+        now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+        for (id, mono) in [(1, kick), (2, bass)] {
+            let frames: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
+            core.handle(
+                Event::SendPluginAudio {
+                    id,
+                    frames: &frames,
+                    timing,
+                },
+                now,
+            );
+        }
+        core.decide(now);
+    }
+    now
+}
+
+/// Window mode with only one Meter, of `kind` ("waveform", "phase-scope"…),
+/// on a signal that shows it well.
+fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, String> {
+    use dasmeter_core::MeterKind;
+    let meter_kind = match kind {
+        "waveform" => MeterKind::Waveform,
+        "spectrum" => MeterKind::Spectrum,
+        "spectrogram" => MeterKind::Spectrogram,
+        "loudness" => MeterKind::Loudness,
+        "stereometer" => MeterKind::Stereometer,
+        "phase-scope" => MeterKind::PhaseScope,
+        "cepstrum" => MeterKind::Cepstrum,
+        "oscilloscope" => MeterKind::Oscilloscope,
+        other => return Err(format!("no Meter kind {other:?}")),
+    };
+    core.handle(Event::SetMode(LayoutMode::Window), now);
+    core.handle(Event::StartListening, now);
+    core.handle(
+        Event::AssignMeter {
+            meter: 0,
+            kind: meter_kind,
+        },
+        now,
+    );
+    for meter in (1..8).rev() {
+        core.handle(Event::ClosePane { meter }, now);
+    }
+    core.handle(Event::Pointer(None), now);
+    Ok(match meter_kind {
+        MeterKind::PhaseScope => kick_with_bass_overlay(core, 0, false, false, now),
+        MeterKind::Cepstrum => {
+            let partials: Vec<(i32, f64)> = (1..=100).map(|k| (k, 0.15 / f64::from(k))).collect();
+            play(core, &tone(220.0, &partials, 2.0), now)
+        }
+        MeterKind::Oscilloscope => {
+            let partials = [(1, 0.2), (2, 0.07), (3, 0.04), (5, 0.016)];
+            play(core, &tone(220.0, &partials, 2.0), now)
+        }
+        _ => play(core, &music(10.0), now),
+    })
+}
+
+/// DASMETER_THEME="Name": use that Theme. DASMETER_STYLE="key=value,…" (keys:
+/// look, glow, fade, gradient, vignette, dim, opacity, line, gap, radius,
+/// text, cues): change the Theme in use (a built-in becomes an edited copy).
+fn theme_from_env(core: &mut AppCore, now: Duration) -> Result<(), String> {
+    fn themes(core: &mut AppCore, now: Duration) -> Result<dasmeter_core::ThemeScene, String> {
+        core.decide(now);
+        Ok(core.scene().ok_or("no scene")?.theme.clone())
+    }
+    if let Some(name) = std::env::var_os("DASMETER_THEME") {
+        let name = name.to_string_lossy();
+        let scene = themes(core, now)?;
+        let index = scene
+            .themes
+            .iter()
+            .position(|t| t.name == name)
+            .ok_or_else(|| format!("no Theme {name:?}"))?;
+        core.handle(
+            Event::ChooseTheme {
+                light: index,
+                dark: index,
+            },
+            now,
+        );
+    }
+    if let Some(style) = std::env::var_os("DASMETER_STYLE") {
+        let scene = themes(core, now)?;
+        let current = scene.current.ok_or("no Theme in use")?;
+        let mut styling = scene.styling;
+        for pair in style.to_string_lossy().split(',') {
+            let (key, value) = pair.split_once('=').ok_or("DASMETER_STYLE: key=value")?;
+            let number = || {
+                value
+                    .parse::<f32>()
+                    .map_err(|_| format!("{key}: not a number"))
+            };
+            let on = || value == "on";
+            match key.trim() {
+                "look" if value == "classic" => styling.look = dasmeter_core::Look::Classic,
+                "look" => styling.look = dasmeter_core::Look::Smooth,
+                "glow" => styling.glow = number()?,
+                "fade" => styling.grid_fade = number()?,
+                "gradient" => styling.gradient = number()?,
+                "vignette" => styling.vignette = number()?,
+                "dim" => styling.dim_when_silent = on(),
+                "opacity" => styling.background_opacity = number()?,
+                "line" => {
+                    styling.line = match value {
+                        "thin" => dasmeter_core::LineWeight::Thin,
+                        "thick" => dasmeter_core::LineWeight::Thick,
+                        _ => dasmeter_core::LineWeight::Normal,
+                    }
+                }
+                "gap" => styling.gap = number()?,
+                "radius" => styling.corner_radius = number()?,
+                "text" => styling.text_scale = number()?,
+                "cues" => styling.shape_cues = on(),
+                other => return Err(format!("DASMETER_STYLE: no key {other:?}")),
+            }
+        }
+        core.handle(
+            Event::SetThemeStyling {
+                theme: current,
+                styling,
+            },
+            now,
+        );
+        core.take_writes();
+        // Editing a built-in switches to its edited copy by itself.
+    }
+    Ok(())
+}
+
 pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // Six seconds of pink noise with an output change after four, so the
     // snapshot shows levels, loudness and the "Output changed" note.
@@ -109,6 +315,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
     // The silence hint only shows when nothing has played.
     let noise_for = match open {
+        Some(option) if option.starts_with("solo-") => 0,
         Some(
             "hint" | "showcase" | "showcase-bar" | "showcase-light" | "showcase-contrast"
             | "theme-settings",
@@ -129,6 +336,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
+    theme_from_env(&mut core, now)?;
     // "WxH": a window of that many logical px, for checking small sizes;
     // "option@WxH" for an option at that size.
     let (open, size) = match open.and_then(|o| o.split_once('@')) {
@@ -150,6 +358,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             _,
         ) => (2400, 1440),
         (Some("theme-settings"), _) => (2400, 1800),
+        (Some(option), _) if option.starts_with("solo-") => (1440, 900),
         _ => (WIDTH, HEIGHT),
     };
     match open {
@@ -476,64 +685,17 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         // with suggestions on; `phase-scope-split` with the sum in its own
         // row, `phase-scope-fit` with a Bass that fits.
         Some(option @ ("phase-scope-overlay" | "phase-scope-split" | "phase-scope-fit")) => {
-            let settings =
-                dasmeter_core::MeterSettings::PhaseScope(dasmeter_core::PhaseScopeMeterSettings {
-                    suggestions: true,
-                    split_sum: option == "phase-scope-split",
-                    ..Default::default()
-                });
-            core.handle(Event::SetMeter { meter: 1, settings }, now);
-            core.handle(
-                Event::SetListenTo(dasmeter_core::ListenTo::SendPlugins),
+            now = kick_with_bass_overlay(
+                &mut core,
+                1,
+                option == "phase-scope-split",
+                option == "phase-scope-fit",
                 now,
             );
-            let plugin = |id: u64, name: &str, colour: u32| dasmeter_core::SendPlugin {
-                id,
-                name: name.to_owned(),
-                colour,
-                mono: false,
-                sample_rate: RATE,
-                state: dasmeter_core::SendPluginState::Live,
-                outdated: false,
-                host_pid: 1,
-            };
-            let listed = [plugin(1, "Kick", 0xff_6a_3d), plugin(2, "Bass", 0x4d_a3_ff)];
-            core.handle(Event::SendPlugins(&listed), now);
-            core.handle(Event::PickSendPlugin { meter: 1, id: 1 }, now);
-            core.handle(
-                Event::PickOverlay {
-                    meter: 1,
-                    id: Some(2),
-                },
-                now,
-            );
-            let (kick, mut bass) = kick_and_bass_apart(8.0);
-            if option == "phase-scope-fit" {
-                bass = kick.iter().map(|k| k * 0.6).collect();
-            }
-            for (block, (kick, bass)) in kick.chunks(512).zip(bass.chunks(512)).enumerate() {
-                let beats = (block * 512) as f64 / f64::from(RATE) * 2.0;
-                let timing = Some(dasmeter_core::Timing {
-                    tempo: 120.0,
-                    beats,
-                    bar_start: (beats / 4.0).floor() * 4.0,
-                    signature: (4, 4),
-                    playing: true,
-                });
-                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
-                for (id, mono) in [(1, kick), (2, bass)] {
-                    let frames: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
-                    core.handle(
-                        Event::SendPluginAudio {
-                            id,
-                            frames: &frames,
-                            timing,
-                        },
-                        now,
-                    );
-                }
-                core.decide(now);
-            }
+        }
+        // One Meter alone in a window, on a signal that suits it.
+        Some(option) if option.starts_with("solo-") => {
+            now = solo(&mut core, &option["solo-".len()..], now)?;
         }
         // The first-launch card, and the silence hint after 11 s of nothing.
         Some("welcome") => core.handle(Event::ShowWelcome, now),
@@ -546,6 +708,28 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             }
         }
         Some(other) => return Err(format!("unknown option {other:?}")),
+    }
+    // DASMETER_OVERRIDE="role=#RRGGBB,…": per-Meter colours on the first Meter.
+    if let Some(overrides) = std::env::var_os("DASMETER_OVERRIDE") {
+        for pair in overrides.to_string_lossy().split(',') {
+            let (key, hex) = pair
+                .split_once('=')
+                .ok_or("DASMETER_OVERRIDE: role=#RRGGBB")?;
+            let role = dasmeter_core::Role::ALL
+                .into_iter()
+                .find(|r| r.key() == key.trim())
+                .ok_or_else(|| format!("no colour role {key:?}"))?;
+            let colour = dasmeter_core::Colour::from_hex(hex.trim())
+                .ok_or_else(|| format!("not a colour: {hex:?}"))?;
+            core.handle(
+                Event::SetOverride {
+                    meter: 0,
+                    role,
+                    colour: Some(colour),
+                },
+                now,
+            );
+        }
     }
     now += Duration::from_millis(100);
     core.decide(now);

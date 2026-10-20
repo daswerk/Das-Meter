@@ -5,11 +5,15 @@ panel has the same settings for every Meter.
 
 ## Waveform
 
+![The Waveform](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-waveform.png)
+
 The audio over time, coloured by frequency band (low, mid, high). Settings:
 **Channels** (mono, Left/Right, or Mid/Side), time span (1–30 s), display gain
 and the two band crossovers.
 
 ## Spectrum
+
+![The Spectrum](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-spectrum.png)
 
 How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Slope** (0, 3, 4.5 or 6 dB per octave, pivoted at 1 kHz), **Smoothing**,
@@ -36,6 +40,8 @@ two traces (Left and Right, or Mid and Side), the second one's colour is
 
 ## Loudness Meter
 
+![The Loudness Meter](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-loudness.png)
+
 How loud the audio is: momentary (M), short-term (S) and integrated (I) LUFS,
 loudness range (LRA), true peak (TP), and the peak-to-loudness ratios **PLR**
 (true-peak maximum − integrated) and **PSR** (the last 3 s' true peak −
@@ -54,6 +60,8 @@ See [Measurements](measurements.md) for exactly what each number is.
 
 ## Stereometer
 
+![The Stereometer](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-stereometer.png)
+
 Where the sound sits between left and right, with the phase **correlation**
 under it (+1: mono, 0: unrelated, −1: out of phase) and an optional **Balance
 bar**. Settings: the view, **Scale** (auto or fixed gain), persistence and
@@ -61,6 +69,8 @@ the correlation's averaging time. The scope stretches to whatever shape the
 Meter has; in a wide, low Meter the bars stand upright beside it.
 
 ## Cepstrum
+
+![The Cepstrum](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-cepstrum.png)
 
 The cepstrum of the mono sum: evenly spaced partials of a harmonic sound
 (a voice, a bass, most instruments) make a peak at the length of their period,
@@ -76,6 +86,8 @@ or **Add Meter ▸ Cepstrum**.
 
 ## Spectrogram
 
+![The Spectrogram](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-spectrogram.png)
+
 The Spectrum over time: frequency from the bottom up, time scrolling to the
 left with the newest audio at the right edge, and louder shown brighter, in
 the Theme's Spectrum colours up to its text colour. Settings: **Span** (5, 10,
@@ -89,6 +101,8 @@ To show it, right-click a Meter and choose **Change Meter ▸ Spectrogram**,
 or **Add Meter ▸ Spectrogram**.
 
 ## Phase Scope
+
+![The Phase Scope with an Overlay Source](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-phase-scope.png)
 
 The waveform over one **Cycle**, one beat or one bar, held still so every
 beat lands in the same place: a kick on the beat stays put, and you can watch
@@ -152,6 +166,8 @@ To show it, right-click a Meter and choose **Change Meter ▸ Phase Scope**,
 or **Add Meter ▸ Phase Scope**.
 
 ## Oscilloscope
+
+![The Oscilloscope](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-oscilloscope.png)
 
 The wave itself, across a short window of time (20 ms by default, anything
 from 1 to 200 ms). With **Hold still** on, each picture starts on a rising
