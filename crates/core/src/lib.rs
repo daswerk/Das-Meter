@@ -39,8 +39,8 @@ pub use meters::{
     BandDisplay, BigReading, CepstrumMeterSettings, CursorReadout, CycleLength,
     LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView, OscilloscopeMeterSettings,
     PhaseScopeMeterSettings, SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring,
-    SpectrumMeterSettings, SpectrumZoom, Steadiness, StereoBandsMeterSettings, StereoDrawing,
-    StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
+    SpectrumMeterSettings, SpectrumOverlay, SpectrumZoom, Steadiness, StereoBandsMeterSettings,
+    StereoDrawing, StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
     WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};
@@ -2107,7 +2107,7 @@ impl AppCore {
                 }
             }
         }
-        // Phase Scopes take their Overlay Source while it's there.
+        // Phase Scopes and Spectrums take their Overlay Source while it's there.
         for meter in 0..self.meters.len() {
             let target = self.overlay_plugin(meter).map(|p| p.id);
             let slot = &mut self.meters[meter];
@@ -2119,7 +2119,7 @@ impl AppCore {
         }
     }
 
-    /// The Send Plugins a Phase Scope may take as its Overlay Source: usable
+    /// The Send Plugins a Phase Scope or Spectrum may take as its Overlay Source: usable
     /// ones from the same DAW as the one it shows, but not that one. None on
     /// System Capture or for other Meters.
     fn overlay_choices(&self, meter: usize) -> Vec<&SendPlugin> {
@@ -2141,10 +2141,10 @@ impl AppCore {
             .filter(|p| p.usable() && p.host_pid == main.host_pid && p.id != main.id)
     }
 
-    /// The Send Plugin a Meter shows, if it's a Phase Scope on Send Plugins
-    /// and so can take an Overlay Source.
+    /// The Send Plugin a Meter shows, if it's a Phase Scope or a Spectrum on
+    /// Send Plugins and so can take an Overlay Source.
     fn overlay_main(&self, meter: usize) -> Option<&SendPlugin> {
-        if self.listen_to != ListenTo::SendPlugins || !self.meters[meter].meter.is_phase_scope() {
+        if self.listen_to != ListenTo::SendPlugins || !self.meters[meter].meter.takes_overlay() {
             return None;
         }
         match self.resolve(meter) {
@@ -2551,6 +2551,29 @@ impl AppCore {
                             }
                         });
                         let mut state = self.live_state(i, frame, pointer, now);
+                        // A Spectrum's Overlay Source: its name and colour, or waiting for it.
+                        if let MeterState::Live(MeterView::Spectrum { overlay: shown, .. }) =
+                            &mut state
+                        {
+                            match (&overlay, self.overlay_plugin(i)) {
+                                (Some(_), Some(p)) => {
+                                    if let Some(shown) = shown {
+                                        shown.name.clone_from(&p.name);
+                                        shown.colour = Some(colour(p.colour));
+                                    }
+                                }
+                                (Some((_, Some(waiting))), None) => {
+                                    *shown = Some(Box::new(meters::SpectrumOverlay {
+                                        levels: Vec::new(),
+                                        collisions: Vec::new(),
+                                        name: waiting.clone(),
+                                        colour: None,
+                                        waiting: true,
+                                    }));
+                                }
+                                _ => {}
+                            }
+                        }
                         if let MeterState::Live(MeterView::PhaseScope { scope, .. }) = &mut state {
                             scope.colour = Some(colour(rgb));
                             let suggestions = matches!(
@@ -2621,7 +2644,7 @@ impl AppCore {
                 .iter_mut()
                 .find(|w| w.key == key)
                 .expect("placed in a window");
-            let overlay = slot.meter.is_phase_scope().then(|| OverlayScene {
+            let overlay = slot.meter.takes_overlay().then(|| OverlayScene {
                 picked: match self.listen_to {
                     ListenTo::SendPlugins => slot
                         .overlay

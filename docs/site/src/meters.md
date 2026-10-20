@@ -38,6 +38,24 @@ the Spectrum's other colours in the Theme and the Meter's own colours. With
 two traces (Left and Right, or Mid and Side), the second one's colour is
 **Spectrum R / Side**.
 
+### Overlay Source and collisions
+
+Listening to Send Plugins, a Spectrum can show a second track on the same
+graph: pick it under **Overlay Source** in the Meter's menu (any other Send
+Plugin from the same DAW). It's drawn as a line in that track's colour,
+named at the top right.
+
+Where the two collide, both loud at the same frequencies and close in
+level, a strip along the bottom of the Spectrum is marked in the **Spectrum
+collisions** colour, more solid where both are louder: kick and bass on the
+same low notes, vocal and synth in the same mids. A frequency collides where
+both are over **Collisions above** (−50 dB by default, on the Spectrum's own
+scale, slope included) and **within** 6 dB of each other. It's a plain
+comparison of levels, not a model of how the ear masks one sound with
+another.
+
+![Kick and Bass colliding near 50 Hz](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/spectrum-collisions.png)
+
 ### Long-term average and Reference curves
 
 **Long-term average** draws a second, calmer line beside the live trace: the

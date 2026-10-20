@@ -60,6 +60,11 @@ pub struct SpectrumMeterSettings {
     /// pointer is over it, the held peaks marked with their notes. Default on.
     pub slow_on_hover: bool,
     pub colouring: SpectrumColouring,
+    /// With an Overlay Source: points where both are over this level (dB on
+    /// the Spectrum's scale) can collide. Default −50.
+    pub collision_floor: f32,
+    /// …and within this many dB of each other do. Default 6.
+    pub collision_within: f32,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -71,8 +76,25 @@ impl Default for SpectrumMeterSettings {
             show_cursor: false,
             slow_on_hover: true,
             colouring: SpectrumColouring::Plain,
+            collision_floor: -50.0,
+            collision_within: 6.0,
         }
     }
+}
+
+/// A Spectrum's Overlay Source: its levels (the mono sum, at the Spectrum's
+/// points) and where it collides with the Spectrum's own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpectrumOverlay {
+    /// To 0.1 dB, clamped to the dB range's floor.
+    pub levels: Vec<f32>,
+    /// Per point, 0 (none) to 1, to 0.05.
+    pub collisions: Vec<f32>,
+    /// The Overlay Source's name and colour, filled in by the app core;
+    /// `waiting` while its Send Plugin is gone.
+    pub name: String,
+    pub colour: Option<crate::theme::Colour>,
+    pub waiting: bool,
 }
 
 /// The Spectrum's zoom window: the box dragged over the Spectrum, shown
@@ -611,6 +633,8 @@ pub enum MeterView {
         /// While the pointer is over the Spectrum (and it slows on hover):
         /// the loudest held peaks, with their frequencies, notes and levels.
         held_peaks: Vec<CursorReadout>,
+        /// The Overlay Source on the same graph, with the collisions.
+        overlay: Option<Box<SpectrumOverlay>>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
@@ -747,6 +771,18 @@ pub(crate) struct Meter {
     playhead: Playhead,
     /// The Spectrum's marked peaks while the pointer is over it.
     marked: MarkedPeaks,
+    /// A Spectrum's Overlay Source's analyser, while it takes one.
+    overlay_spectrum: Option<Box<SpectrumAnalyser>>,
+}
+
+/// The analysis an Overlay Source gets: the Spectrum's, on the mono sum,
+/// without a long-term average.
+fn overlay_analysis(settings: &SpectrumMeterSettings) -> SpectrumSettings {
+    SpectrumSettings {
+        channel_view: ChannelView::Mono,
+        long_term: dasmeter_analysis::LongTerm::Off,
+        ..settings.analysis
+    }
 }
 
 /// Peaks marked over a Spectrum, kept where they were found until their
@@ -829,6 +865,7 @@ impl Meter {
             zoom: None,
             playhead: Playhead::default(),
             marked: MarkedPeaks::default(),
+            overlay_spectrum: None,
         }
     }
 
@@ -843,6 +880,8 @@ impl Meter {
     /// Starts over at a sample rate: a new Source, or the output changed.
     pub fn start(&mut self, sample_rate: u32) {
         self.analyser = Some(analyser(sample_rate, &self.settings));
+        // A fresh analyser takes its Overlay Source afresh (the app core re-routes it).
+        self.overlay_spectrum = None;
         self.view = None;
         self.start_zoom();
     }
@@ -1141,6 +1180,11 @@ impl Meter {
                 if *a.settings() != s.analysis {
                     a.set_settings(s.analysis);
                 }
+                if let Some(overlay) = &mut self.overlay_spectrum
+                    && *overlay.settings() != overlay_analysis(&s)
+                {
+                    overlay.set_settings(overlay_analysis(&s));
+                }
             }
             (Some(Analyser::Loudness(a)), MeterSettings::Loudness(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Stereometer(a)), MeterSettings::Stereometer(s)) => {
@@ -1244,23 +1288,42 @@ impl Meter {
         matches!(self.settings, MeterSettings::TonalBalance(_))
     }
 
-    pub fn is_phase_scope(&self) -> bool {
-        matches!(self.settings, MeterSettings::PhaseScope(_))
-    }
-
     /// A Phase Scope starts (afresh) or stops taking an Overlay Source.
     /// Other Meters have none.
     pub fn set_overlay(&mut self, on: bool) {
-        if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
-            a.set_overlay(on);
-            self.view = None;
+        match &mut self.analyser {
+            Some(Analyser::PhaseScope(a)) => a.set_overlay(on),
+            Some(Analyser::Spectrum(a)) => {
+                let MeterSettings::Spectrum(settings) = &self.settings else {
+                    return;
+                };
+                self.overlay_spectrum = on.then(|| {
+                    Box::new(SpectrumAnalyser::new(
+                        a.sample_rate(),
+                        overlay_analysis(settings),
+                    ))
+                });
+            }
+            _ => return,
         }
+        self.view = None;
+    }
+
+    /// Whether this Meter can take an Overlay Source: a Phase Scope or a Spectrum.
+    pub fn takes_overlay(&self) -> bool {
+        matches!(
+            self.settings,
+            MeterSettings::PhaseScope(_) | MeterSettings::Spectrum(_)
+        )
     }
 
     /// The Overlay Source's audio, for a Phase Scope.
     pub fn process_overlay(&mut self, frames: &[f32], timing: Option<Timing>) {
         if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
             a.process_overlay(frames, timing);
+        }
+        if let Some(a) = &mut self.overlay_spectrum {
+            a.process(frames);
         }
     }
 
@@ -1286,9 +1349,15 @@ impl Meter {
                 zoom,
                 settings,
                 held_peaks,
+                spectrum,
+                overlay,
                 ..
             } = &mut view
             {
+                *overlay = self
+                    .overlay_spectrum
+                    .as_mut()
+                    .map(|a| Box::new(overlay_view(a, spectrum, settings)));
                 *selecting = self.selecting;
                 let slow = pointer.is_some() && settings.slow_on_hover;
                 *held_peaks = self.marked.update(slow.then(|| std::mem::take(held_peaks)));
@@ -1514,6 +1583,7 @@ fn build_view(
                 zoom: None,
                 pointer,
                 held_peaks,
+                overlay: None,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {
@@ -1636,6 +1706,57 @@ fn build_view(
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),
+    }
+}
+
+/// The Overlay Source's levels on the Spectrum's points, and the collisions
+/// with the Spectrum's own (its loudest trace at each point).
+fn overlay_view(
+    a: &mut SpectrumAnalyser,
+    spectrum: &Spectrum,
+    settings: &SpectrumMeterSettings,
+) -> SpectrumOverlay {
+    let floor = spectrum.db_range.0;
+    let other = a.update();
+    let levels: Vec<f32> = other
+        .traces
+        .first()
+        .map(|t| {
+            t.levels
+                .iter()
+                .map(|l| round_to(l.max(floor), 0.1))
+                .collect()
+        })
+        .unwrap_or_default();
+    let own: Vec<f32> = (0..spectrum.frequencies.len())
+        .map(|i| {
+            spectrum
+                .traces
+                .iter()
+                .filter_map(|t| t.levels.get(i).copied())
+                .fold(floor, f32::max)
+        })
+        .collect();
+    let collisions = if levels.len() == own.len() {
+        dasmeter_analysis::collisions(
+            &own,
+            &levels,
+            settings.collision_floor,
+            settings.collision_within,
+            spectrum.db_range.1,
+        )
+        .into_iter()
+        .map(|c| round_to(c, 0.05))
+        .collect()
+    } else {
+        Vec::new()
+    };
+    SpectrumOverlay {
+        levels,
+        collisions,
+        name: String::new(),
+        colour: None,
+        waiting: false,
     }
 }
 

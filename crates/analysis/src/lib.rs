@@ -31,8 +31,8 @@ pub use scales::{Ballistics, Scale};
 pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};
 pub use spectrum::{
     LongTerm, Note, REFERENCE_POINTS_PER_OCTAVE, REFERENCE_RANGE, Spectrum, SpectrumAnalyser,
-    SpectrumSettings, SpectrumStyle, SpectrumTrace, WindowFunction, catmull_rom, note_name,
-    note_name_at, reference_at, reference_grid,
+    SpectrumSettings, SpectrumStyle, SpectrumTrace, WindowFunction, catmull_rom, collisions,
+    note_name, note_name_at, reference_at, reference_grid,
 };
 pub use stereo_bands::{BandReading, StereoBandsAnalyser};
 pub use stereometer::{

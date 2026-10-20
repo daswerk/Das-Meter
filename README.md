@@ -37,7 +37,7 @@ settings.
 </tr>
 <tr>
 <td><b>Waveform</b>: the audio over time, coloured by low, mid and high band; mono, Left/Right or Mid/Side; 1–30 s.</td>
-<td><b>Spectrum</b>: how loud each frequency is, as a line or bars, with a slope, peak hold and a peak line that names the loudest note.</td>
+<td><b>Spectrum</b>: how loud each frequency is, as a line or bars, with a slope, peak hold and a peak line that names the loudest note. Show a second track on it and see where the two collide.</td>
 </tr>
 <tr>
 <td><img src="docs/images/meter-spectrogram.png" alt="The Spectrogram"></td>

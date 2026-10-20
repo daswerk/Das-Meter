@@ -15,8 +15,12 @@ Where the audio a Meter shows comes from. When the app listens to System Capture
 _Avoid_: Input, device, feed
 
 **Overlay Source**:
-A second Send Plugin that a Phase Scope draws over its main Source, so the two can be compared. Only Send Plugins can be an Overlay Source; with System Capture the Phase Scope shows its one Source alone.
+A second Send Plugin that a Phase Scope or a Spectrum draws over its main Source, so the two can be compared. Only Send Plugins can be an Overlay Source; with System Capture the Meter shows its one Source alone.
 _Avoid_: Sidechain, second input
+
+**Collision**:
+Where a Spectrum's Source and its Overlay Source are both loud at the same frequencies and close in level, so they fight for that space (say, kick and bass). Marked as a strip under the Spectrum; not a perceptual masking model.
+_Avoid_: Masking (for this measure)
 
 **System Capture**:
 The default Source: the mix of everything the computer plays through its default output. Audio that bypasses the operating system's mixer, such as a DAW using ASIO on Windows, is not heard; Send Plugins cover that case.

@@ -123,6 +123,9 @@ def main():
                  "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
+    # A Spectrum with an Overlay Source, and where the two collide.
+    save(flat(shot("spectrum-collisions")), "spectrum-collisions.png", 960)
+
     # The Loudness Meter's bars on four of its Scales.
     scales = [("vu", "VU"), ("ppm-bbc", "PPM BBC"), ("ppm-din", "PPM DIN"), ("k14", "K-14")]
     save(labelled([flat(shot(f"loudness-scale-{s}@720x450")) for s, _ in scales],

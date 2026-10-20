@@ -177,6 +177,53 @@ fn kick_with_bass_overlay(
     now
 }
 
+/// A Spectrum alone showing Kick, with Bass as its Overlay Source: where
+/// their lows collide.
+fn spectrum_collisions(core: &mut AppCore, mut now: Duration) -> Result<Duration, String> {
+    now = solo(core, "spectrum", now)?;
+    core.handle(
+        Event::SetListenTo(dasmeter_core::ListenTo::SendPlugins),
+        now,
+    );
+    let plugin = |id: u64, name: &str, colour: u32| dasmeter_core::SendPlugin {
+        id,
+        name: name.to_owned(),
+        colour,
+        mono: false,
+        sample_rate: RATE,
+        state: dasmeter_core::SendPluginState::Live,
+        outdated: false,
+        host_pid: 1,
+    };
+    let listed = [plugin(1, "Kick", 0xff_6a_3d), plugin(2, "Bass", 0x4d_a3_ff)];
+    core.handle(Event::SendPlugins(&listed), now);
+    core.handle(Event::PickSendPlugin { meter: 0, id: 1 }, now);
+    core.handle(
+        Event::PickOverlay {
+            meter: 0,
+            id: Some(2),
+        },
+        now,
+    );
+    let (kick, bass) = kick_and_bass_apart(4.0);
+    for (kick, bass) in kick.chunks(512).zip(bass.chunks(512)) {
+        now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+        for (id, mono) in [(2, bass), (1, kick)] {
+            let frames: Vec<f32> = mono.iter().flat_map(|&x| [x, x]).collect();
+            core.handle(
+                Event::SendPluginAudio {
+                    id,
+                    frames: &frames,
+                    timing: None,
+                },
+                now,
+            );
+        }
+        core.decide(now);
+    }
+    Ok(now)
+}
+
 /// Window mode with only one Meter, of `kind` ("waveform", "phase-scope"…),
 /// on a signal that shows it well.
 fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, String> {
@@ -409,6 +456,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
                 || option.starts_with("loudness-")
+                || option == "spectrum-collisions"
                 || option == "spectrum-reference" =>
         {
             0
@@ -459,6 +507,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
                 || option.starts_with("loudness-")
+                || option == "spectrum-collisions"
                 || option == "spectrum-reference" =>
         {
             (1440, 900)
@@ -887,6 +936,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             }
             now = play(&mut core, &loud, now);
         }
+        Some("spectrum-collisions") => now = spectrum_collisions(&mut core, now)?,
         // One Meter alone in a window, on a signal that suits it.
         Some(option) if option.starts_with("solo-") => {
             now = solo(&mut core, &option["solo-".len()..], now)?;
