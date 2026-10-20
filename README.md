@@ -27,69 +27,113 @@ Every Theme is drawn in one of two **Looks**, and switching is one click in
 
 ## The Meters
 
-| Meter | What it shows |
-|---|---|
-| **Waveform** | The audio over time, coloured by low, mid and high band; mono, Left/Right or Mid/Side; 1–30 s. |
-| **Spectrum** | How loud each frequency is, as a line or bars, with a slope, peak hold and a peak line that names the loudest note. Drag a box to **zoom** into it at a finer resolution. |
-| **Spectrogram** | The Spectrum over time, scrolling, with the same zoom. |
-| **Loudness Meter** | Momentary, short-term and integrated LUFS, LRA, true peak, PLR and PSR, as big numbers, bars or a loudness graph, with a target line. It measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, checked against the EBU test set ([what that means](https://daswerk.github.io/Das-Meter/measurements.html)). |
-| **Stereometer** | Where the sound sits between left and right, with the phase correlation and an optional balance bar. |
-| **Phase Scope** | One beat or bar held still, so a kick on the beat stays put. It follows your DAW's tempo, or a typed or tapped one. Overlay a second track (say, the bass under the kick) to see where their lows cancel, with the **Cycle correlation** and suggestions to fix it (flip, move or retune). |
-| **Cepstrum** | The pitch of a voice or instrument, with its note: handy for tuning. |
-| **Oscilloscope** | The wave itself over 1–200 ms, held still on a steady tone. |
+Eight kinds, as many of each as you like. Right-click any Meter for its
+settings.
 
 <table>
 <tr>
-<td><img src="docs/images/phase-scope.png" alt="The Phase Scope with a kick and a bass overlaid, showing where their lows cancel and suggesting to pitch the bass up"></td>
-<td><img src="docs/images/cepstrum.png" alt="The Cepstrum finding a 220 Hz tone, A3"></td>
-<td><img src="docs/images/oscilloscope.png" alt="The Oscilloscope holding a steady tone still"></td>
+<td width="50%"><img src="docs/images/meter-waveform.png" alt="The Waveform"></td>
+<td width="50%"><img src="docs/images/meter-spectrum.png" alt="The Spectrum, with its peak line naming A4"></td>
 </tr>
 <tr>
-<td align="center">Phase Scope with an Overlay Source</td>
-<td align="center">Cepstrum</td>
-<td align="center">Oscilloscope</td>
+<td><b>Waveform</b>: the audio over time, coloured by low, mid and high band; mono, Left/Right or Mid/Side; 1–30 s.</td>
+<td><b>Spectrum</b>: how loud each frequency is, as a line or bars, with a slope, peak hold and a peak line that names the loudest note.</td>
+</tr>
+<tr>
+<td><img src="docs/images/meter-spectrogram.png" alt="The Spectrogram"></td>
+<td><img src="docs/images/meter-loudness.png" alt="The Loudness Meter's big numbers and readings"></td>
+</tr>
+<tr>
+<td><b>Spectrogram</b>: the Spectrum over time, scrolling. Drag a box to zoom in.</td>
+<td><b>Loudness Meter</b>: momentary, short-term and integrated LUFS, LRA, true peak, PLR and PSR, as big numbers, bars or a loudness graph, with a target line. It measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, checked against the EBU test set (<a href="https://daswerk.github.io/Das-Meter/measurements.html">what that means</a>).</td>
+</tr>
+<tr>
+<td><img src="docs/images/meter-stereometer.png" alt="The Stereometer and its correlation bar"></td>
+<td><img src="docs/images/meter-phase-scope.png" alt="The Phase Scope with a kick and a bass overlaid, showing where their lows cancel"></td>
+</tr>
+<tr>
+<td><b>Stereometer</b>: where the sound sits between left and right, with the phase correlation and an optional balance bar.</td>
+<td><b>Phase Scope</b>: one beat or bar held still, so a kick on the beat stays put, following your DAW's tempo or a typed or tapped one. Overlay a second track (say, the bass under the kick) to see where their lows cancel, with the <b>Cycle correlation</b> and suggestions to fix it (flip, move or retune).</td>
+</tr>
+<tr>
+<td><img src="docs/images/meter-cepstrum.png" alt="The Cepstrum finding a 220 Hz tone, A3"></td>
+<td><img src="docs/images/meter-oscilloscope.png" alt="The Oscilloscope holding a steady tone still"></td>
+</tr>
+<tr>
+<td><b>Cepstrum</b>: the pitch of a voice or instrument, with its note: handy for tuning.</td>
+<td><b>Oscilloscope</b>: the wave itself over 1–200 ms, held still on a steady tone.</td>
 </tr>
 </table>
+
+Drag a box over the Spectrum to zoom into it at a finer resolution, with its
+own scale:
 
 ![Dragging a box over the Spectrum opens a zoom window with its own scale](docs/images/spectrum-zoom.png)
 
 ## Make it yours
 
-**Full Theme customization.** A Theme sets every colour, by role, for every
-Meter and the app around it, plus the styling:
+**Full Theme customization.** Seven built-in Themes, and every one of them can
+be changed: its Look, its layout and every colour. Change anything in a
+built-in and it's saved as your own copy, which you can rename. A Preset can
+follow the system's light/dark setting with a pair of Themes, and Themes are
+plain TOML files you can share.
 
-- **Look**: Smooth or Classic, and for Smooth the **Glow**, **Grid fade**,
-  **Gradient** and **Vignette**, and whether Meters **dim when silent**.
-- **Layout**: background opacity (down to see-through), line thickness, gaps
-  between Meters, corner radius and text size.
-- **Colours**: background, panels, grid, text and accent, and each Meter's own
-  colours (Waveform bands, Spectrum line and fill, peak dots and harmonics,
-  loudness, correlation and Phase Scope colours, and more), with a live
-  preview.
-- A single Meter can override any colour of its Theme.
+![All built-in Themes: Nocturne, Dark, Light, High contrast, Midnight Purple, Deep Turquoise and Graphite, and an edited Nocturne](docs/images/themes.png)
 
-It comes with **Nocturne** (the default), **Dark**, **Light**, **High
-contrast** (colour-blind-safe, with shape cues besides colour), **Midnight
-Purple**, **Deep Turquoise** and **Graphite**. A Preset can follow the system's
-light/dark setting with a pair of Themes. Change anything in a built-in and
-it's saved as your own copy, which you can rename. Themes are plain TOML files
-in the themes folder, so you can share them.
+Everything is in **Settings ▸ Theme**, with a live preview:
 
 ![Settings ▸ Theme: the Look, its sliders, layout and colours with a live preview](docs/images/theme-editor.png)
 
-<table>
-<tr>
-<td><img src="docs/images/light.png" alt="The Light Theme"></td>
-<td><img src="docs/images/high-contrast.png" alt="The High contrast Theme"></td>
-</tr>
-<tr>
-<td align="center">Light</td>
-<td align="center">High contrast</td>
-</tr>
-</table>
+### Look
 
-**Every Meter has its settings** in its right-click menu and in the settings
-window: channels, FFT size, ranges, ballistics, targets and more.
+**Smooth** or **Classic**, per Theme, in one click.
+
+![The Spectrum in the Smooth and the Classic Look](docs/images/setting-look.png)
+
+For Smooth, tune the **Glow** under traces and big numbers…
+
+![Glow at 0, 0.6 and 1](docs/images/setting-glow.png)
+
+…how far the **grid fades** out toward the edges…
+
+![Grid fade at 0 and 0.4](docs/images/setting-grid-fade.png)
+
+…and the background's **Gradient** and the panels' **Vignette**. **Dim when
+silent** lets Meters dim gently when no audio arrives.
+
+![Gradient and Vignette off and full](docs/images/setting-gradient-vignette.png)
+
+### Layout
+
+**Background opacity** makes the Bar or window see-through, down to only the
+Meters' traces over your desktop:
+
+![The Bar at background opacity 1 and 0.15, over a desktop picture](docs/images/setting-opacity.png)
+
+**Line thickness**, for every trace and line:
+
+![Thin, Normal and Thick lines, close up](docs/images/setting-lines.png)
+
+The **gap** between Meters and their **corner radius**:
+
+![Gap 0 with square corners, and gap 16 with corner radius 24](docs/images/setting-gap-radius.png)
+
+And the **text size**, from 0.9 to 1.5:
+
+![The Loudness Meter at text size 0.9 and 1.5](docs/images/setting-text-size.png)
+
+**Shape cues besides colour** add patterns for colour-blind viewers (High
+contrast has them on).
+
+### Colours
+
+Every colour has a role: background, panels, grid, text and accent, and each
+Meter's own colours (Waveform bands, Spectrum line and fill, peak dots and
+harmonics, loudness bars and peaks, correlation, the Stereometer, Cepstrum,
+Phase Scope and Oscilloscope traces, and more). A single Meter can override
+any of them, so one Meter can stand apart from its Theme:
+
+![All Meters in Theme colours, and the Waveform with its own colours](docs/images/setting-meter-colours.png)
 
 ## Layouts
 
@@ -154,9 +198,8 @@ works from the app bundle. To serve the docs site locally, run
 `mdbook serve docs/site`.
 
 The screenshots here are drawn offscreen by the app itself, from generated
-audio: `das-meter --render-snapshot out.ppm showcase` (add
-`DASMETER_CLASSIC=1` for Classic; also `showcase-bar`, `showcase-light`,
-`showcase-contrast` and `theme-settings`).
+audio. To redo them after a visual change, build the app and run
+`scripts/readme-screenshots.py` (it needs Pillow).
 
 | Path | What it is |
 |---|---|

@@ -24,6 +24,8 @@ files in the themes folder, so you can share them:
 
 A lower background opacity makes the Meters see-through.
 
+![All built-in Themes, and an edited Nocturne](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/themes.png)
+
 ## Look
 
 Each Theme is drawn in one of two Looks:
