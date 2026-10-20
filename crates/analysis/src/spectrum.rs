@@ -75,6 +75,60 @@ impl WindowFunction {
     }
 }
 
+/// How far back the Spectrum's long-term average reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum LongTerm {
+    /// No long-term average.
+    #[default]
+    Off,
+    /// A sliding average over about this many seconds.
+    Seconds(f32),
+    /// Everything heard since the last reset, every moment counting the same.
+    Whole,
+}
+
+/// The lowest and highest frequency of a Reference curve, and its
+/// resolution: [`REFERENCE_POINTS_PER_OCTAVE`] points per octave between.
+pub const REFERENCE_RANGE: (f32, f32) = (20.0, 20_000.0);
+pub const REFERENCE_POINTS_PER_OCTAVE: f32 = 24.0;
+
+/// Below this unsloped power over a whole FFT frame, the long-term average
+/// treats the audio as silence and leaves itself as it was (−90 dB).
+const LONG_TERM_SILENCE: f64 = 1e-9;
+
+/// The frequencies a Reference curve's levels are given at: 1/24 octave
+/// apart from 20 Hz up to 20 kHz.
+pub fn reference_grid() -> Vec<f32> {
+    let (low, high) = REFERENCE_RANGE;
+    let count = ((high / low).log2() * REFERENCE_POINTS_PER_OCTAVE).floor() as usize + 1;
+    (0..count)
+        .map(|i| low * 2f32.powf(i as f32 / REFERENCE_POINTS_PER_OCTAVE))
+        .collect()
+}
+
+/// A Reference curve's levels (on [`reference_grid`], without slope) at
+/// `frequencies`, with `slope` dB per octave applied around 1 kHz as the
+/// Spectrum draws: straight lines between grid points on a log-frequency
+/// axis, held flat beyond its ends. Empty when the curve is.
+pub fn reference_at(levels: &[f32], frequencies: &[f32], slope: f32) -> Vec<f32> {
+    if levels.is_empty() {
+        return Vec::new();
+    }
+    let (low, _) = REFERENCE_RANGE;
+    let last = levels.len() - 1;
+    frequencies
+        .iter()
+        .map(|&f| {
+            let position = ((f.max(1.0) / low).log2() * REFERENCE_POINTS_PER_OCTAVE).max(0.0);
+            let below = (position.floor() as usize).min(last);
+            let above = (below + 1).min(last);
+            let t = (position - below as f32).clamp(0.0, 1.0);
+            let level = levels[below] + (levels[above] - levels[below]) * t;
+            level + slope * (f.max(1.0) / SLOPE_PIVOT_HZ).log2()
+        })
+        .collect()
+}
+
 /// How the Spectrum is drawn, which decides the draw buffer's points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SpectrumStyle {
@@ -108,6 +162,8 @@ pub struct SpectrumSettings {
     pub smoothing_octaves: f32,
     pub peak_hold: PeakHold,
     pub style: SpectrumStyle,
+    /// The long-term average drawn beside the live trace. Default off.
+    pub long_term: LongTerm,
 }
 
 impl Default for SpectrumSettings {
@@ -124,6 +180,7 @@ impl Default for SpectrumSettings {
             smoothing_octaves: 0.0,
             peak_hold: PeakHold::For(Duration::from_secs(2)),
             style: SpectrumStyle::Line { points: 512 },
+            long_term: LongTerm::Off,
         }
     }
 }
@@ -137,6 +194,9 @@ pub struct SpectrumTrace {
     /// seconds, 0 to 1: high on a harmonic that keeps sounding, low on noise
     /// and passing peaks.
     pub steadiness: Vec<f32>,
+    /// The long-term average per point, in dB, sloped like `levels`; empty
+    /// while the long-term average is off.
+    pub long_term: Vec<f32>,
 }
 
 /// What the renderer draws.
@@ -204,6 +264,15 @@ pub struct SpectrumAnalyser {
     /// Levels only: no averages, steadiness or readout peak (the Spectrogram's use).
     lean: bool,
     fresh: bool,
+    /// The long-term average per bin and trace: power without the slope.
+    long_power: [Vec<f64>; 2],
+    /// Seconds of audio in the long-term average so far, per trace.
+    long_seconds: [f64; 2],
+    /// The long-term average per bin, in dB with the slope, for drawing.
+    long_bins: Vec<f32>,
+    /// Seconds of audio still to pass before the FFT window holds only audio
+    /// since the start or the last reset, and the long-term average counts it.
+    long_wait: f64,
 }
 
 impl SpectrumAnalyser {
@@ -242,6 +311,7 @@ impl SpectrumAnalyser {
                     levels: vec![SPECTRUM_FLOOR_DB; frequencies.len()],
                     peak_hold: vec![SPECTRUM_FLOOR_DB; frequencies.len()],
                     steadiness: vec![0.0; frequencies.len()],
+                    long_term: Vec::new(),
                 };
                 traces
             ],
@@ -279,6 +349,10 @@ impl SpectrumAnalyser {
             slow: false,
             lean: false,
             fresh: true,
+            long_power: [vec![0.0; bin_count], vec![0.0; bin_count]],
+            long_seconds: [0.0; 2],
+            long_bins: vec![SPECTRUM_FLOOR_DB; bin_count],
+            long_wait: size as f64 / f64::from(sample_rate),
         }
     }
 
@@ -330,9 +404,13 @@ impl SpectrumAnalyser {
     pub fn update(&mut self) -> &Spectrum {
         let elapsed = self.pending as f64 / f64::from(self.sample_rate);
         self.pending = 0;
+        // The long-term average waits until the FFT window holds only new audio.
+        let counted = (elapsed - self.long_wait).max(0.0);
+        self.long_wait = (self.long_wait - elapsed).max(0.0);
         for trace in 0..self.spectrum.traces.len() {
             self.analyse_trace(trace, elapsed);
             self.draw_trace(trace, elapsed);
+            self.long_term(trace, counted);
             if !self.lean {
                 self.steadiness(trace, elapsed);
             }
@@ -359,6 +437,68 @@ impl SpectrumAnalyser {
         self.ballistics
             .get(trace)
             .map_or(&[], |b| b.steady.as_slice())
+    }
+
+    /// Starts the long-term average over: [`LongTerm::Whole`] counts from now.
+    pub fn reset_long_term(&mut self) {
+        for powers in &mut self.long_power {
+            powers.fill(0.0);
+        }
+        self.long_seconds = [0.0; 2];
+        self.long_wait = self.settings.fft_size as f64 / f64::from(self.sample_rate);
+        for trace in &mut self.spectrum.traces {
+            trace.long_term.clear();
+        }
+    }
+
+    /// How many seconds of audio (silence left out) the long-term average
+    /// holds, for the trace with the most.
+    pub fn long_term_seconds(&self) -> f64 {
+        self.long_seconds[0].max(self.long_seconds[1])
+    }
+
+    /// The long-term average as a Reference curve: its level at each
+    /// frequency of [`reference_grid`], without the slope, the traces'
+    /// powers averaged. `None` while it's off or has heard nothing.
+    pub fn long_term_curve(&self) -> Option<Vec<f32>> {
+        if self.settings.long_term == LongTerm::Off || self.long_term_seconds() <= 0.0 {
+            return None;
+        }
+        let traces = self.spectrum.traces.len();
+        let bin_hz = f64::from(self.bin_frequency(1));
+        let last = self.long_power[0].len() - 1;
+        let power = |bin: usize| -> f64 {
+            (0..traces)
+                .map(|t| self.long_power[t][bin.min(last)])
+                .sum::<f64>()
+                / traces as f64
+        };
+        let half = 2f64.powf(0.5 / f64::from(REFERENCE_POINTS_PER_OCTAVE));
+        let curve = reference_grid()
+            .into_iter()
+            .map(|f| {
+                let f = f64::from(f);
+                // The loudest bin inside its 1/24 octave, as the Spectrum's
+                // line takes each point's loudest bin; between bins where
+                // none falls inside (the low end), interpolated.
+                let first = ((f / half / bin_hz).ceil() as usize).max(1);
+                let end = ((f * half / bin_hz).ceil() as usize).min(last + 1);
+                let p = if first < end {
+                    (first..end).map(power).fold(0.0, f64::max)
+                } else {
+                    let at = f / bin_hz;
+                    let below = (at.floor() as usize).clamp(1, last);
+                    let t = (at - below as f64).clamp(0.0, 1.0);
+                    power(below) * (1.0 - t) + power(below + 1) * t
+                };
+                if p > 0.0 {
+                    ((10.0 * p.log10()) as f32).max(SPECTRUM_FLOOR_DB)
+                } else {
+                    SPECTRUM_FLOOR_DB
+                }
+            })
+            .collect();
+        Some(curve)
     }
 
     /// The last draw buffer, without analysing again.
@@ -599,6 +739,58 @@ impl SpectrumAnalyser {
             let loudness = ((steady[i] - floor) / (0.5 * (top - floor)).max(1.0)).clamp(0.0, 1.0);
             *value = prominence * loudness;
         }
+    }
+
+    /// Folds this frame into the long-term average (unless it's silence) and
+    /// draws the average onto the points like the live levels.
+    fn long_term(&mut self, trace: usize, elapsed: f64) {
+        let out = &mut self.spectrum.traces[trace].long_term;
+        let mode = self.settings.long_term;
+        if mode == LongTerm::Off || self.lean {
+            out.clear();
+            return;
+        }
+        let bins = &self.bins[trace];
+        let tilt = &self.tilt;
+        let unsloped = |k: usize| f64::from(10f32.powf((bins[k] - tilt[k]) / 10.0));
+        let heard: f64 = (1..bins.len()).map(unsloped).sum();
+        if heard > LONG_TERM_SILENCE && elapsed > 0.0 {
+            let before = self.long_seconds[trace];
+            // Every moment counts the same until a sliding average's span
+            // is full, so its start doesn't weigh on it; then it slides.
+            let factor = match mode {
+                LongTerm::Seconds(seconds) if before >= f64::from(seconds) => {
+                    1.0 - (-elapsed / f64::from(seconds.max(0.1))).exp()
+                }
+                _ => elapsed / (before + elapsed),
+            };
+            for (k, power) in self.long_power[trace].iter_mut().enumerate() {
+                *power += (unsloped(k) - *power) * factor;
+            }
+            self.long_seconds[trace] = before + elapsed;
+        }
+        if self.long_seconds[trace] <= 0.0 {
+            out.clear();
+            return;
+        }
+        for ((level, &power), &tilt) in self
+            .long_bins
+            .iter_mut()
+            .zip(&self.long_power[trace])
+            .zip(&self.tilt)
+        {
+            *level = if power > 0.0 {
+                ((10.0 * power.log10()) as f32 + tilt).max(SPECTRUM_FLOOR_DB)
+            } else {
+                SPECTRUM_FLOOR_DB
+            };
+        }
+        out.clear();
+        out.extend(
+            self.points
+                .iter()
+                .map(|point| point_level(&self.long_bins, point)),
+        );
     }
 
     fn draw_trace(&mut self, trace: usize, elapsed: f64) {

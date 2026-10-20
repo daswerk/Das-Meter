@@ -64,6 +64,7 @@ pub fn run() {
         windows: HashMap::new(),
         started: false,
         theme_folder: Vec::new(),
+        curve_folder: Vec::new(),
         theme_scan_at: Duration::ZERO,
         menu_anchor: None,
         modifiers: ModifiersState::empty(),
@@ -201,8 +202,9 @@ struct Shell {
     send_plugins_listed_at: Duration,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
-    /// The themes folder as last read, and when it's next looked at.
+    /// The themes and curves folders as last read, and when they're next looked at.
     theme_folder: crate::theme_files::Signature,
+    curve_folder: crate::theme_files::Signature,
     theme_scan_at: Duration,
     /// Where the open menu was right-clicked, on screen.
     menu_anchor: Option<[f32; 2]>,
@@ -247,6 +249,7 @@ fn ui_view(scene: &Scene) -> Scene {
                     picked: meter.picked,
                     show_source_label: meter.show_source_label,
                     overrides: meter.overrides.clone(),
+                    reference: meter.reference.clone(),
                     overlay: meter.overlay.clone(),
                     activity: 1.0,
                     hovered: false,
@@ -265,6 +268,7 @@ fn ui_view(scene: &Scene) -> Scene {
         .collect();
     Scene {
         windows,
+        reference_curves: scene.reference_curves.clone(),
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
@@ -686,6 +690,19 @@ impl Shell {
                         now,
                     );
                 }
+                Request::SaveReferenceCurve { meter, name } => {
+                    self.core
+                        .handle(Event::SaveReferenceCurve { meter, name: &name }, now);
+                }
+                Request::ShowReferenceCurve { meter, name } => {
+                    self.core.handle(
+                        Event::ShowReferenceCurve {
+                            meter,
+                            name: name.as_deref(),
+                        },
+                        now,
+                    );
+                }
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
                 }
@@ -779,16 +796,23 @@ impl Shell {
         LogicalPosition::new(f64::from(x), f64::from(y))
     }
 
-    /// Reads the themes folder into the core if it changed since last time.
+    /// Reads the themes and curves folders into the core if they changed since
+    /// last time.
     fn scan_themes(&mut self, now: Duration) {
+        use crate::theme_files::{self as files, Folder};
         self.theme_scan_at = now + THEME_SCAN_EVERY;
-        let signature = crate::theme_files::signature();
-        if signature == self.theme_folder && now > Duration::ZERO {
-            return;
+        let signature = files::signature(Folder::Themes);
+        if signature != self.theme_folder || now == Duration::ZERO {
+            self.theme_folder = signature;
+            let read = files::read(Folder::Themes);
+            self.core.handle(Event::ThemeFiles(&read), now);
         }
-        self.theme_folder = signature;
-        let files = crate::theme_files::read();
-        self.core.handle(Event::ThemeFiles(&files), now);
+        let signature = files::signature(Folder::Curves);
+        if signature != self.curve_folder || now == Duration::ZERO {
+            self.curve_folder = signature;
+            let read = files::read(Folder::Curves);
+            self.core.handle(Event::CurveFiles(&read), now);
+        }
     }
 
     /// Carries out the Preset writes, trashing and settings the core asked for.
@@ -799,12 +823,19 @@ impl Shell {
         }
     }
 
-    /// Saves Theme edits the core made, and remembers the folder as written.
+    /// Saves Theme and Reference curve edits the core made, and remembers the
+    /// folders as written.
     fn save_themes(&mut self) {
+        use crate::theme_files::{self as files, Folder};
         let writes = self.core.take_writes();
         if !writes.is_empty() {
-            crate::theme_files::write(&writes);
-            self.theme_folder = crate::theme_files::signature();
+            files::write(Folder::Themes, &writes);
+            self.theme_folder = files::signature(Folder::Themes);
+        }
+        let writes = self.core.take_curve_writes();
+        if !writes.is_empty() {
+            files::write(Folder::Curves, &writes);
+            self.curve_folder = files::signature(Folder::Curves);
         }
     }
 

@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
 use dasmeter_analysis::{
-    ChannelView, PeakHold, RmsMode, SpectrumStyle, StereoScaling, StereoView, WaveformScale,
-    WindowFunction,
+    ChannelView, LongTerm, PeakHold, RmsMode, SpectrumStyle, StereoScaling, StereoView,
+    WaveformScale, WindowFunction,
 };
 use dasmeter_core::docs::Topic;
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
@@ -45,6 +45,16 @@ pub enum Request {
     RenameTheme {
         index: usize,
         name: String,
+    },
+    /// Save a Spectrum's long-term average as a Reference curve.
+    SaveReferenceCurve {
+        meter: usize,
+        name: String,
+    },
+    /// Show a Reference curve on a Spectrum, or none.
+    ShowReferenceCurve {
+        meter: usize,
+        name: Option<String>,
     },
     /// Show a Preset file in Finder (Explorer on Windows).
     ShowPresetInFolder {
@@ -517,7 +527,87 @@ fn spectrum_basic(ui: &mut egui::Ui, s: &mut SpectrumMeterSettings) -> bool {
             (SpectrumColouring::SteadyHarmonics, "Steady harmonics"),
         ],
     );
+    changed |= choice(
+        ui,
+        "Long-term average",
+        &mut s.analysis.long_term,
+        &[
+            (LongTerm::Off, "Off"),
+            (LongTerm::Seconds(3.0), "3 s"),
+            (LongTerm::Seconds(10.0), "10 s"),
+            (LongTerm::Seconds(30.0), "30 s"),
+            (LongTerm::Whole, "Whole"),
+        ],
+    );
     changed
+}
+
+/// A Spectrum's Reference curve: which one it shows, saving its long-term
+/// average as one, and starting that average over.
+fn reference_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &mut Actions) {
+    let MeterSettings::Spectrum(settings) = meter.settings else {
+        return;
+    };
+    let shown = meter.reference.as_ref().map(|r| r.name.clone());
+    let long_term = settings.analysis.long_term != LongTerm::Off;
+    if long_term
+        && ui
+            .button("Reset long-term average")
+            .on_hover_text("Start the long-term average over from now")
+            .clicked()
+    {
+        actions.push(Event::ResetLongTerm { meter: meter.meter });
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Reference curve");
+        let mut pick = |ui: &mut egui::Ui, name: Option<&String>, label: &str| {
+            if ui.selectable_label(shown.as_ref() == name, label).clicked()
+                && shown.as_ref() != name
+            {
+                actions.requests.push(Request::ShowReferenceCurve {
+                    meter: meter.meter,
+                    name: name.cloned(),
+                });
+            }
+        };
+        pick(ui, None, "None");
+        for name in &scene.reference_curves {
+            pick(ui, Some(name), name);
+        }
+        if let Some(reference) = meter.reference.as_ref().filter(|r| r.missing) {
+            ui.label(RichText::new(format!("{} (missing)", reference.name)).weak());
+        }
+    });
+    // Save: the typed name is kept in egui's memory until it's saved.
+    let id = egui::Id::new(("reference curve name", meter.meter));
+    let mut name = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_default();
+    ui.horizontal(|ui| {
+        let field = ui.add_enabled(
+            long_term,
+            egui::TextEdit::singleline(&mut name)
+                .hint_text("Name")
+                .desired_width(140.0),
+        );
+        let save = ui
+            .add_enabled(
+                long_term && !name.trim().is_empty(),
+                egui::Button::new("Save as Reference curve"),
+            )
+            .on_hover_text("Keep the long-term average as a curve to compare with")
+            .on_disabled_hover_text("Turn on the long-term average, then name the curve");
+        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if long_term && (save.clicked() || entered) && !name.trim().is_empty() {
+            actions.requests.push(Request::SaveReferenceCurve {
+                meter: meter.meter,
+                name: name.trim().to_owned(),
+            });
+            ui.data_mut(|d| d.remove::<String>(id));
+            return;
+        }
+        ui.data_mut(|d| d.insert_temp(id, name.clone()));
+    });
 }
 
 /// The Loudness Meter's basic settings; `reset` is set when Reset is clicked.
@@ -1463,6 +1553,7 @@ fn menu_contents(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut A
     overlay_item(ui, scene, meter_scene, actions);
     ui.separator();
     basic(ui, meter, meter_scene.settings, actions);
+    reference_items(ui, scene, meter_scene, actions);
     ui.separator();
     placement_item(ui, scene, meter, actions);
     if ui.button("Settings…").clicked() {
@@ -2519,6 +2610,7 @@ fn meter_settings(
             _ => None,
         })
         .unwrap_or(meter_scene.settings);
+    reference_items(ui, scene, meter_scene, actions);
     ui.separator();
     advanced(ui, meter, settings, &mut edited);
     ui.separator();
