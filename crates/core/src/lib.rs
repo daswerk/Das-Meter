@@ -59,7 +59,8 @@ pub use targets::{Target, TargetSong, Targets};
 pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 pub use tonal_balance::{
-    KeyChoice, TargetScene, TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene, TonalView,
+    KeyChoice, TargetScene, TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene,
+    TonalView, UploadScene,
 };
 
 use meters::Meter;
@@ -330,6 +331,18 @@ pub enum Event<'a> {
     FreezeTonalBalance {
         meter: usize,
     },
+    /// How the files being analysed for a Tonal Balance Meter are getting
+    /// on, or (`None`) that it's over.
+    UploadProgress {
+        meter: usize,
+        progress: Option<&'a UploadScene>,
+    },
+    /// Compare a file (its name and summary) in place of a Tonal Balance
+    /// Meter's live Source, or (`None`) the Source again.
+    CompareFile {
+        meter: usize,
+        file: Option<(&'a str, &'a dasmeter_analysis::tonal_balance::Summary)>,
+    },
     /// Override one colour role on one Meter, or (`None`) go back to the Theme's.
     SetOverride {
         meter: usize,
@@ -493,6 +506,8 @@ pub struct AppCore {
     themes: themes::Themes,
     curves: curves::Curves,
     targets: targets::Targets,
+    /// Files being analysed for Tonal Balance Meters, by Meter.
+    uploads: Vec<(usize, UploadScene)>,
     presets: Presets,
     /// System Capture's rate, to start Meters a Preset brings.
     capture_rate: Option<u32>,
@@ -575,6 +590,7 @@ impl AppCore {
             themes: themes::Themes::new(),
             curves: curves::Curves::default(),
             targets: targets::Targets::default(),
+            uploads: Vec::new(),
             presets: Presets::default(),
             capture_rate: None,
             touched: false,
@@ -944,6 +960,8 @@ impl AppCore {
             | CancelLearning { .. }
             | RemoveTargetSong { .. }
             | FreezeTonalBalance { .. }
+            | UploadProgress { .. }
+            | CompareFile { .. }
             | SystemAppearance(_)
             | OpenMenu { .. }
             | CloseMenu
@@ -1136,7 +1154,7 @@ impl AppCore {
     }
 
     /// A Tonal Balance Meter's Target, learning and Freeze for the scene.
-    fn tonal_balance_scene(&self, slot: &MeterSlot) -> Option<TonalBalanceScene> {
+    fn tonal_balance_scene(&self, meter: usize, slot: &MeterSlot) -> Option<TonalBalanceScene> {
         let MeterSettings::TonalBalance(settings) = slot.meter.settings() else {
             return None;
         };
@@ -1148,6 +1166,12 @@ impl AppCore {
             target,
             learning: slot.meter.learning_seconds(),
             frozen: slot.meter.is_frozen(),
+            comparing: slot.meter.comparing().map(str::to_owned),
+            upload: self
+                .uploads
+                .iter()
+                .find(|(m, _)| *m == meter)
+                .map(|(_, u)| u.clone()),
         })
     }
 
@@ -1838,6 +1862,26 @@ impl AppCore {
                     return;
                 }
             }
+            Event::UploadProgress { meter, progress } => {
+                let before = self.uploads.clone();
+                self.uploads.retain(|(m, _)| *m != meter);
+                if let Some(progress) = progress {
+                    self.uploads.push((meter, progress.clone()));
+                }
+                if self.uploads == before {
+                    return;
+                }
+            }
+            Event::CompareFile { meter, file } => {
+                let compare = file.map(|(name, summary)| (name.to_owned(), summary.clone()));
+                if !self
+                    .meters
+                    .get_mut(meter)
+                    .is_some_and(|s| s.meter.set_compare(compare))
+                {
+                    return;
+                }
+            }
             Event::FreezeTonalBalance { meter } => {
                 if !self
                     .meters
@@ -2328,7 +2372,8 @@ impl AppCore {
         Some(if along_x { u < 0.5 } else { v < 0.5 })
     }
 
-    fn meter_at(&self, window: WindowKey, point: [f32; 2]) -> Option<usize> {
+    /// The Meter drawn at `point` (fractions of the window), if any.
+    pub fn meter_at(&self, window: WindowKey, point: [f32; 2]) -> Option<usize> {
         self.drawn_window(window)?
             .meters
             .iter()
@@ -2605,7 +2650,7 @@ impl AppCore {
                 show_source_label: slot.show_source_label,
                 overrides: slot.overrides.clone(),
                 reference: self.reference_scene(slot),
-                tonal_balance: self.tonal_balance_scene(slot),
+                tonal_balance: self.tonal_balance_scene(i, slot),
                 activity,
                 hovered,
             });

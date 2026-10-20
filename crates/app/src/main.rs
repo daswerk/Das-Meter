@@ -7,6 +7,7 @@
 // A Windows release build is a GUI app: no console window behind it.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod audio_files;
 mod benchmark;
 mod capture;
 mod gpu;

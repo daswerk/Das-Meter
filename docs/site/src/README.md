@@ -2,7 +2,8 @@
 
 Das-Meter shows live Meters for what your computer plays, or for single
 tracks from your DAW: **Waveform**, **Spectrum**, **Spectrogram**, **Loudness
-Meter**, **Stereometer**, **Phase Scope**, **Cepstrum** and **Oscilloscope**.
+Meter**, **Stereometer**, **Phase Scope**, **Cepstrum**, **Oscilloscope** and
+**Tonal Balance**.
 It runs on its own, next to any app or DAW, on macOS and Linux, with Windows
 to come. It's free and open source (MIT OR Apache-2.0).
 

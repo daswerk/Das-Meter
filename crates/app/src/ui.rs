@@ -70,6 +70,18 @@ pub enum Request {
         target: String,
         song: String,
     },
+    /// Ask for audio files to add to a Tonal Balance Meter's Target.
+    AddTargetFiles {
+        meter: usize,
+    },
+    /// Ask for an audio file to compare in place of the live Source.
+    CompareFile {
+        meter: usize,
+    },
+    /// Clear the list of files that couldn't be read.
+    DismissUpload {
+        meter: usize,
+    },
     /// Remove a song from a Target.
     RemoveTargetSong {
         target: String,
@@ -784,6 +796,67 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
             actions.push(Event::ResetLongTerm { meter: index });
         }
     });
+    // Files: songs for the Target, or a bounce to compare.
+    ui.horizontal(|ui| {
+        if ui
+            .button("Add files…")
+            .on_hover_text(
+                "Analyse songs (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A, ALAC) for the Target; \
+                 files and folders can also be dropped on the Meter",
+            )
+            .clicked()
+        {
+            actions
+                .requests
+                .push(Request::AddTargetFiles { meter: index });
+        }
+        match &state.comparing {
+            None => {
+                if ui
+                    .button("Compare file…")
+                    .on_hover_text("Compare a bounce of the mix in place of the live Source")
+                    .clicked()
+                {
+                    actions.requests.push(Request::CompareFile { meter: index });
+                }
+            }
+            Some(name) => {
+                if ui
+                    .button("Stop comparing")
+                    .on_hover_text(format!("Back to the live Source from {name}"))
+                    .clicked()
+                {
+                    actions.push(Event::CompareFile {
+                        meter: index,
+                        file: None,
+                    });
+                }
+            }
+        }
+    });
+    if let Some(upload) = &state.upload {
+        if upload.done < upload.total {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(format!(
+                    "Analysing {} of {} files…",
+                    upload.done + 1,
+                    upload.total
+                ));
+            });
+        }
+        if !upload.failed.is_empty() {
+            ui.label(RichText::new("Couldn't read:").weak());
+            for (file, reason) in &upload.failed {
+                ui.label(RichText::new(format!("{file}: {reason}")).small());
+            }
+            if upload.done >= upload.total && ui.small_button("OK").clicked() {
+                actions
+                    .requests
+                    .push(Request::DismissUpload { meter: index });
+            }
+        }
+    }
     // Teaching by playing: Learn, play the song, Add.
     match learning {
         None => {

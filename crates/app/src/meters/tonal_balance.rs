@@ -17,6 +17,8 @@ pub struct Drawn<'a> {
     pub mix: Option<&'a Summary>,
     pub frozen: Option<&'a [f32]>,
     pub learning: Option<u32>,
+    /// The file compared in place of the live Source.
+    pub comparing: Option<&'a str>,
     pub target: Option<&'a TargetScene>,
 }
 
@@ -133,6 +135,9 @@ fn title_line(c: &mut Canvas, area: Area, drawn: &Drawn) {
     };
     if let Some(seconds) = drawn.learning {
         left = format!("Learning {}  ·  {left}", seconds_text(seconds));
+    }
+    if let Some(file) = drawn.comparing {
+        left = format!("{file} vs {left}");
     }
     let colour = if drawn.learning.is_some() {
         accent

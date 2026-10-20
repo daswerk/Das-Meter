@@ -391,3 +391,78 @@ fn an_exported_preset_carries_its_target_to_another_install() {
     assert_eq!(target.name, "Shared");
     assert_eq!(target.songs.len(), 1);
 }
+
+#[test]
+fn a_compared_file_takes_the_live_sources_place() {
+    let mut app = App::launch();
+    app.play(2.0, 220.0);
+    let summary = dasmeter_analysis::tonal_balance::Summary {
+        curve: vec![-20.0; tonal_grid().len()],
+        regions: [-20.0; 5],
+        loudness: -10.0,
+        low_end_mono: Some(0.5),
+        low_end_crest: [None; 2],
+        sub: None,
+        bass: None,
+        key: None,
+        seconds: 180.0,
+        chroma: [0.0; 12],
+    };
+    app.core.handle(
+        Event::CompareFile {
+            meter: METER,
+            file: Some(("Bounce", &summary)),
+        },
+        app.now,
+    );
+    let meter = app.meter();
+    assert_eq!(
+        meter.tonal_balance.unwrap().comparing.as_deref(),
+        Some("Bounce")
+    );
+    let MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) = meter.state else {
+        panic!("no mix");
+    };
+    assert_eq!(
+        mix.low_end_mono,
+        Some(0.5),
+        "the file's figures, not the live ones"
+    );
+    app.core.handle(
+        Event::CompareFile {
+            meter: METER,
+            file: None,
+        },
+        app.now,
+    );
+    assert_eq!(app.meter().tonal_balance.unwrap().comparing, None);
+}
+
+#[test]
+fn upload_progress_shows_on_the_meter_until_it_is_over() {
+    let mut app = App::launch();
+    let progress = dasmeter_core::UploadScene {
+        done: 1,
+        total: 3,
+        failed: vec![("Broken".into(), "not an audio file".into())],
+    };
+    app.core.handle(
+        Event::UploadProgress {
+            meter: METER,
+            progress: Some(&progress),
+        },
+        app.now,
+    );
+    assert_eq!(
+        app.meter().tonal_balance.unwrap().upload,
+        Some(progress.clone())
+    );
+    app.core.handle(
+        Event::UploadProgress {
+            meter: METER,
+            progress: None,
+        },
+        app.now,
+    );
+    assert_eq!(app.meter().tonal_balance.unwrap().upload, None);
+}

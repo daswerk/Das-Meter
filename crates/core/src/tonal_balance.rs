@@ -120,6 +120,8 @@ pub(crate) struct TonalBalanceAnalyser {
     learning: Option<Vec<Frame>>,
     /// The mix's curve when frozen, drawn as a ghost.
     frozen: Option<Vec<f32>>,
+    /// A file compared in place of the live Source: its name and summary.
+    compare: Option<(String, Summary)>,
 }
 
 impl TonalBalanceAnalyser {
@@ -132,6 +134,7 @@ impl TonalBalanceAnalyser {
             summary: None,
             learning: None,
             frozen: None,
+            compare: None,
         }
     }
 
@@ -172,8 +175,27 @@ impl TonalBalanceAnalyser {
         true
     }
 
+    /// What's compared with the Target: the file being compared, or the
+    /// live average once it has heard something.
     pub fn summary(&self) -> Option<&Summary> {
-        self.summary.as_ref()
+        match &self.compare {
+            Some((_, summary)) => Some(summary),
+            None => self.summary.as_ref(),
+        }
+    }
+
+    /// Compares a file in place of the live Source, or (`None`) the Source
+    /// again; returns whether anything changed.
+    pub fn set_compare(&mut self, compare: Option<(String, Summary)>) -> bool {
+        if compare.is_none() && self.compare.is_none() {
+            return false;
+        }
+        self.compare = compare;
+        true
+    }
+
+    pub fn comparing(&self) -> Option<&str> {
+        self.compare.as_ref().map(|(name, _)| name.as_str())
     }
 
     pub fn reset(&mut self) {
@@ -228,6 +250,19 @@ pub struct TonalBalanceScene {
     pub learning: Option<u32>,
     /// Whether a ghost of the curve is frozen.
     pub frozen: bool,
+    /// The file compared in place of the live Source, by name.
+    pub comparing: Option<String>,
+    /// Files being analysed for it, and those that couldn't be.
+    pub upload: Option<UploadScene>,
+}
+
+/// Audio files being analysed for a Tonal Balance Meter, in the background.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct UploadScene {
+    pub done: usize,
+    pub total: usize,
+    /// Each file that couldn't be read, with why.
+    pub failed: Vec<(String, String)>,
 }
 
 /// A song of a Target, as menus list it.

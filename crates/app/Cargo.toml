@@ -27,6 +27,8 @@ pollster = "1.0.1"
 raw-window-handle = "0.6"
 rfd = { version = "0.17", default-features = false }
 rtrb = "0.4.0"
+# Decodes audio files for Targets and Compare file (MPL-2.0, allowed for it alone: ADR 0006).
+symphonia = { version = "0.6.1", default-features = false, features = ["aac", "aiff", "alac", "caf", "flac", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 wgpu = "30"
 winit = "0.30.13"
 

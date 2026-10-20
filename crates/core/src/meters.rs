@@ -936,6 +936,23 @@ impl Meter {
         }
     }
 
+    /// Compares a file (its name and summary) in place of the live Source,
+    /// or (`None`) the Source again; returns whether anything changed.
+    pub fn set_compare(&mut self, compare: Option<(String, Summary)>) -> bool {
+        let changed = self.tonal_balance().is_some_and(|a| a.set_compare(compare));
+        if changed {
+            self.view = None;
+        }
+        changed
+    }
+
+    pub fn comparing(&self) -> Option<&str> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.comparing(),
+            _ => None,
+        }
+    }
+
     pub fn is_frozen(&self) -> bool {
         matches!(&self.analyser, Some(Analyser::TonalBalance(a)) if a.frozen().is_some())
     }

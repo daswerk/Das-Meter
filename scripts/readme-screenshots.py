@@ -123,6 +123,13 @@ def main():
                  "phase-scope", "cepstrum", "oscilloscope"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
+    # The Tonal Balance Meter against a Target: Fine, and Broad beside the
+    # low end zoom with the Target's key and the mix's.
+    save(flat(shot("tonal-balance")), "meter-tonal-balance.png", 960)
+    save(labelled([flat(shot("tonal-balance-broad")), flat(shot("tonal-balance-shift"))],
+                  ["Broad", "Low end zoom, keys differing"], columns=2, tile_width=760),
+         "tonal-balance-views.png", 1600)
+
     # Every built-in Theme, plus one made from scratch.
     themes = ["Nocturne", "Dark", "Light", "High contrast", "Midnight Purple",
               "Deep Turquoise", "Graphite"]

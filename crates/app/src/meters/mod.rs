@@ -377,6 +377,10 @@ impl MeterRenderer {
                         mix: mix.as_deref(),
                         frozen: frozen.as_deref(),
                         learning: meter.tonal_balance.as_ref().and_then(|t| t.learning),
+                        comparing: meter
+                            .tonal_balance
+                            .as_ref()
+                            .and_then(|t| t.comparing.as_deref()),
                         target: meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref()),
                     },
                     look.bar,
