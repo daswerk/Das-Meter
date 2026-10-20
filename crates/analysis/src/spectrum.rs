@@ -961,6 +961,11 @@ impl std::fmt::Display for Note {
 
 /// The note nearest to `frequency` Hz, or `None` for a non-positive frequency.
 pub fn note_name(frequency: f32) -> Option<Note> {
+    note_name_at(frequency, 440.0)
+}
+
+/// As [`note_name`], with A4 tuned to `a4` Hz.
+pub fn note_name_at(frequency: f32, a4: f32) -> Option<Note> {
     const NAMES: [&str; 12] = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];
@@ -968,7 +973,7 @@ pub fn note_name(frequency: f32) -> Option<Note> {
         return None;
     }
     // MIDI note number: A4 = 69.
-    let midi = 69.0 + 12.0 * (f64::from(frequency) / 440.0).log2();
+    let midi = 69.0 + 12.0 * (f64::from(frequency) / f64::from(a4)).log2();
     let nearest = midi.round();
     let index = nearest as i64;
     Some(Note {

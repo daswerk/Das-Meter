@@ -120,7 +120,7 @@ def main():
 
     # Every Meter alone.
     for kind in ["waveform", "spectrum", "spectrogram", "loudness", "stereometer",
-                 "phase-scope", "cepstrum", "oscilloscope"]:
+                 "phase-scope", "cepstrum", "oscilloscope", "tuner"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
     # The Tonal Balance Meter against a Target: Fine, and Broad beside the

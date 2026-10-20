@@ -191,6 +191,7 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         "cepstrum" => MeterKind::Cepstrum,
         "oscilloscope" => MeterKind::Oscilloscope,
         "tonal-balance" => MeterKind::TonalBalance,
+        "tuner" => MeterKind::Tuner,
         other => return Err(format!("no Meter kind {other:?}")),
     };
     core.handle(Event::SetMode(LayoutMode::Window), now);
@@ -215,6 +216,15 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         MeterKind::Oscilloscope => {
             let partials = [(1, 0.2), (2, 0.07), (3, 0.04), (5, 0.016)];
             play(core, &tone(220.0, &partials, 2.0), now)
+        }
+        // A bass note 7 cents sharp of A2.
+        MeterKind::Tuner => {
+            let partials: Vec<(i32, f64)> = (1..=12).map(|k| (k, 0.2 / f64::from(k))).collect();
+            play(
+                core,
+                &tone(110.0 * 2f64.powf(7.0 / 1_200.0), &partials, 2.0),
+                now,
+            )
         }
         _ => play(core, &music(10.0), now),
     })

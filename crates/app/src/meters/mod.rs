@@ -13,6 +13,7 @@ mod spectrogram;
 mod spectrum;
 mod stereometer;
 mod tonal_balance;
+mod tuner;
 mod waveform;
 
 use dasmeter_core::{
@@ -364,6 +365,9 @@ impl MeterRenderer {
                 }
                 MeterView::Oscilloscope { settings, scope } => {
                     oscilloscope::draw(&mut c, inner, settings, scope)
+                }
+                MeterView::Tuner { settings, reading } => {
+                    tuner::draw(&mut c, inner, settings, reading.as_ref())
                 }
                 MeterView::TonalBalance {
                     settings,

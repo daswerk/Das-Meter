@@ -10,6 +10,12 @@
 //! Each [`update`](CepstrumAnalyser::update) takes the last `fft_size` samples
 //! with a Hann window, smooths the cepstrum over time, and resamples it for
 //! drawing, from the shortest period (highest pitch) to the longest.
+//!
+//! The cepstral peak finds the pitch only to a quefrency sample (several
+//! cents at mid pitches), so the pitch is then refined in the spectrum: each
+//! of the first harmonics' peaks, interpolated between bins, gives the
+//! fundamental once divided by its number, and their average (weighted by
+//! level) is the pitch.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +36,11 @@ const SILENCE_RMS: f32 = 1e-4;
 const VOICED_Z: f32 = 5.0;
 /// Below this, the draw buffer isn't scaled up: noise stays low.
 const MIN_SCALE: f32 = 0.02;
+/// Harmonics used to refine the pitch.
+const REFINE_HARMONICS: usize = 8;
+/// How far from where it's expected a harmonic's peak is looked for, as a
+/// fraction of its frequency (about ±1 semitone).
+const REFINE_SEARCH: f32 = 0.06;
 
 /// The Cepstrum's settings that affect analysis.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -90,6 +101,8 @@ pub struct CepstrumAnalyser {
     input: Vec<f32>,
     spectrum: Vec<Complex32>,
     output: Vec<f32>,
+    /// The last update's log magnitude spectrum, for refining the pitch.
+    log_magnitudes: Vec<f32>,
     /// The smoothed cepstrum, per quefrency sample.
     smoothed: Vec<f32>,
     cepstrum: Cepstrum,
@@ -116,6 +129,7 @@ impl CepstrumAnalyser {
             spectrum: forward.make_output_vec(),
             input: forward.make_input_vec(),
             output: inverse.make_output_vec(),
+            log_magnitudes: vec![0.0; size / 2 + 1],
             forward,
             inverse,
             window,
@@ -205,8 +219,9 @@ impl CepstrumAnalyser {
         self.forward
             .process(&mut self.input, &mut self.spectrum)
             .expect("buffers sized by the planner");
-        for bin in &mut self.spectrum {
-            *bin = Complex32::new((bin.norm() + 1e-9).ln(), 0.0);
+        for (bin, log) in self.spectrum.iter_mut().zip(&mut self.log_magnitudes) {
+            *log = (bin.norm() + 1e-9).ln();
+            *bin = Complex32::new(*log, 0.0);
         }
         self.inverse
             .process(&mut self.spectrum, &mut self.output)
@@ -255,10 +270,52 @@ impl CepstrumAnalyser {
         } else {
             0.0
         };
+        let rough = self.sample_rate as f32 / (k as f32 + offset);
         Some(Pitch {
-            frequency: self.sample_rate as f32 / (k as f32 + offset),
+            frequency: self.refine(rough).unwrap_or(rough),
             strength,
         })
+    }
+
+    /// The pitch near `rough` from the spectrum's harmonic peaks (see the
+    /// module docs); `None` if no harmonic has a clear peak.
+    fn refine(&self, rough: f32) -> Option<f32> {
+        let size = self.history.len() as f32;
+        let bin_hz = self.sample_rate as f32 / size;
+        let logs = &self.log_magnitudes;
+        let last = logs.len() - 2;
+        let (mut sum, mut weights) = (0.0f32, 0.0f32);
+        for h in 1..=REFINE_HARMONICS {
+            let expected = rough * h as f32 / bin_hz;
+            let reach = (expected * REFINE_SEARCH).max(2.0);
+            let from = ((expected - reach).floor() as usize).max(1);
+            let to = ((expected + reach).ceil() as usize).min(last);
+            if from >= to {
+                break;
+            }
+            let k = (from..=to).max_by(|&a, &b| logs[a].total_cmp(&logs[b]))?;
+            // A peak, not the edge of the search running uphill.
+            if k == from || k == to || logs[k] < logs[k - 1] || logs[k] < logs[k + 1] {
+                continue;
+            }
+            let (left, centre, right) = (logs[k - 1], logs[k], logs[k + 1]);
+            let curve = left - 2.0 * centre + right;
+            if curve >= 0.0 {
+                continue;
+            }
+            let offset = (0.5 * (left - right) / curve).clamp(-0.5, 0.5);
+            let frequency = (k as f32 + offset) * bin_hz / h as f32;
+            // Another sound's partial, not this harmonic. The cepstral
+            // estimate can be off by most of a semitone; this corrects it.
+            if (frequency / rough).log2().abs() * 1_200.0 > 80.0 {
+                continue;
+            }
+            // Louder harmonics, and higher ones (finer per cent), count more.
+            let weight = centre.exp() * h as f32;
+            sum += frequency * weight;
+            weights += weight;
+        }
+        (weights > 0.0).then(|| sum / weights)
     }
 
     /// Resamples the range into [`POINTS`], keeping each point's highest value.

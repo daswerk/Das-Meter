@@ -215,6 +215,25 @@ labelled in milliseconds.
 To show it, right-click a Meter and choose **Change Meter ▸ Oscilloscope**,
 or **Add Meter ▸ Oscilloscope**.
 
+## Tuner
+
+![The Tuner](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-tuner.png)
+
+The note being played, large, with a bar of cents from −50 to +50 under it
+and the pitch in Hz: tune a bass, a kick's pitch or a synth. Within 5 cents
+of the note it turns the **Tuner in tune** colour. It finds the pitch as the
+Cepstrum does, then refines it from the sound's harmonics to about a cent,
+and steadies it while a note holds; a new note shows at once. When the pitch
+is lost it keeps the last reading for a second, faded.
+
+**A4** sets the reference pitch (415 to 466 Hz, 440 by default). Its
+advanced settings are the Cepstrum's: the FFT size (8192 by default, for low
+notes) and the lowest and highest pitch looked for (30 Hz to 1 kHz). Short
+and wide, as in the Bar, the note sits beside the bar.
+
+To show it, right-click a Meter and choose **Change Meter ▸ Tuner**, or
+**Add Meter ▸ Tuner**.
+
 ## Tonal Balance
 
 ![The Tonal Balance Meter](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-tonal-balance.png)
