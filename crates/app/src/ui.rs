@@ -23,7 +23,7 @@ use dasmeter_core::{
     MeterSettings, OscilloscopeMeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role,
     Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings,
     Steadiness, StereoDrawing, StereometerMeterSettings, TonalBalanceMeterSettings, TonalView,
-    WaveformColouring, WaveformMeterSettings, WindowKey,
+    TunerMeterSettings, WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -1248,6 +1248,28 @@ fn cepstrum_basic(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
         .changed()
 }
 
+fn tuner_basic(ui: &mut egui::Ui, s: &mut TunerMeterSettings) -> bool {
+    ui.add(
+        Slider::new(&mut s.a4, limits::TUNER_A4.0..=limits::TUNER_A4.1)
+            .text("A4")
+            .suffix(" Hz")
+            .step_by(0.1),
+    )
+    .on_hover_text("The reference pitch the notes are tuned to")
+    .changed()
+}
+
+/// The Tuner's pitch finding, as the Cepstrum's.
+fn tuner_advanced(ui: &mut egui::Ui, s: &mut TunerMeterSettings) -> bool {
+    let mut cepstrum = CepstrumMeterSettings {
+        analysis: s.analysis,
+        show_pitch: true,
+    };
+    let changed = cepstrum_advanced(ui, &mut cepstrum);
+    s.analysis = cepstrum.analysis;
+    changed
+}
+
 fn oscilloscope_basic(ui: &mut egui::Ui, s: &mut OscilloscopeMeterSettings) -> bool {
     let a = &mut s.analysis;
     let mut changed = choice(ui, "Channels", &mut a.channels, &CHANNEL_VIEWS);
@@ -1526,6 +1548,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::PhaseScope(w) => phase_scope_basic(ui, w, &mut tap),
         MeterSettings::Oscilloscope(w) => oscilloscope_basic(ui, w),
         MeterSettings::TonalBalance(w) => tonal_balance_basic(ui, w),
+        MeterSettings::Tuner(w) => tuner_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1550,6 +1573,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::PhaseScope(_) => false, // all in the menu
         MeterSettings::Oscilloscope(_) => false, // all in the basics
         MeterSettings::TonalBalance(w) => tonal_balance_advanced(ui, w),
+        MeterSettings::Tuner(w) => tuner_advanced(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1782,6 +1806,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::PhaseScope => "Phase Scope",
         MeterKind::Oscilloscope => "Oscilloscope",
         MeterKind::TonalBalance => "Tonal Balance",
+        MeterKind::Tuner => "Tuner",
     }
 }
 
@@ -2396,7 +2421,7 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
 }
 
 /// The Theme's colours by the Meter that uses them.
-const COLOUR_GROUPS: [(&str, &[Role]); 9] = [
+const COLOUR_GROUPS: [(&str, &[Role]); 10] = [
     (
         "General",
         &[
@@ -2454,6 +2479,7 @@ const COLOUR_GROUPS: [(&str, &[Role]); 9] = [
         &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
     ),
     ("Tonal Balance", TONAL_BALANCE_ROLES),
+    ("Tuner", &[Role::TunerInTune, Role::TunerOff]),
 ];
 
 const TONAL_BALANCE_ROLES: &[Role] = &[
@@ -2584,6 +2610,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
         ],
         MeterSettings::Oscilloscope(_) => &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
         MeterSettings::TonalBalance(_) => TONAL_BALANCE_ROLES,
+        MeterSettings::Tuner(_) => &[Role::TunerInTune, Role::TunerOff],
     }
 }
 

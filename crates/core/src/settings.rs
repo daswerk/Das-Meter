@@ -14,7 +14,7 @@ use dasmeter_analysis::{
 use crate::meters::{
     CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, OscilloscopeMeterSettings,
     PhaseScopeMeterSettings, SpectrogramMeterSettings, SpectrumMeterSettings,
-    StereometerMeterSettings, WaveformMeterSettings,
+    StereometerMeterSettings, TunerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -82,6 +82,8 @@ pub const SPECTRUM_MAX_SMOOTHING: f32 = 1.0 / 3.0;
 pub const PEAK_HOLD: (Duration, Duration) = (Duration::from_millis(100), Duration::from_secs(30));
 /// The Loudness Meter's target, in LUFS.
 pub const LOUDNESS_TARGET: (f64, f64) = (-40.0, 0.0);
+/// The Tuner's reference pitch, A4 in Hz.
+pub const TUNER_A4: (f32, f32) = (415.0, 466.0);
 /// The true-peak ceiling the counter counts overs of, in dBTP.
 pub const TRUE_PEAK_CEILING: (f64, f64) = (-6.0, 0.0);
 /// The Loudness Meter's RMS window.
@@ -173,6 +175,7 @@ impl MeterSettings {
             MeterSettings::PhaseScope(s) => MeterSettings::PhaseScope(s.clamped()),
             MeterSettings::Oscilloscope(s) => MeterSettings::Oscilloscope(s.clamped()),
             MeterSettings::TonalBalance(s) => MeterSettings::TonalBalance(s.clamped()),
+            MeterSettings::Tuner(s) => MeterSettings::Tuner(s.clamped()),
         }
     }
 }
@@ -285,6 +288,22 @@ impl CepstrumMeterSettings {
         );
         a.smoothing = clamp_duration(a.smoothing, CEPSTRUM_SMOOTHING);
         self
+    }
+}
+
+impl TunerMeterSettings {
+    fn clamped(self) -> Self {
+        let analysis = CepstrumMeterSettings {
+            analysis: self.analysis,
+            show_pitch: true,
+        }
+        .clamped()
+        .analysis;
+        TunerMeterSettings {
+            analysis,
+            // To 0.1 Hz, as the slider sets it.
+            a4: (clamp_f32(self.a4, TUNER_A4, 440.0) * 10.0).round() / 10.0,
+        }
     }
 }
 

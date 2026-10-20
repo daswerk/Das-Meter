@@ -6,8 +6,8 @@ use dasmeter_analysis::{
     CepstrumAnalyser, CepstrumSettings, ChannelView, LoudnessAnalyser, LoudnessSettings,
     Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
     SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView,
-    StereometerAnalyser, StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings,
-    note_name, tonal_balance::Summary,
+    StereometerAnalyser, StereometerSettings, TunerAnalyser, WaveformAnalyser, WaveformColumn,
+    WaveformSettings, note_name, tonal_balance::Summary,
 };
 
 use crate::phase_scope::{PhaseScope, PhaseScopeView};
@@ -295,6 +295,40 @@ impl Default for CepstrumMeterSettings {
     }
 }
 
+/// The Tuner: the pitch the Cepstrum finds, as a note and how many cents
+/// it's off, steadied for reading.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TunerMeterSettings {
+    /// The pitch finding. Default an 8192-sample FFT (for low notes) and
+    /// 30 Hz to 1 kHz.
+    pub analysis: CepstrumSettings,
+    /// The reference pitch: A4 in Hz. Default 440.
+    pub a4: f32,
+}
+
+impl Default for TunerMeterSettings {
+    fn default() -> Self {
+        TunerMeterSettings {
+            analysis: CepstrumSettings {
+                fft_size: 8_192,
+                pitch_range: (30.0, 1_000.0),
+                ..CepstrumSettings::default()
+            },
+            a4: 440.0,
+        }
+    }
+}
+
+/// What the Tuner shows: the note with its cents (to 1) and the pitch (to 0.1 Hz).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TunerDisplay {
+    pub note: dasmeter_analysis::Note,
+    pub frequency: f32,
+    /// The pitch was lost: the last reading, held for a moment.
+    pub held: bool,
+}
+
 /// The Oscilloscope: the wave itself over a few milliseconds, held still on
 /// its rising edge.
 #[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -406,6 +440,7 @@ pub enum MeterSettings {
     PhaseScope(PhaseScopeMeterSettings),
     Oscilloscope(OscilloscopeMeterSettings),
     TonalBalance(TonalBalanceMeterSettings),
+    Tuner(TunerMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -420,10 +455,11 @@ pub enum MeterKind {
     PhaseScope,
     Oscilloscope,
     TonalBalance,
+    Tuner,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 9] = [
+    pub const ALL: [MeterKind; 10] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -433,6 +469,7 @@ impl MeterKind {
         MeterKind::PhaseScope,
         MeterKind::Oscilloscope,
         MeterKind::TonalBalance,
+        MeterKind::Tuner,
     ];
 }
 
@@ -457,6 +494,7 @@ impl MeterSettings {
             MeterKind::TonalBalance => {
                 MeterSettings::TonalBalance(TonalBalanceMeterSettings::default())
             }
+            MeterKind::Tuner => MeterSettings::Tuner(TunerMeterSettings::default()),
         }
     }
 
@@ -471,6 +509,7 @@ impl MeterSettings {
             MeterSettings::PhaseScope(_) => MeterKind::PhaseScope,
             MeterSettings::Oscilloscope(_) => MeterKind::Oscilloscope,
             MeterSettings::TonalBalance(_) => MeterKind::TonalBalance,
+            MeterSettings::Tuner(_) => MeterKind::Tuner,
         }
     }
 
@@ -486,6 +525,7 @@ impl MeterSettings {
             MeterSettings::PhaseScope(_) => "Phase Scope",
             MeterSettings::Oscilloscope(_) => "Oscilloscope",
             MeterSettings::TonalBalance(_) => "Tonal Balance",
+            MeterSettings::Tuner(_) => "Tuner",
         }
     }
 }
@@ -595,6 +635,11 @@ pub enum MeterView {
         /// The mix's curve when frozen: a ghost to compare before and after.
         frozen: Option<Vec<f32>>,
     },
+    Tuner {
+        settings: TunerMeterSettings,
+        /// `None` while there's no pitch (and none is held).
+        reading: Option<TunerDisplay>,
+    },
 }
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
@@ -645,6 +690,7 @@ enum Analyser {
     PhaseScope(Box<PhaseScope>),
     Oscilloscope(Box<OscilloscopeAnalyser>),
     TonalBalance(Box<TonalBalanceAnalyser>),
+    Tuner(Box<TunerAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -1059,6 +1105,7 @@ impl Meter {
                 a.set_settings(stereo_analysis(sample_rate, &s))
             }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
+            (Some(Analyser::Tuner(a)), MeterSettings::Tuner(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Spectrogram(a)), MeterSettings::Spectrogram(s)) => {
                 a.set_settings(s.analysis)
             }
@@ -1081,6 +1128,7 @@ impl Meter {
             Analyser::Loudness(a) => a.sample_rate(),
             Analyser::Stereometer(a) => a.sample_rate(),
             Analyser::Cepstrum(a) => a.sample_rate(),
+            Analyser::Tuner(a) => a.sample_rate(),
             Analyser::Spectrogram(a) => a.sample_rate(),
             Analyser::PhaseScope(a) => a.sample_rate(),
             Analyser::Oscilloscope(a) => a.sample_rate(),
@@ -1114,6 +1162,7 @@ impl Meter {
             Some(Analyser::Loudness(a)) => a.process(frames),
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
+            Some(Analyser::Tuner(a)) => a.process(frames),
             Some(Analyser::Oscilloscope(a)) => a.process(frames),
             Some(Analyser::TonalBalance(a)) => {
                 // It only looks different once a frame is added.
@@ -1311,6 +1360,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Cepstrum(s) => {
             Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
         }
+        MeterSettings::Tuner(s) => {
+            Analyser::Tuner(Box::new(TunerAnalyser::new(sample_rate, s.analysis)))
+        }
         MeterSettings::Spectrogram(s) => {
             Analyser::Spectrogram(Box::new(SpectrogramAnalyser::new(sample_rate, s.analysis)))
         }
@@ -1434,6 +1486,17 @@ fn build_view(
                 points,
             }
         }
+        (Analyser::Tuner(a), MeterSettings::Tuner(settings)) => MeterView::Tuner {
+            settings,
+            reading: a.update(settings.a4).map(|r| TunerDisplay {
+                note: dasmeter_analysis::Note {
+                    cents: r.note.cents.round(),
+                    ..r.note
+                },
+                frequency: round_to(r.frequency, 0.1),
+                held: r.held,
+            }),
+        },
         (Analyser::Cepstrum(a), MeterSettings::Cepstrum(settings)) => {
             let cepstrum = a.update();
             let (short, long) = cepstrum.quefrency_range;

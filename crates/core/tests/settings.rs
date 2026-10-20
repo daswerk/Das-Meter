@@ -282,6 +282,7 @@ fn each_setting_changes_the_meter_and_its_scene() {
             MeterView::PhaseScope { settings, .. } => MeterSettings::PhaseScope(*settings),
             MeterView::Oscilloscope { settings, .. } => MeterSettings::Oscilloscope(*settings),
             MeterView::TonalBalance { settings, .. } => MeterSettings::TonalBalance(*settings),
+            MeterView::Tuner { settings, .. } => MeterSettings::Tuner(*settings),
         };
         assert_eq!(drawn, wanted[meter], "meter {meter} draws its new settings");
     }

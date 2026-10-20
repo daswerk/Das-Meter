@@ -15,6 +15,7 @@ pub mod spectrum;
 pub mod stereometer;
 pub mod test_signal;
 pub mod tonal_balance;
+pub mod tuner;
 pub mod waveform;
 
 pub use cepstrum::{Cepstrum, CepstrumAnalyser, CepstrumSettings, Pitch};
@@ -28,9 +29,10 @@ pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};
 pub use spectrum::{
     LongTerm, Note, REFERENCE_POINTS_PER_OCTAVE, REFERENCE_RANGE, Spectrum, SpectrumAnalyser,
     SpectrumSettings, SpectrumStyle, SpectrumTrace, WindowFunction, catmull_rom, note_name,
-    reference_at, reference_grid,
+    note_name_at, reference_at, reference_grid,
 };
 pub use stereometer::{
     StereoReadings, StereoScaling, StereoView, StereometerAnalyser, StereometerSettings,
 };
+pub use tuner::{TunerAnalyser, TunerReading};
 pub use waveform::{Lr4, WaveformAnalyser, WaveformColumn, WaveformScale, WaveformSettings};

@@ -128,6 +128,9 @@ pub enum Role {
     TonalBalanceRange,
     TonalBalanceOver,
     TonalBalanceUnder,
+    // Tuner.
+    TunerInTune,
+    TunerOff,
 }
 
 impl Role {
@@ -166,6 +169,8 @@ impl Role {
             Role::TonalBalanceRange => "tonal_balance_range",
             Role::TonalBalanceOver => "tonal_balance_over",
             Role::TonalBalanceUnder => "tonal_balance_under",
+            Role::TunerInTune => "tuner_in_tune",
+            Role::TunerOff => "tuner_off",
         }
     }
 
@@ -204,10 +209,12 @@ impl Role {
             Role::TonalBalanceRange => "Tonal Balance Target range",
             Role::TonalBalanceOver => "Tonal Balance too much",
             Role::TonalBalanceUnder => "Tonal Balance too little",
+            Role::TunerInTune => "Tuner in tune",
+            Role::TunerOff => "Tuner off",
         }
     }
 
-    pub const ALL: [Role; 32] = [
+    pub const ALL: [Role; 34] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -240,6 +247,8 @@ impl Role {
         Role::TonalBalanceRange,
         Role::TonalBalanceOver,
         Role::TonalBalanceUnder,
+        Role::TunerInTune,
+        Role::TunerOff,
     ];
 }
 
@@ -285,6 +294,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x8a, 0x3d),
             Role::TonalBalanceUnder => Colour::rgb(0x5e, 0xc8, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xf0, 0x3e, 0x3e),
+            Role::TunerInTune => Colour::rgb(0x2f, 0xbf, 0x71),
+            Role::TunerOff => Colour::rgb(0xff, 0xb3, 0x47),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -328,6 +339,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xe0, 0x6a, 0x10),
             Role::TonalBalanceUnder => Colour::rgb(0x0a, 0x7c, 0xc2),
             Role::LoudnessCounter => Colour::rgb(0xd6, 0x28, 0x28),
+            Role::TunerInTune => Colour::rgb(0x1f, 0x9d, 0x5a),
+            Role::TunerOff => Colour::rgb(0xd9, 0x7a, 0x00),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -370,6 +383,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::TonalBalanceUnder => Colour::rgb(0x00, 0xe5, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xff, 0x9f, 0x1c),
+            Role::TunerInTune => Colour::rgb(0x3d, 0xa5, 0xff),
+            Role::TunerOff => Colour::rgb(0xff, 0x9f, 0x1c),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -411,6 +426,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x7a, 0x59),
             Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xe0, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::TunerInTune => Colour::rgb(0x57, 0xd6, 0x8d),
+            Role::TunerOff => Colour::rgb(0xff, 0xcf, 0x6e),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -452,6 +469,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x8a, 0x3d),
             Role::TonalBalanceUnder => Colour::rgb(0x7a, 0xa8, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x5e),
+            Role::TunerInTune => Colour::rgb(0x3d, 0xdc, 0x97),
+            Role::TunerOff => Colour::rgb(0xff, 0xd1, 0x66),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -493,6 +512,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xe0, 0x7a, 0x5a),
             Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xa8, 0xd9),
             Role::LoudnessCounter => Colour::rgb(0xe0, 0x5a, 0x5a),
+            Role::TunerInTune => Colour::rgb(0x7f, 0xc9, 0x9a),
+            Role::TunerOff => Colour::rgb(0xe0, 0xb0, 0x5a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -535,6 +556,8 @@ impl Palette {
             Role::TonalBalanceOver => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::TonalBalanceUnder => Colour::rgb(0x4f, 0xd8, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::TunerInTune => Colour::rgb(0x3d, 0xdc, 0x84),
+            Role::TunerOff => Colour::rgb(0xf2, 0xc9, 0x4c),
         };
         Palette {
             colours: Role::ALL.map(colour),
