@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use dasmeter_analysis::Scale;
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
 use dasmeter_analysis::tonal_balance::{Key, Parts};
 use dasmeter_analysis::{
@@ -994,6 +995,38 @@ fn loudness_basic(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings, reset: &mut 
             .add(Toggle::new(&mut s.show_thin_bars, "Thin bars"))
             .on_hover_text("A thin bar beside each big number")
             .changed();
+    } else {
+        ui.horizontal(|ui| {
+            ui.label("Scale");
+            egui::ComboBox::from_id_salt("loudness scale")
+                .selected_text(s.analysis.scale.name())
+                .show_ui(ui, |ui| {
+                    for scale in Scale::ALL {
+                        changed |= ui
+                            .selectable_value(&mut s.analysis.scale, scale, scale.name())
+                            .changed();
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "The bars' scale and ballistics: sample peak and RMS, VU, \
+                     a PPM (DIN, Nordic, BBC, EBU) or the K-System",
+                );
+        });
+        if s.analysis.scale == Scale::Vu {
+            changed |= ui
+                .add(
+                    Slider::new(
+                        &mut s.analysis.vu_reference,
+                        limits::VU_REFERENCE.0..=limits::VU_REFERENCE.1,
+                    )
+                    .text("0 VU at")
+                    .suffix(" dBFS")
+                    .step_by(1.0),
+                )
+                .on_hover_text("The peak of the sine that reads 0 VU")
+                .changed();
+        }
     }
     changed |= choice(
         ui,

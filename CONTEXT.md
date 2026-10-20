@@ -84,6 +84,10 @@ _Avoid_: Goniometer, vectorscope, correlometer
 Which pair of channels a Waveform, Spectrum or Oscilloscope shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.
 _Avoid_: Channel mode, routing
 
+**Scale**:
+How the Loudness Meter's bars read: Peak (sample peak and RMS), VU, a PPM (DIN, Nordic, BBC, EBU) or the K-System, each with its standard timing and numbers.
+_Avoid_: Meter type, ballistics (for the choice itself)
+
 **Preset**:
 A saved setup: which Meters are shown, how they are arranged, their settings and which Theme they use.
 _Avoid_: Profile, scene

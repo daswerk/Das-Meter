@@ -14,6 +14,12 @@ changing them later would silently move everyone's numbers.
 - **LUFS, LRA, true peak:** the `ebur128` crate, pinned to an exact version.
   True peak oversamples 4× below 96 kHz and 2× at 96 kHz.
 - **Sample peak:** `20·log10(max|x|)` per channel.
+- **Scales** (the bars' VU, PPM and K-System ballistics): defined in
+  [ADR 0007](https://github.com/daswerk/Das-Meter/blob/main/docs/adr/0007-meter-scales-and-ballistics.md).
+  VU reaches 99% in 300 ms with 1.25% overshoot; PPM Type I (DIN, Nordic)
+  reads 80% of a 5 ms burst and falls 20 dB in 1.7 s, Type II (BBC, EBU) 80%
+  of a 10 ms burst and 24 dB in 2.8 s; alignment and 0 VU are a sine peaking
+  at −18 dBFS.
 - **Counters:** per channel, since the last reset. **Clips**: runs of samples
   with `|x| ≥ 1.0` (0 dBFS), each run counted once. **TP over**: runs of true
   peak above the ceiling (−1 dBTP by default), looked at in 10 ms blocks, so

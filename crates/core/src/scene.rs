@@ -302,6 +302,8 @@ pub struct ChannelDisplay {
     pub clips: u32,
     /// True peaks over the ceiling since the last reset.
     pub true_peak_overs: u32,
+    /// The VU or PPM reading (dBFS of a sine's peak), on those scales.
+    pub scale_level: Level,
 }
 
 /// A level in tenths of a dB, or silence.
@@ -366,6 +368,7 @@ impl ChannelDisplay {
             peak_hold: level(levels.peak_hold),
             clips: levels.clips,
             true_peak_overs: levels.true_peak_overs,
+            scale_level: level(levels.scale_level),
         }
     }
 }

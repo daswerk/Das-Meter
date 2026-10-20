@@ -77,6 +77,15 @@ and integrated lines. Settings: a **Target** loudness, **Show true peak**,
 window, peak hold (or **Hold peaks until reset**) and the bar range. Click the Meter to
 reset its integrated loudness, LRA, maxima and counters.
 
+With the bars on, **Scale** picks how they read: **Peak** (sample peak and
+RMS in dBFS, with the LUFS bar), **VU** (0 VU at −18 dBFS by default,
+adjustable), a **PPM** (**DIN**, **Nordic**, **BBC** with its marks 1 to 7, or
+**EBU**) or the **K-System** (**K-12**, **K-14**, **K-20**: RMS with 0 at −12,
+−14 or −20 dB, turning colour above 0 and above +4). Each has its standard
+timing and numbers; see [Measurements](measurements.md).
+
+![The bars on four Scales](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/loudness-scales.png)
+
 Along the bottom, the **counters** show per channel how many times the audio
 clipped (**Clips**: samples at or over 0 dBFS) and how many times its true
 peak went over a ceiling (**TP over**, −1 dBTP by default: what streaming

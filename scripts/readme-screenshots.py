@@ -123,6 +123,12 @@ def main():
                  "phase-scope", "cepstrum", "oscilloscope", "tuner"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
+    # The Loudness Meter's bars on four of its Scales.
+    scales = [("vu", "VU"), ("ppm-bbc", "PPM BBC"), ("ppm-din", "PPM DIN"), ("k14", "K-14")]
+    save(labelled([flat(shot(f"loudness-scale-{s}@720x450")) for s, _ in scales],
+                  [name for _, name in scales], columns=4, tile_width=400),
+         "loudness-scales.png", 1600)
+
     # The Tonal Balance Meter against a Target: Fine, and Broad beside the
     # low end zoom with the Target's key and the mix's.
     save(flat(shot("tonal-balance")), "meter-tonal-balance.png", 960)

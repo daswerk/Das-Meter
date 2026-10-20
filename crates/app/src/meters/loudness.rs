@@ -4,6 +4,7 @@
 //! and the sample peak are shown large and the other readings as plain
 //! rows, with the bars (off by default) beside or under them.
 
+use dasmeter_analysis::Scale;
 use dasmeter_core::{
     BigReading, Colour, Level, LoudnessDisplay, LoudnessMeterSettings, LufsBar, Role,
 };
@@ -86,10 +87,15 @@ pub fn draw(
         return;
     }
 
-    // The bars take only the width they need: the scale, three bars and gaps.
+    // On a standard scale (VU, PPM, K) the bars are the channels alone, on
+    // that scale's range and numbers; on Peak, the LUFS bar stands beside them.
+    let scale = settings.analysis.scale;
+    let vu_reference = settings.analysis.vu_reference;
+    let bar_count = if scale == Scale::Peak { 3.0 } else { 2.0 };
+    // The bars take only the width they need: the scale, the bars and gaps.
     let gap = c.px(6.0);
     let scale_width = c.px(28.0);
-    let bars_width = scale_width + 3.0 * c.px(MAX_BAR_WIDTH) + 4.0 * gap;
+    let bars_width = scale_width + bar_count * c.px(MAX_BAR_WIDTH) + (bar_count + 1.0) * gap;
     // The numbers keep the same plain look as without bars, in the room the
     // bars leave: beside them when wider than tall, above them otherwise.
     let beside =
@@ -125,29 +131,55 @@ pub fn draw(
 
     // Bars: L, R, then the LUFS bar.
     let (bars, names) = bars.split_bottom(c.px(16.0));
-    let range = (settings.bar_range.0 as f32, settings.bar_range.1 as f32);
+    // A standard scale's name over its bars.
+    let bars = if scale == Scale::Peak {
+        bars
+    } else {
+        let (header, bars) = bars.split_top(c.px(16.0));
+        c.text(
+            scale.name(),
+            header.x + header.width / 2.0,
+            header.y,
+            9.0,
+            dim,
+            Align::Centre,
+        );
+        bars
+    };
+    let range = scale.range(vu_reference).unwrap_or(settings.bar_range);
+    let range = (range.0 as f32, range.1 as f32);
     let y_of = |db: f64| map(db as f32, range, bars.bottom(), bars.y);
     let left = bars.x + scale_width;
-    let width = ((bars.right() - left - 3.0 * gap) / 3.0)
+    let width = ((bars.right() - left - bar_count * gap) / bar_count)
         .min(c.px(MAX_BAR_WIDTH))
         .max(1.0);
     let grid = c.colour(Role::Grid);
     let thin = c.px(1.0).max(1.0);
 
     // Labels from the top down, skipping any that would crowd the one above.
+    let marks: Vec<(f64, String)> = if scale == Scale::Peak {
+        MARKS
+            .into_iter()
+            .map(|db| (f64::from(db), format!("{db}")))
+            .collect()
+    } else {
+        let mut marks = scale.marks(vu_reference);
+        marks.reverse();
+        marks
+    };
     let mut last_label: Option<f32> = None;
-    for db in MARKS
+    for (db, label) in marks
         .into_iter()
-        .filter(|&db| db >= range.0 && db <= range.1)
+        .filter(|&(db, _)| db as f32 >= range.0 - 0.01 && db as f32 <= range.1 + 0.01)
     {
-        let y = y_of(f64::from(db));
+        let y = y_of(db);
         if last_label.is_some_and(|last| y - last < c.px(LABEL_SPACING)) {
             continue;
         }
         last_label = Some(y);
         // Right-aligned against the bars, so "0" lines up with "-60".
         c.text(
-            &format!("{db}"),
+            &label,
             left - c.px(6.0),
             y - c.px(6.0),
             9.0,
@@ -157,7 +189,7 @@ pub fn draw(
         let tick = Area {
             x: left - c.px(3.0),
             y,
-            width: 3.0 * width + 3.0 * gap + c.px(3.0),
+            width: bar_count * width + bar_count * gap + c.px(3.0),
             height: thin,
         };
         c.shapes.rect(tick, grid.faded(0.6));
@@ -172,7 +204,12 @@ pub fn draw(
     {
         let x = column(i);
         c.shapes.rect(Area { x, width, ..bars }, track);
-        if let Some(db) = levels.rms.db() {
+        let level = if scale.ballistic() {
+            levels.scale_level
+        } else {
+            levels.rms
+        };
+        if let Some(db) = level.db() {
             let y = y_of(db);
             let fill = Area {
                 x,
@@ -181,6 +218,24 @@ pub fn draw(
                 height: bars.bottom() - y,
             };
             c.shapes.rect(fill, bar);
+            // K-System: the part over 0 in the over-target colour, over +4 in the clip colour.
+            if let Some(zero) = scale.k_zero() {
+                for (from, role) in [
+                    (zero, Role::LoudnessOverTarget),
+                    (zero + 4.0, Role::LoudnessCounter),
+                ] {
+                    if db > from {
+                        let top = y_of(from);
+                        let over = Area {
+                            x,
+                            y,
+                            width,
+                            height: top - y,
+                        };
+                        c.shapes.rect(over, c.colour(role));
+                    }
+                }
+            }
         }
         if let Some(db) = levels.peak.db() {
             let y = y_of(db);
@@ -201,6 +256,9 @@ pub fn draw(
         c.text(name, centre, names.y + c.px(2.0), 10.0, dim, Align::Centre);
     }
 
+    if scale != Scale::Peak {
+        return;
+    }
     // The LUFS bar turns the over-target colour above the target.
     let x = column(2);
     let lufs = match settings.lufs_bar {
