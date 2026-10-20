@@ -1,6 +1,6 @@
 [book]
 title = "Das-Meter"
-description = "Live Meters for what your computer plays: Waveform, Spectrum, Loudness Meter and Stereometer."
+description = "Live audio Meters for producers: Waveform, Spectrum, Spectrogram, Loudness, Stereometer, Phase Scope, Cepstrum and Oscilloscope, in a Smooth or Classic Look with fully customizable Themes."
 authors = ["Das Werk"]
 language = "en"
 src = "src"

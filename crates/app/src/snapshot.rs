@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
+//! Hidden `--render-snapshot PATH [showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -51,6 +51,40 @@ fn kick_and_bass_apart(seconds: f64) -> (Vec<f32>, Vec<f32>) {
         .unzip()
 }
 
+/// Something like music for the README's screenshots, `seconds` long and
+/// interleaved stereo: [`kick_and_bass`] in the middle, noise hats on the
+/// off-beats, and an A minor pad detuned a little between Left and Right so
+/// the Stereometer has width to show.
+fn music(seconds: f64) -> Vec<f32> {
+    let n = frames(RATE, seconds);
+    let low = kick_and_bass(seconds);
+    let (left, right) = (pink_noise(n, -10.0, 11), pink_noise(n, -10.0, 12));
+    let eighth = f64::from(RATE) / 4.0;
+    let pad = |t: f64, detune: f64, phase: f64| -> f32 {
+        [220.0, 261.63, 329.63, 440.0]
+            .iter()
+            .map(|f| (std::f64::consts::TAU * (f + detune) * t + phase).sin() * 0.06)
+            .sum::<f64>() as f32
+    };
+    (0..n)
+        .flat_map(|i| {
+            let t = i as f64 / f64::from(RATE);
+            let into = i as f64 % (2.0 * eighth);
+            // Off-beat eighths only, each decaying fast.
+            let hat = if into >= eighth {
+                (-(into - eighth) / f64::from(RATE) * 40.0).exp() as f32
+            } else {
+                0.0
+            };
+            let mid = 0.55 * low[i];
+            [
+                mid + hat * left[i] + pad(t, -0.7, 0.0),
+                mid + hat * right[i] + pad(t, 0.7, 1.3),
+            ]
+        })
+        .collect()
+}
+
 pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // Six seconds of pink noise with an output change after four, so the
     // snapshot shows levels, loudness and the "Output changed" note.
@@ -74,7 +108,13 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     }
     core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
     // The silence hint only shows when nothing has played.
-    let noise_for = if open == Some("hint") { 0 } else { 2 };
+    let noise_for = match open {
+        Some(
+            "hint" | "showcase" | "showcase-bar" | "showcase-light" | "showcase-contrast"
+            | "theme-settings",
+        ) => 0,
+        _ => 2,
+    };
     for (seconds, seed) in [(4.0, 1), (2.0, 3)].into_iter().take(noise_for) {
         for block in noise(seconds, seed).chunks(1024) {
             now += Duration::from_secs_f64(512.0 / f64::from(RATE));
@@ -101,14 +141,64 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     });
     let (width, height) = match (open, custom) {
         (_, Some(size)) => size,
-        (Some("bar"), _) => BAR,
-        (Some("window" | "zoom" | "dragging" | "bars-window" | "spectrogram-zoom"), _) => {
-            (2400, 1440)
-        }
+        (Some("bar" | "showcase-bar"), _) => BAR,
+        (
+            Some(
+                "window" | "zoom" | "dragging" | "bars-window" | "spectrogram-zoom" | "showcase"
+                | "showcase-light" | "showcase-contrast",
+            ),
+            _,
+        ) => (2400, 1440),
+        (Some("theme-settings"), _) => (2400, 1800),
         _ => (WIDTH, HEIGHT),
     };
     match open {
         None | Some("bar") => {}
+        // For the README: Window mode with six Meters on music, or the
+        // settings open on the Theme page.
+        Some("showcase-bar") => {
+            core.handle(Event::StartListening, now);
+            core.handle(Event::Pointer(None), now);
+            for block in music(10.0).chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
+        Some(option @ ("showcase" | "showcase-light" | "showcase-contrast" | "theme-settings")) => {
+            core.handle(Event::SetMode(LayoutMode::Window), now);
+            core.handle(Event::StartListening, now);
+            match option {
+                "showcase-light" => core.handle(Event::ChooseTheme { light: 1, dark: 1 }, now),
+                "showcase-contrast" => core.handle(Event::ChooseTheme { light: 2, dark: 2 }, now),
+                _ => {}
+            }
+            if option != "theme-settings" {
+                // Meter 0 is the Waveform, 1 the Spectrum.
+                core.handle(
+                    Event::AddMeter {
+                        meter: 1,
+                        kind: dasmeter_core::MeterKind::Spectrogram,
+                    },
+                    now,
+                );
+                core.handle(
+                    Event::AddMeter {
+                        meter: 0,
+                        kind: dasmeter_core::MeterKind::PhaseScope,
+                    },
+                    now,
+                );
+            } else {
+                core.handle(Event::ShowSettings(true), now);
+            }
+            core.handle(Event::Pointer(None), now);
+            for block in music(10.0).chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
         Some("window") => {
             core.handle(Event::SetMode(LayoutMode::Window), now);
             core.handle(Event::Pointer(Some((WindowKey::Main, [0.4, 0.25]))), now);
@@ -480,6 +570,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // egui lays windows out over a few frames; the last one is drawn.
     let mut ui = Ui::new();
     ui.use_fonts(painter.text.font_system.db());
+    if open == Some("theme-settings") {
+        ui.show_theme_page();
+    }
     let scene = core.scene().ok_or("no scene")?;
     let mut output = None;
     for frame in 0..4 {

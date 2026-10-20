@@ -11,6 +11,8 @@ greys with light grey and white).
 By default a Preset uses the Nocturne and Light pair and **follows the system's
 light/dark setting**. Turn that off to pick one Theme.
 
+![Settings ▸ Theme: the Look, its sliders, layout and colours with a live preview](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/theme-editor.png)
+
 To make your own, change any colour or slider of a Theme in the settings.
 Changing a built-in Theme saves your changes as "<name> copy" and switches to
 it, so the built-in stays as it was. Give your copy a name with **Rename**. Presets that use a Theme follow its new name. Themes are

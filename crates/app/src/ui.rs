@@ -2288,6 +2288,18 @@ fn meter_title(meter_scene: &MeterScene) -> String {
     )
 }
 
+/// Where the settings remember their page.
+const PAGE_ID: &str = "settings page";
+
+impl Ui {
+    /// Opens the settings on the Theme page next time they show (for
+    /// snapshots).
+    pub fn show_theme_page(&self) {
+        self.ctx
+            .data_mut(|d| d.insert_temp(egui::Id::new(PAGE_ID), Page::Theme));
+    }
+}
+
 /// A page of the settings sidebar.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -2304,7 +2316,7 @@ enum Page {
 /// right, scrolling on its own. Every kind of Meter is listed: the ones
 /// shown now by number, the others marked as not added.
 fn sidebar_contents(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
-    let id = egui::Id::new("settings page");
+    let id = egui::Id::new(PAGE_ID);
     let meters = all_meters(scene);
     let mut page = ui.data(|d| d.get_temp::<Page>(id)).unwrap_or(Page::Presets);
     // A removed Meter's page falls back to the first.
