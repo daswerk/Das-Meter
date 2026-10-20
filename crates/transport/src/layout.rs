@@ -1,8 +1,11 @@
-//! The byte layout of the `dasmeter.v1` table.
+//! The byte layout of the `dasmeter.v2` table, and of `dasmeter.v1` before it.
 //!
 //! Every field is an atomic, so any bit pattern another process leaves behind is
 //! a valid value to read; garbage is caught by validation, never by undefined
 //! behaviour. Changing anything here means a new layout and a new table name.
+//!
+//! v2 is v1 with one [`TimingBlock`] per slot after the slots: where the
+//! Send Plugin's DAW is (tempo, song position, time signature, playing).
 
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU32, AtomicU64};
@@ -10,8 +13,10 @@ use std::sync::atomic::{AtomicU32, AtomicU64};
 /// `"DASMETER"` as a little-endian `u64`.
 pub(crate) const MAGIC: u64 = u64::from_le_bytes(*b"DASMETER");
 
-/// The layout version, also spelled out in the table's name.
-pub(crate) const LAYOUT_VERSION: u32 = 1;
+/// The layout versions, also spelled out in the tables' names. Send Plugins
+/// write v2; the app reads v2 and v1, for older Send Plugins in saved projects.
+pub(crate) const V1: u32 = 1;
+pub(crate) const V2: u32 = 2;
 
 /// Number of Send Plugin slots in the table.
 pub const SLOT_COUNT: usize = 64;
@@ -79,16 +84,52 @@ pub(crate) struct Slot {
     pub ring: [AtomicU32; RING_FRAMES * 2],
 }
 
+/// Timing `flags` bits.
+pub(crate) const TIMING_SET: u32 = 1;
+pub(crate) const TIMING_PLAYING: u32 = 2;
+
+/// Where a slot's Send Plugin's DAW is (v2 only), written by its audio thread
+/// before each block under a seqlock.
+#[repr(C, align(64))]
+pub(crate) struct TimingBlock {
+    /// Seqlock: odd while the audio thread writes.
+    pub seq: AtomicU32,
+    /// `TIMING_SET` once the DAW said where it is; `TIMING_PLAYING` while it plays.
+    pub flags: AtomicU32,
+    /// The ring position (as `published` counts) the song position is for.
+    pub frame: AtomicU64,
+    /// `f64` bits: the song position in quarter notes.
+    pub beats: AtomicU64,
+    /// `f64` bits: quarter notes per minute.
+    pub tempo: AtomicU64,
+    /// `f64` bits: where the current bar began, in quarter notes.
+    pub bar_start: AtomicU64,
+    /// Beats per bar in the high 16 bits, the beat's note value in the low.
+    pub signature: AtomicU32,
+    pub _reserved: AtomicU32,
+}
+
 pub(crate) const HEADER_SIZE: usize = size_of::<Header>();
 pub(crate) const SLOT_SIZE: usize = size_of::<Slot>();
+pub(crate) const TIMING_SIZE: usize = size_of::<TimingBlock>();
+/// Where the timing blocks start in a v2 table.
+pub(crate) const TIMING_OFFSET: usize = HEADER_SIZE + SLOT_COUNT * SLOT_SIZE;
 
 /// Page granularity used for the table size: the largest page size among our targets (Apple silicon).
 const PAGE: usize = 16_384;
 
-/// Bytes the table occupies, rounded up to whole pages.
-pub(crate) const TABLE_SIZE: usize = (HEADER_SIZE + SLOT_COUNT * SLOT_SIZE).div_ceil(PAGE) * PAGE;
+/// Bytes a table of `version` occupies, rounded up to whole pages.
+pub(crate) const fn table_size(version: u32) -> usize {
+    let timing = if version >= V2 {
+        SLOT_COUNT * TIMING_SIZE
+    } else {
+        0
+    };
+    (TIMING_OFFSET + timing).div_ceil(PAGE) * PAGE
+}
 
 const _: () = assert!(RING_FRAMES.is_power_of_two());
 const _: () = assert!(NAME_CAPACITY % 8 == 0);
 const _: () = assert!(HEADER_SIZE % 64 == 0);
 const _: () = assert!(SLOT_SIZE % 64 == 0);
+const _: () = assert!(TIMING_SIZE % 64 == 0);

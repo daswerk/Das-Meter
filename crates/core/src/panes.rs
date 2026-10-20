@@ -62,7 +62,7 @@ pub struct Divider {
 }
 
 impl Node {
-    fn split(direction: Direction, ratio: f32, first: Node, second: Node) -> Node {
+    pub(crate) fn split(direction: Direction, ratio: f32, first: Node, second: Node) -> Node {
         Node::Split {
             direction,
             ratio,
@@ -159,22 +159,45 @@ impl Node {
 
     /// Splits the pane showing `meter`: it keeps the first half, `new` gets the second.
     pub fn split_pane(&mut self, meter: usize, direction: Direction, new: usize) -> bool {
+        self.split_pane_beside(meter, direction, new, false)
+    }
+
+    /// Splits the pane showing `meter` in two, `new` in the first half
+    /// (left or top) when `first`, else in the second.
+    pub fn split_pane_beside(
+        &mut self,
+        meter: usize,
+        direction: Direction,
+        new: usize,
+        first: bool,
+    ) -> bool {
         if self.depth_of(meter).is_none_or(|d| d >= MAX_DEPTH) {
             return false;
         }
-        self.split_inner(meter, direction, new)
+        self.split_inner(meter, direction, new, first)
     }
 
-    fn split_inner(&mut self, meter: usize, direction: Direction, new: usize) -> bool {
+    fn split_inner(
+        &mut self,
+        meter: usize,
+        direction: Direction,
+        new: usize,
+        new_first: bool,
+    ) -> bool {
         match self {
             Node::Pane(m) if *m == meter => {
-                *self = Node::split(direction, 0.5, Node::Pane(meter), Node::Pane(new));
+                let (a, b) = if new_first {
+                    (new, meter)
+                } else {
+                    (meter, new)
+                };
+                *self = Node::split(direction, 0.5, Node::Pane(a), Node::Pane(b));
                 true
             }
             Node::Pane(_) => false,
             Node::Split { first, second, .. } => {
-                first.split_inner(meter, direction, new)
-                    || second.split_inner(meter, direction, new)
+                first.split_inner(meter, direction, new, new_first)
+                    || second.split_inner(meter, direction, new, new_first)
             }
         }
     }

@@ -1,7 +1,7 @@
 //! The Theme library: the built-ins and the themes folder's files, which Theme
 //! (or light/dark pair) is chosen, and the files edits write.
 
-use crate::theme::{Colour, DARK, LIGHT, Role, Styling, Theme};
+use crate::theme::{Colour, LIGHT, NOCTURNE, Role, Styling, Theme};
 
 /// A file in the themes folder, as the shell read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,7 +90,7 @@ impl Themes {
                 })
                 .collect(),
             light: LIGHT.to_owned(),
-            dark: DARK.to_owned(),
+            dark: NOCTURNE.to_owned(),
             appearance: Appearance::Dark,
             writes: Vec::new(),
         }
@@ -101,11 +101,14 @@ impl Themes {
     pub fn load(&mut self, files: &[ThemeFile]) {
         self.entries.retain(|e| e.built_in);
         for file in files {
-            let Ok(theme) = Theme::from_toml(&file.text) else {
+            let Ok(mut theme) = Theme::from_toml(&file.text) else {
                 continue;
             };
-            if self.find(&theme.name).is_some() {
-                continue;
+            match self.find(&theme.name) {
+                // Named like a built-in added since it was made: kept, as a copy.
+                Some(i) if self.entries[i].built_in => theme.name = self.unique_name(&theme.name),
+                Some(_) => continue,
+                None => {}
             }
             self.entries.push(Entry {
                 theme,
@@ -265,9 +268,61 @@ impl Themes {
         Some(self.entries.len() - 1)
     }
 
-    /// Edits one of the folder's Themes; built-ins can't be changed.
+    /// Renames one of the folder's Themes; a name another Theme has gets
+    /// " (2)". The file keeps its name. The choice follows the rename.
+    /// Returns the old and new name.
+    pub fn rename(&mut self, index: usize, name: &str) -> Option<(String, String)> {
+        let name = name.trim();
+        let entry = self.entries.get(index).filter(|e| !e.built_in)?;
+        if name.is_empty() || entry.theme.name == name {
+            return None;
+        }
+        let old = entry.theme.name.clone();
+        let new = if self.find(name).is_none() {
+            name.to_owned()
+        } else {
+            (2..)
+                .map(|n| format!("{name} ({n})"))
+                .find(|n| self.find(n).is_none())
+                .expect("some number is free")
+        };
+        self.edit(index, |theme| theme.name.clone_from(&new));
+        for chosen in [&mut self.light, &mut self.dark] {
+            if *chosen == old {
+                chosen.clone_from(&new);
+            }
+        }
+        Some((old, new))
+    }
+
+    /// Edits one of the folder's Themes. A built-in stays as it is: the
+    /// edit goes to a copy of it in the folder, which is used from then on.
     fn edit(&mut self, index: usize, change: impl FnOnce(&mut Theme)) -> bool {
-        let Some(entry) = self.entries.get_mut(index).filter(|e| !e.built_in) else {
+        if self.entries.get(index).is_some_and(|e| e.built_in) {
+            // Only worth a copy if the edit changes something.
+            let mut edited = self.entries[index].theme.clone();
+            change(&mut edited);
+            if edited == self.entries[index].theme {
+                return false;
+            }
+            let Some(copy) = self.duplicate(index) else {
+                return false;
+            };
+            let entry = &mut self.entries[copy];
+            entry.theme = Theme {
+                name: entry.theme.name.clone(),
+                ..edited
+            };
+            let file_name = entry.file.clone().expect("folder Themes have a file");
+            let contents = entry.theme.to_toml();
+            self.writes.retain(|w| w.file_name != file_name);
+            self.writes.push(FileWrite {
+                file_name,
+                contents,
+            });
+            return true;
+        }
+        let Some(entry) = self.entries.get_mut(index) else {
             return false;
         };
         let before = entry.theme.clone();

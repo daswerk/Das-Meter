@@ -46,6 +46,19 @@ pub struct Scene {
     pub app: AppSettings,
     /// The highest frame-rate cap the settings panel offers.
     pub max_frame_rate_cap: u32,
+    /// The Bar's settings, also in Window mode, where the settings show
+    /// them for when the Bar is back.
+    pub bar: BarSettingsScene,
+}
+
+/// The Bar's settings as the settings panel shows them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarSettingsScene {
+    pub edge: Edge,
+    /// Logical pixels across the Bar.
+    pub thickness: f32,
+    pub screen: ScreenMode,
+    pub over_fullscreen: bool,
 }
 
 /// An open Meter menu: whose it is and where it was opened.
@@ -109,6 +122,23 @@ pub struct MeterScene {
     pub show_source_label: bool,
     /// The Meter's own colours for single roles, over the Theme's.
     pub overrides: Vec<(Role, Colour)>,
+    /// A Phase Scope's Overlay Source item; `None` for other Meters.
+    pub overlay: Option<OverlayScene>,
+    /// How lit it is, 0 (dimmed in silence) to 1. Always 1 unless the Theme
+    /// is drawn Smooth with dimming when silent.
+    pub activity: f32,
+    /// Whether the pointer is over it.
+    pub hovered: bool,
+}
+
+/// A Phase Scope's Overlay Source, for its menu.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverlayScene {
+    /// The picked Send Plugin's ID, there or not.
+    pub picked: Option<u64>,
+    /// What can be picked: Send Plugins from the same DAW as the Meter's
+    /// Source. Empty on System Capture, which has only the one Source.
+    pub choices: Vec<SendPluginItem>,
 }
 
 /// The Source a Meter shows, as its small label says it.

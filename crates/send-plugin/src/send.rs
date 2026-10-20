@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-use dasmeter_transport::AudioWriter;
+use dasmeter_transport::{AudioWriter, Timing};
 
 /// One block of the track's audio.
 pub enum Block<'a> {
@@ -26,8 +26,9 @@ impl AudioSend {
     }
 
     /// Hands one block to the transport, which copies it only while the app
-    /// listens. A mono block goes out on both channels.
-    pub fn send(&mut self, block: Block<'_>) {
+    /// listens, with where the DAW is at its first frame (`None` if the host
+    /// didn't say). A mono block goes out on both channels.
+    pub fn send(&mut self, block: Block<'_>, timing: Option<&Timing>) {
         let (left, right, mono) = match block {
             Block::Stereo(left, right) => (left, right, false),
             Block::Mono(mono) => (mono, mono, true),
@@ -36,6 +37,7 @@ impl AudioSend {
             self.mono.store(mono, Relaxed);
         }
         if let Some(writer) = &mut self.writer {
+            writer.set_timing(timing);
             writer.push(left, right);
         }
     }
@@ -45,4 +47,27 @@ impl AudioSend {
 pub fn pass_through(input: &[f32], output: &mut [f32]) {
     let n = input.len().min(output.len());
     output[..n].copy_from_slice(&input[..n]);
+}
+
+/// The host's transport as the app reads it: `None` unless the host gave a
+/// tempo and a song position in beats. A missing time signature counts as 4/4.
+pub fn timing(
+    tempo: Option<f64>,
+    beats: Option<f64>,
+    bar_start: f64,
+    signature: Option<(u16, u16)>,
+    playing: bool,
+) -> Option<Timing> {
+    let (tempo, beats) = (tempo?, beats?);
+    Some(Timing {
+        tempo,
+        beats,
+        bar_start: if bar_start.is_finite() && bar_start <= beats {
+            bar_start
+        } else {
+            beats
+        },
+        signature: signature.unwrap_or((4, 4)),
+        playing,
+    })
 }

@@ -5,7 +5,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use dasmeter_transport::{Details, Reader, Writer, remove_table};
+use dasmeter_transport::{Details, Reader, Timing, Writer, remove_table};
 
 struct CountingAllocator;
 
@@ -77,12 +77,21 @@ fn pushing_audio_makes_no_allocations() {
         }
     });
     reader.set_listened(slot, true);
+    let timing = Timing {
+        tempo: 120.0,
+        beats: 0.0,
+        bar_start: 0.0,
+        signature: (4, 4),
+        playing: true,
+    };
     let listened = allocations_during(|| {
         for block in [1, 64, 512, 4_096] {
             for _ in 0..100 {
+                audio.set_timing(Some(&timing));
                 audio.push(&left[..block], &right[..block]);
             }
         }
+        audio.set_timing(None);
     });
     let huge = vec![0.0_f32; 40_000];
     let oversized = allocations_during(|| audio.push(&huge, &huge));

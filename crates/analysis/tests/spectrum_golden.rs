@@ -313,3 +313,114 @@ fn silence_has_no_peak() {
     analyser.update();
     assert_eq!(analyser.peak(-100.0), None);
 }
+
+/// Feeds `audio` in blocks of 10 ms, updating after each as a drawn frame would.
+fn play(analyser: &mut SpectrumAnalyser, audio: &[f32]) {
+    for block in audio.chunks(2 * 480) {
+        analyser.process(block);
+        analyser.update();
+    }
+}
+
+#[test]
+fn the_steady_peak_stays_on_a_standing_tone_through_a_short_louder_one() {
+    use dasmeter_analysis::signals::{concat, frames};
+    let rate = 48_000;
+    let mut analyser = SpectrumAnalyser::new(rate, flat());
+    let steady = |seconds: f64| sine(rate, 220.0, -18.0, 0.0, frames(rate, seconds));
+    play(&mut analyser, &both(&steady(2.0)));
+    let (found, level) = analyser.steady_peak().expect("a peak");
+    assert!((found - 220.0).abs() < 1.0, "{found}");
+    assert!((level + 18.0).abs() < 1.0, "{level} dB");
+
+    // A 60 ms burst 6 dB louder at 2 kHz: an instant peak, not a standing one.
+    let burst: Vec<f32> = steady(0.06)
+        .iter()
+        .zip(sine(rate, 2_000.0, -12.0, 0.0, frames(rate, 0.06)))
+        .map(|(a, b)| a + b)
+        .collect();
+    play(&mut analyser, &both(&concat(&[burst, steady(0.3)])));
+    let (found, _) = analyser.steady_peak().unwrap();
+    assert!((found - 220.0).abs() < 1.0, "moved to {found}");
+
+    // A new tone that stands louder takes over.
+    play(
+        &mut analyser,
+        &both(&sine(rate, 2_000.0, -6.0, 0.0, frames(rate, 2.0))),
+    );
+    let (found, _) = analyser.steady_peak().unwrap();
+    assert!((found - 2_000.0).abs() < 2.0, "{found}");
+}
+
+#[test]
+fn a_standing_harmonic_is_steadier_than_noise() {
+    use dasmeter_analysis::signals::{frames, white_noise};
+    let rate = 48_000;
+    let mut analyser = SpectrumAnalyser::new(rate, flat());
+    let noise = white_noise(frames(rate, 3.0), -40.0, 7);
+    let tone = sine(rate, 110.0, -12.0, 0.0, frames(rate, 3.0));
+    let mixed: Vec<f32> = noise.iter().zip(&tone).map(|(a, b)| a + b).collect();
+    play(&mut analyser, &both(&mixed));
+    let spectrum = analyser.spectrum();
+    let nearest = |f: f32| {
+        spectrum
+            .frequencies
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1 / f).ln().abs().total_cmp(&(b.1 / f).ln().abs()))
+            .unwrap()
+            .0
+    };
+    let steadiness = &spectrum.traces[0].steadiness;
+    assert!(
+        steadiness[nearest(110.0)] > 0.5,
+        "{}",
+        steadiness[nearest(110.0)]
+    );
+    assert!(
+        steadiness[nearest(5_000.0)] < 0.1,
+        "{}",
+        steadiness[nearest(5_000.0)]
+    );
+}
+
+#[test]
+fn slow_mode_keeps_held_peaks_and_falls_slower() {
+    use dasmeter_analysis::signals::frames;
+    let rate = 48_000;
+    let settings = SpectrumSettings {
+        peak_hold: PeakHold::For(Duration::from_millis(500)),
+        ..flat()
+    };
+    let at = |a: &SpectrumAnalyser, f: f32| {
+        let s = a.spectrum();
+        let i = s
+            .frequencies
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1 / f).ln().abs().total_cmp(&(b.1 / f).ln().abs()))
+            .unwrap()
+            .0;
+        (s.traces[0].levels[i], s.traces[0].peak_hold[i])
+    };
+    let tone = both(&sine(rate, 1_000.0, -12.0, 0.0, frames(rate, 1.0)));
+    let quiet = both(&silence(frames(rate, 1.0)));
+
+    let mut normal = SpectrumAnalyser::new(rate, settings);
+    play(&mut normal, &tone);
+    play(&mut normal, &quiet);
+    let mut slow = SpectrumAnalyser::new(rate, settings);
+    play(&mut slow, &tone);
+    slow.set_slow(true);
+    play(&mut slow, &quiet);
+
+    let (normal_level, normal_hold) = at(&normal, 1_000.0);
+    let (slow_level, slow_hold) = at(&slow, 1_000.0);
+    assert!(
+        slow_level > normal_level + 6.0,
+        "{slow_level} vs {normal_level}"
+    );
+    // The point nearest 1 kHz sits a little off the tone, a dB or three under it.
+    assert!(slow_hold > -16.0, "held: {slow_hold}");
+    assert!(normal_hold < -40.0, "let go: {normal_hold}");
+}

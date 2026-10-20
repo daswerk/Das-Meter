@@ -21,6 +21,11 @@ changing them later would silently move everyone's numbers.
   averaged exponentially with τ = 300 ms. With both channels below −90 dBFS it
   reads 0 and dims as "no signal"; with only one channel carrying signal it
   reads 0.
+- **Cycle correlation** (the Phase Scope's number, not a measurement this page
+  claims): Pearson between the main and Overlay Source's lows, below the
+  **Cycle correlation below** frequency, about each one's mean, over the last
+  whole Cycle. It answers "do kick and bass fit?", so it's named apart from
+  the Correlation above.
 - **Spectrum:** sine-calibrated (a 0 dBFS sine on a bin reads 0 dB, corrected
   for the window's coherent gain), the slope pivoted at 1 kHz, a Hann window by
   default.
