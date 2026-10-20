@@ -298,6 +298,10 @@ pub struct ChannelDisplay {
     pub rms: Level,
     pub peak: Level,
     pub peak_hold: Level,
+    /// Clips (runs at or over 0 dBFS) since the last reset.
+    pub clips: u32,
+    /// True peaks over the ceiling since the last reset.
+    pub true_peak_overs: u32,
 }
 
 /// A level in tenths of a dB, or silence.
@@ -360,6 +364,8 @@ impl ChannelDisplay {
             rms: level(levels.rms),
             peak: level(levels.peak),
             peak_hold: level(levels.peak_hold),
+            clips: levels.clips,
+            true_peak_overs: levels.true_peak_overs,
         }
     }
 }

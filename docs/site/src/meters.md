@@ -75,7 +75,14 @@ graph** shows the LUFS reading over the last 10 to 120 s, with the target
 and integrated lines. Settings: a **Target** loudness, **Show true peak**,
 **Show LRA**, **Show PLR and PSR**, **Loudness graph** and its span, the RMS
 window, peak hold (or **Hold peaks until reset**) and the bar range. Click the Meter to
-reset its integrated loudness, LRA and maxima.
+reset its integrated loudness, LRA, maxima and counters.
+
+Along the bottom, the **counters** show per channel how many times the audio
+clipped (**Clips**: samples at or over 0 dBFS) and how many times its true
+peak went over a ceiling (**TP over**, −1 dBTP by default: what streaming
+services ask for). A run counts once, however long it lasts; a count turns red
+once it's above 0. **Count clips and overs** turns them off, and
+**True-peak ceiling** sets the ceiling (−6 to 0 dBTP).
 
 See [Measurements](measurements.md) for exactly what each number is.
 

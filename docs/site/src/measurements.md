@@ -14,6 +14,10 @@ changing them later would silently move everyone's numbers.
 - **LUFS, LRA, true peak:** the `ebur128` crate, pinned to an exact version.
   True peak oversamples 4× below 96 kHz and 2× at 96 kHz.
 - **Sample peak:** `20·log10(max|x|)` per channel.
+- **Counters:** per channel, since the last reset. **Clips**: runs of samples
+  with `|x| ≥ 1.0` (0 dBFS), each run counted once. **TP over**: runs of true
+  peak above the ceiling (−1 dBTP by default), looked at in 10 ms blocks, so
+  overs less than 10 ms apart count once.
 - **RMS:** AES17 by default (+3.01 dB, so a 0 dBFS sine reads 0 dB), labelled
   "RMS (AES17)"; plain RMS is an option. A sliding rectangular window, 300 ms by
   default.

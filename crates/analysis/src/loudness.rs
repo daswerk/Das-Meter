@@ -2,7 +2,8 @@
 //!
 //! LUFS (momentary, short-term, integrated), LRA and true peak come from the
 //! `ebur128` crate (ITU-R BS.1770-5, EBU Tech 3341/3342). Sample peak and RMS
-//! are computed here, per ADR 0005.
+//! are computed here, per ADR 0005, and so are the counters: clips and true
+//! peaks over a ceiling, each run counted once.
 
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -24,6 +25,13 @@ const PSR_STEPS: usize = 30;
 /// Sample rate at and above which `ebur128` doesn't oversample true peak.
 const NO_OVERSAMPLING_RATE: u32 = 192_000;
 
+/// True peak is looked at in blocks this long (10 ms): overs closer
+/// together than that count once.
+const TRUE_PEAK_BLOCKS_PER_SECOND: u32 = 100;
+
+/// The default true-peak ceiling, in dBTP.
+pub const DEFAULT_CEILING_DBTP: f64 = -1.0;
+
 /// How RMS is scaled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum RmsMode {
@@ -42,7 +50,7 @@ pub enum PeakHold {
 }
 
 /// The Loudness Meter's advanced settings that affect analysis.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LoudnessSettings {
     /// Length of the sliding rectangular RMS (and sample peak) window. Default 300 ms.
@@ -51,6 +59,8 @@ pub struct LoudnessSettings {
     pub rms_mode: RmsMode,
     /// Default 2 s.
     pub peak_hold: PeakHold,
+    /// True peaks over this (dBTP) are counted. Default −1 dBTP.
+    pub ceiling: f64,
 }
 
 impl Default for LoudnessSettings {
@@ -59,6 +69,7 @@ impl Default for LoudnessSettings {
             rms_window: Duration::from_millis(300),
             rms_mode: RmsMode::Aes17,
             peak_hold: PeakHold::For(Duration::from_secs(2)),
+            ceiling: DEFAULT_CEILING_DBTP,
         }
     }
 }
@@ -74,6 +85,32 @@ pub struct ChannelLevels {
     pub peak_hold: f64,
     /// The highest sample peak since the last reset.
     pub peak_max: f64,
+    /// Clips since the last reset: runs of samples at or over 0 dBFS, each
+    /// run counted once.
+    pub clips: u32,
+    /// True peaks over the ceiling since the last reset, each run counted once.
+    pub true_peak_overs: u32,
+}
+
+/// Counts runs: each stretch that goes over counts once.
+#[derive(Clone, Copy, Default)]
+struct Runs {
+    count: u32,
+    over: bool,
+}
+
+impl Runs {
+    fn push(&mut self, over: bool) {
+        if over && !self.over {
+            self.count = self.count.saturating_add(1);
+        }
+        self.over = over;
+    }
+
+    fn reset(&mut self) {
+        // A run going on stays going on: it isn't counted again.
+        self.count = 0;
+    }
 }
 
 /// Everything the Loudness Meter shows.
@@ -116,6 +153,8 @@ struct Window {
     peak_hold: f32,
     hold_age: u64,
     peak_max: f32,
+    clips: Runs,
+    true_peak_overs: Runs,
 }
 
 /// Chunks per window for the sliding peak: the peak window is exact to 1/64 of its length.
@@ -136,6 +175,8 @@ impl Window {
             peak_hold: 0.0,
             hold_age: 0,
             peak_max: 0.0,
+            clips: Runs::default(),
+            true_peak_overs: Runs::default(),
         }
     }
 
@@ -151,6 +192,7 @@ impl Window {
         }
 
         let magnitude = x.abs();
+        self.clips.push(magnitude >= 1.0);
         if self.chunk_fill == 0 {
             self.chunk_peaks[self.chunk_next] = 0.0;
         }
@@ -192,11 +234,15 @@ impl Window {
             peak: db(self.peak()),
             peak_hold: db(self.peak_hold),
             peak_max: db(self.peak_max),
+            clips: self.clips.count,
+            true_peak_overs: self.true_peak_overs.count,
         }
     }
 
     fn reset_maxima(&mut self) {
         self.peak_max = 0.0;
+        self.clips.reset();
+        self.true_peak_overs.reset();
         self.peak_hold = self.peak();
         self.hold_age = 0;
     }
@@ -236,6 +282,11 @@ pub struct LoudnessAnalyser {
     step: (usize, f64),
     /// The highest true peak (linear) of each of the last 3 s of steps.
     step_peaks: VecDeque<f64>,
+    /// The true-peak block's length, how much of it has come, and each
+    /// channel's highest true peak (linear) in it so far.
+    block_frames: usize,
+    block_fill: usize,
+    block_peaks: [f64; 2],
 }
 
 /// New audio after which the LUFS figures are asked for again: 100 ms, the
@@ -267,6 +318,9 @@ impl LoudnessAnalyser {
             history: VecDeque::with_capacity(HISTORY_STEPS),
             step: (0, 0.0),
             step_peaks: VecDeque::with_capacity(PSR_STEPS),
+            block_frames: (sample_rate / TRUE_PEAK_BLOCKS_PER_SECOND).max(1) as usize,
+            block_fill: 0,
+            block_peaks: [0.0; 2],
         }
     }
 
@@ -278,9 +332,33 @@ impl LoudnessAnalyser {
     pub fn process(&mut self, interleaved: &[f32]) {
         let whole = interleaved.len() / 2 * 2;
         let interleaved = &interleaved[..whole];
-        self.ebu
-            .add_frames_f32(interleaved)
-            .expect("two-channel frames");
+        // In 10 ms blocks, however the audio comes, so true-peak overs are
+        // counted alike for any block size.
+        let ceiling = 10f64.powf(self.settings.ceiling / 20.0);
+        let mut rest = interleaved;
+        // The highest true peak of all this audio, for PSR.
+        let mut added_peak = 0.0f64;
+        while !rest.is_empty() {
+            let take = (2 * (self.block_frames - self.block_fill)).min(rest.len());
+            let (block, after) = rest.split_at(take);
+            rest = after;
+            self.ebu.add_frames_f32(block).expect("two-channel frames");
+            self.block_fill += block.len() / 2;
+            for (channel, window) in self.channels.iter_mut().enumerate() {
+                let peak = self.ebu.prev_true_peak(channel as u32).unwrap_or(0.0);
+                added_peak = added_peak.max(peak);
+                self.block_peaks[channel] = self.block_peaks[channel].max(peak);
+                if self.block_fill == self.block_frames {
+                    window
+                        .true_peak_overs
+                        .push(self.block_peaks[channel] > ceiling);
+                }
+            }
+            if self.block_fill == self.block_frames {
+                self.block_fill = 0;
+                self.block_peaks = [0.0; 2];
+            }
+        }
         let [left, right] = &mut self.channels;
         for frame in interleaved.chunks_exact(2) {
             left.push(frame[0], self.hold_frames);
@@ -290,11 +368,8 @@ impl LoudnessAnalyser {
             self.lufs.set(Some((lufs, since + whole / 2)));
         }
         // Every 100 ms of audio: a history point, and the step's true peak for PSR.
-        let block_peak = (0..2)
-            .filter_map(|channel| self.ebu.prev_true_peak(channel).ok())
-            .fold(0.0f64, f64::max);
         self.step.0 += whole / 2;
-        self.step.1 = self.step.1.max(block_peak);
+        self.step.1 = self.step.1.max(added_peak);
         let refresh = lufs_refresh(self.sample_rate);
         if self.step.0 >= refresh {
             let value = |value: Result<f64, ebur128::Error>| value.unwrap_or(FLOOR_DB);

@@ -82,6 +82,8 @@ pub const SPECTRUM_MAX_SMOOTHING: f32 = 1.0 / 3.0;
 pub const PEAK_HOLD: (Duration, Duration) = (Duration::from_millis(100), Duration::from_secs(30));
 /// The Loudness Meter's target, in LUFS.
 pub const LOUDNESS_TARGET: (f64, f64) = (-40.0, 0.0);
+/// The true-peak ceiling the counter counts overs of, in dBTP.
+pub const TRUE_PEAK_CEILING: (f64, f64) = (-6.0, 0.0);
 /// The Loudness Meter's RMS window.
 pub const RMS_WINDOW: (Duration, Duration) = (Duration::from_millis(50), Duration::from_secs(3));
 /// The loudness graph's span.
@@ -253,6 +255,10 @@ impl LoudnessMeterSettings {
         a.rms_window = clamp_duration(a.rms_window, RMS_WINDOW);
         self.history_span = clamp_duration(self.history_span, HISTORY_SPAN);
         a.peak_hold = clamp_hold(a.peak_hold);
+        // To 0.1 dB, as the slider sets it.
+        a.ceiling = (clamp_f64(a.ceiling, TRUE_PEAK_CEILING, defaults.analysis.ceiling) * 10.0)
+            .round()
+            / 10.0;
         let (floor, top) = self.bar_range;
         let floor = clamp_f64(floor, LOUDNESS_BAR, defaults.bar_range.0);
         let top = clamp_f64(top, LOUDNESS_BAR, defaults.bar_range.1);

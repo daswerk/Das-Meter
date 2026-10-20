@@ -216,6 +216,8 @@ pub struct LoudnessMeterSettings {
     pub big_reading: BigReading,
     /// Whether a thin bar stands beside each big number. Default off.
     pub show_thin_bars: bool,
+    /// Whether the clip and true-peak-over counters are shown. Default on.
+    pub show_counters: bool,
 }
 
 impl Default for LoudnessMeterSettings {
@@ -233,6 +235,7 @@ impl Default for LoudnessMeterSettings {
             show_bars: false,
             big_reading: BigReading::ShortTerm,
             show_thin_bars: false,
+            show_counters: true,
         }
     }
 }

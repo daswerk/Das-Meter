@@ -1190,6 +1190,26 @@ fn loudness_advanced(ui: &mut egui::Ui, s: &mut LoudnessMeterSettings) -> bool {
         .changed();
     changed |= ui.add(Toggle::new(&mut s.show_range, "Show LRA")).changed();
     changed |= ui
+        .add(Toggle::new(&mut s.show_counters, "Count clips and overs"))
+        .on_hover_text(
+            "Per channel: clips (samples at or over 0 dBFS) and true peaks over the ceiling, \
+             each run counted once; reset with the other maxima",
+        )
+        .changed();
+    if s.show_counters {
+        changed |= ui
+            .add(
+                Slider::new(
+                    &mut s.analysis.ceiling,
+                    limits::TRUE_PEAK_CEILING.0..=limits::TRUE_PEAK_CEILING.1,
+                )
+                .text("True-peak ceiling")
+                .suffix(" dBTP")
+                .step_by(0.1),
+            )
+            .changed();
+    }
+    changed |= ui
         .add(Toggle::new(
             &mut s.show_peak_to_loudness,
             "Show PLR and PSR",
@@ -2408,6 +2428,7 @@ const COLOUR_GROUPS: [(&str, &[Role]); 9] = [
             Role::LoudnessBar,
             Role::LoudnessPeak,
             Role::LoudnessOverTarget,
+            Role::LoudnessCounter,
         ],
     ),
     (
@@ -2541,6 +2562,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::LoudnessBar,
             Role::LoudnessPeak,
             Role::LoudnessOverTarget,
+            Role::LoudnessCounter,
         ],
         MeterSettings::Stereometer(_) => &[
             Role::StereometerTrace,
