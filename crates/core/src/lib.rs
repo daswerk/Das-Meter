@@ -13,6 +13,7 @@ pub mod curves;
 pub mod displays;
 pub mod docs;
 pub mod layout;
+pub mod library;
 pub mod meters;
 pub mod onboarding;
 pub mod panes;
@@ -22,8 +23,10 @@ pub mod scene;
 pub mod settings;
 pub mod sharing;
 pub mod sources;
+pub mod targets;
 pub mod theme;
 pub mod themes;
+pub mod tonal_balance;
 
 use std::time::Duration;
 
@@ -52,8 +55,12 @@ pub use scene::{
 };
 pub use settings::AppSettings;
 pub use sources::{ListenTo, Pick, SendPlugin, SendPluginState, Timing};
+pub use targets::{Target, TargetSong, Targets};
 pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
+pub use tonal_balance::{
+    KeyChoice, TargetScene, TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene, TonalView,
+};
 
 use meters::Meter;
 use presets::Presets;
@@ -280,8 +287,47 @@ pub enum Event<'a> {
         meter: usize,
         name: Option<&'a str>,
     },
-    /// Start a Spectrum's long-term average over.
+    /// Start a Spectrum's long-term average, or a Tonal Balance Meter's
+    /// average, over.
     ResetLongTerm {
+        meter: usize,
+    },
+    /// The targets folder's files: its Targets.
+    TargetFiles(&'a [ThemeFile]),
+    /// Compare a Tonal Balance Meter with a Target, or (`None`) none.
+    ChooseTarget {
+        meter: usize,
+        name: Option<&'a str>,
+    },
+    /// A Tonal Balance Meter starts (over) learning a song by playing.
+    LearnSong {
+        meter: usize,
+    },
+    /// Stop learning without keeping anything.
+    CancelLearning {
+        meter: usize,
+    },
+    /// End learning: add what was heard since Learn to the Target called
+    /// `target` (made if there's none) as `song`, and compare with it.
+    AddLearnedSong {
+        meter: usize,
+        target: &'a str,
+        song: &'a str,
+    },
+    /// Add songs analysed from files to a Target (made if there's none),
+    /// and compare the Meter with it.
+    AddTargetSongs {
+        meter: usize,
+        target: &'a str,
+        songs: &'a [TargetSong],
+    },
+    /// Remove a Target's song by its place in the list.
+    RemoveTargetSong {
+        target: &'a str,
+        song: usize,
+    },
+    /// Freeze a Tonal Balance Meter's curve as a ghost, or let it go.
+    FreezeTonalBalance {
         meter: usize,
     },
     /// Override one colour role on one Meter, or (`None`) go back to the Theme's.
@@ -386,7 +432,8 @@ struct MeterSlot {
     show_source_label: bool,
     /// This Meter's own colours for single roles, over the Theme's.
     overrides: Vec<(Role, Colour)>,
-    /// The Reference curve a Spectrum shows, by name; kept while it's missing.
+    /// The Reference curve a Spectrum shows, or the Target a Tonal Balance
+    /// Meter compares with, by name; kept while it's missing.
     reference: Option<String>,
     /// On Send Plugins: the ID and sample rate of the Send Plugin whose audio
     /// the analyser has, and when it was last fed (audio or idle silence).
@@ -445,6 +492,7 @@ pub struct AppCore {
     settings_open: bool,
     themes: themes::Themes,
     curves: curves::Curves,
+    targets: targets::Targets,
     presets: Presets,
     /// System Capture's rate, to start Meters a Preset brings.
     capture_rate: Option<u32>,
@@ -526,6 +574,7 @@ impl AppCore {
             settings_open: false,
             themes: themes::Themes::new(),
             curves: curves::Curves::default(),
+            targets: targets::Targets::default(),
             presets: Presets::default(),
             capture_rate: None,
             touched: false,
@@ -553,6 +602,11 @@ impl AppCore {
     /// Reference curve files to write into the curves folder since the last call.
     pub fn take_curve_writes(&mut self) -> Vec<FileWrite> {
         self.curves.take_writes()
+    }
+
+    /// Target files to write into the targets folder since the last call.
+    pub fn take_target_writes(&mut self) -> Vec<FileWrite> {
+        self.targets.take_writes()
     }
 
     fn main_screen(&self) -> Option<&Screen> {
@@ -885,6 +939,11 @@ impl AppCore {
             | ThemeFiles(_)
             | CurveFiles(_)
             | ResetLongTerm { .. }
+            | TargetFiles(_)
+            | LearnSong { .. }
+            | CancelLearning { .. }
+            | RemoveTargetSong { .. }
+            | FreezeTonalBalance { .. }
             | SystemAppearance(_)
             | OpenMenu { .. }
             | CloseMenu
@@ -973,14 +1032,26 @@ impl AppCore {
             }
         }
         let mut curves: Vec<ReferenceCurve> = Vec::new();
+        let mut targets: Vec<Target> = Vec::new();
         for slot in &self.meters {
-            if let Some(curve) = slot.reference.as_deref().and_then(|n| self.curves.get(n))
+            let Some(name) = slot.reference.as_deref() else {
+                continue;
+            };
+            if slot.meter.is_tonal_balance() {
+                if let Some(target) = self.targets.get(name)
+                    && !targets.iter().any(|t| t.name == target.name)
+                {
+                    targets.push(target.clone());
+                }
+            } else if let Some(curve) = self.curves.get(name)
                 && !curves.iter().any(|c| c.name == curve.name)
             {
                 curves.push(curve.clone());
             }
         }
-        let file = sharing::SharedPreset::new(data, themes).with_curves(curves);
+        let file = sharing::SharedPreset::new(data, themes)
+            .with_curves(curves)
+            .with_targets(targets);
         Some((name, file.to_toml()))
     }
 
@@ -988,7 +1059,12 @@ impl AppCore {
     /// "(2)" if they differ, installed if new), then the Preset under a free
     /// name. Returns it to open; a bad file changes nothing.
     fn import(&mut self, text: &str, now: Duration) -> Option<PresetData> {
-        let (mut data, themes, curves) = match sharing::SharedPreset::from_toml(text) {
+        let sharing::Imported {
+            preset: mut data,
+            themes,
+            curves,
+            targets,
+        } = match sharing::SharedPreset::from_toml(text) {
             Ok(file) => file,
             Err(_) => {
                 self.show_note(Note::ImportFailed, now);
@@ -1014,7 +1090,20 @@ impl AppCore {
             let original = curve.name.clone();
             let installed = self.curves.install(curve);
             for meter in &mut data.meters {
-                if meter.reference.as_deref() == Some(original.as_str()) {
+                if !matches!(meter.settings, MeterSettings::TonalBalance(_))
+                    && meter.reference.as_deref() == Some(original.as_str())
+                {
+                    meter.reference = Some(installed.clone());
+                }
+            }
+        }
+        for target in targets {
+            let original = target.name.clone();
+            let installed = self.targets.install(target);
+            for meter in &mut data.meters {
+                if matches!(meter.settings, MeterSettings::TonalBalance(_))
+                    && meter.reference.as_deref() == Some(original.as_str())
+                {
                     meter.reference = Some(installed.clone());
                 }
             }
@@ -1043,6 +1132,22 @@ impl AppCore {
             name,
             levels,
             missing,
+        })
+    }
+
+    /// A Tonal Balance Meter's Target, learning and Freeze for the scene.
+    fn tonal_balance_scene(&self, slot: &MeterSlot) -> Option<TonalBalanceScene> {
+        let MeterSettings::TonalBalance(settings) = slot.meter.settings() else {
+            return None;
+        };
+        let target = slot.reference.clone().map(|name| {
+            let target = self.targets.get(&name);
+            TargetScene::new(name, target, &settings, slot.meter.tonal_summary())
+        });
+        Some(TonalBalanceScene {
+            target,
+            learning: slot.meter.learning_seconds(),
+            frozen: slot.meter.is_frozen(),
         })
     }
 
@@ -1649,6 +1754,95 @@ impl AppCore {
                     .meters
                     .get_mut(meter)
                     .is_some_and(|s| s.meter.reset_long_term())
+                {
+                    return;
+                }
+            }
+            Event::TargetFiles(files) => self.targets.load(files),
+            Event::ChooseTarget { meter, name } => {
+                let Some(slot) = self
+                    .meters
+                    .get_mut(meter)
+                    .filter(|s| s.meter.is_tonal_balance())
+                else {
+                    return;
+                };
+                let name = name.map(str::to_owned);
+                if slot.reference == name {
+                    return;
+                }
+                slot.reference = name;
+            }
+            Event::LearnSong { meter } => {
+                if !self.meters.get_mut(meter).is_some_and(|s| s.meter.learn()) {
+                    return;
+                }
+            }
+            Event::CancelLearning { meter } => {
+                if !self
+                    .meters
+                    .get_mut(meter)
+                    .is_some_and(|s| s.meter.cancel_learning())
+                {
+                    return;
+                }
+            }
+            Event::AddLearnedSong {
+                meter,
+                target,
+                song,
+            } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let MeterSettings::TonalBalance(settings) = slot.meter.settings() else {
+                    return;
+                };
+                let Some(summary) = slot.meter.take_learned() else {
+                    return;
+                };
+                let target = match target.trim() {
+                    "" => slot.reference.clone().unwrap_or_default(),
+                    name => name.to_owned(),
+                };
+                let count = self.targets.get(&target).map_or(0, |t| t.songs.len());
+                let song = match song.trim() {
+                    "" => format!("Song {}", count + 1),
+                    name => name.to_owned(),
+                };
+                let song = TargetSong::new(&song, settings.parts, &summary);
+                slot.reference = Some(self.targets.add_song(&target, song));
+            }
+            Event::AddTargetSongs {
+                meter,
+                target,
+                songs,
+            } => {
+                if songs.is_empty() {
+                    return;
+                }
+                let mut name = target.to_owned();
+                for song in songs {
+                    name = self.targets.add_song(&name, song.clone());
+                }
+                if let Some(slot) = self
+                    .meters
+                    .get_mut(meter)
+                    .filter(|s| s.meter.is_tonal_balance())
+                {
+                    slot.reference = Some(name);
+                }
+            }
+            Event::RemoveTargetSong { target, song } => {
+                if !self.targets.remove_song(target, song) {
+                    return;
+                }
+            }
+            Event::FreezeTonalBalance { meter } => {
+                if !self
+                    .meters
+                    .get_mut(meter)
+                    .is_some_and(|s| s.meter.toggle_freeze())
                 {
                     return;
                 }
@@ -2411,6 +2605,7 @@ impl AppCore {
                 show_source_label: slot.show_source_label,
                 overrides: slot.overrides.clone(),
                 reference: self.reference_scene(slot),
+                tonal_balance: self.tonal_balance_scene(slot),
                 activity,
                 hovered,
             });
@@ -2429,6 +2624,7 @@ impl AppCore {
         Scene {
             windows,
             reference_curves: self.curves.names(),
+            targets: self.targets.names(),
             notes: if note { vec![self.note] } else { Vec::new() },
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),

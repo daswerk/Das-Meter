@@ -581,12 +581,13 @@ impl Biquad {
 }
 
 /// Which frames a summary takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Parts {
     /// Every non-silent frame.
     Whole,
     /// Only frames whose short-term loudness is within [`LOUD_PARTS_LU`] of
-    /// the loudest: a song's drops and choruses.
+    /// the loudest: a song's drops and choruses. The default.
+    #[default]
     Loud,
 }
 

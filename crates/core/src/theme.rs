@@ -122,6 +122,11 @@ pub enum Role {
     // Oscilloscope.
     OscilloscopeTrace,
     OscilloscopeSecond,
+    // Tonal Balance.
+    TonalBalanceMix,
+    TonalBalanceRange,
+    TonalBalanceOver,
+    TonalBalanceUnder,
 }
 
 impl Role {
@@ -155,6 +160,10 @@ impl Role {
             Role::PhaseScopeGrid => "phase_scope_grid",
             Role::OscilloscopeTrace => "oscilloscope_trace",
             Role::OscilloscopeSecond => "oscilloscope_second",
+            Role::TonalBalanceMix => "tonal_balance_mix",
+            Role::TonalBalanceRange => "tonal_balance_range",
+            Role::TonalBalanceOver => "tonal_balance_over",
+            Role::TonalBalanceUnder => "tonal_balance_under",
         }
     }
 
@@ -188,10 +197,14 @@ impl Role {
             Role::PhaseScopeGrid => "Phase Scope Cycle grid",
             Role::OscilloscopeTrace => "Oscilloscope trace",
             Role::OscilloscopeSecond => "Oscilloscope R / Side",
+            Role::TonalBalanceMix => "Tonal Balance mix",
+            Role::TonalBalanceRange => "Tonal Balance Target range",
+            Role::TonalBalanceOver => "Tonal Balance too much",
+            Role::TonalBalanceUnder => "Tonal Balance too little",
         }
     }
 
-    pub const ALL: [Role; 27] = [
+    pub const ALL: [Role; 31] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -219,6 +232,10 @@ impl Role {
         Role::PhaseScopeGrid,
         Role::OscilloscopeTrace,
         Role::OscilloscopeSecond,
+        Role::TonalBalanceMix,
+        Role::TonalBalanceRange,
+        Role::TonalBalanceOver,
+        Role::TonalBalanceUnder,
     ];
 }
 
@@ -259,6 +276,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::PhaseScopeSum => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::PhaseScopeGrid => Colour::rgb(0x40, 0x47, 0x50),
+            Role::TonalBalanceMix => Colour::rgb(0x7f, 0xe0, 0xc8),
+            Role::TonalBalanceRange => Colour::rgb(0x4d, 0x8d, 0xff),
+            Role::TonalBalanceOver => Colour::rgb(0xff, 0x8a, 0x3d),
+            Role::TonalBalanceUnder => Colour::rgb(0x5e, 0xc8, 0xff),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -297,6 +318,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xd6, 0x28, 0x28),
             Role::PhaseScopeSum => Colour::rgb(0x2a, 0x2e, 0x33),
             Role::PhaseScopeGrid => Colour::rgb(0xc4, 0xc9, 0xcf),
+            Role::TonalBalanceMix => Colour::rgb(0x0f, 0x8f, 0x7a),
+            Role::TonalBalanceRange => Colour::rgb(0x2d, 0x6c, 0xdf),
+            Role::TonalBalanceOver => Colour::rgb(0xe0, 0x6a, 0x10),
+            Role::TonalBalanceUnder => Colour::rgb(0x0a, 0x7c, 0xc2),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -334,6 +359,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::PhaseScopeSum => Colour::rgb(0xff, 0xd6, 0x00),
             Role::PhaseScopeGrid => Colour::rgb(0x90, 0x90, 0x90),
+            Role::TonalBalanceMix => Colour::rgb(0xff, 0xff, 0xff),
+            Role::TonalBalanceRange => Colour::rgb(0x3d, 0xa5, 0xff),
+            Role::TonalBalanceOver => Colour::rgb(0xff, 0x9f, 0x1c),
+            Role::TonalBalanceUnder => Colour::rgb(0x00, 0xe5, 0xff),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -370,6 +399,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::PhaseScopeSum => Colour::rgb(0xf0, 0xe8, 0xff),
             Role::PhaseScopeGrid => Colour::rgb(0x35, 0x2f, 0x42),
+            Role::TonalBalanceMix => Colour::rgb(0xd4, 0xa8, 0xff),
+            Role::TonalBalanceRange => Colour::rgb(0x6e, 0x8b, 0xff),
+            Role::TonalBalanceOver => Colour::rgb(0xff, 0x7a, 0x59),
+            Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xe0, 0xff),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -406,6 +439,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x5e),
             Role::PhaseScopeSum => Colour::rgb(0xea, 0xfc, 0xfc),
             Role::PhaseScopeGrid => Colour::rgb(0x23, 0x40, 0x44),
+            Role::TonalBalanceMix => Colour::rgb(0x6f, 0xf5, 0xe6),
+            Role::TonalBalanceRange => Colour::rgb(0x3d, 0x9b, 0xff),
+            Role::TonalBalanceOver => Colour::rgb(0xff, 0x8a, 0x3d),
+            Role::TonalBalanceUnder => Colour::rgb(0x7a, 0xa8, 0xff),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -442,6 +479,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xe0, 0x5a, 0x5a),
             Role::PhaseScopeSum => Colour::rgb(0xff, 0xff, 0xff),
             Role::PhaseScopeGrid => Colour::rgb(0x3c, 0x3c, 0x40),
+            Role::TonalBalanceMix => Colour::rgb(0xf0, 0xf0, 0xf0),
+            Role::TonalBalanceRange => Colour::rgb(0x8f, 0xa3, 0xb8),
+            Role::TonalBalanceOver => Colour::rgb(0xe0, 0x7a, 0x5a),
+            Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xa8, 0xd9),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -479,6 +520,10 @@ impl Palette {
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::PhaseScopeSum => Colour::rgb(0xf2, 0xf0, 0xfa),
             Role::PhaseScopeGrid => Colour::rgb(0x34, 0x32, 0x4a),
+            Role::TonalBalanceMix => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::TonalBalanceRange => Colour::rgb(0xc7, 0x92, 0xff),
+            Role::TonalBalanceOver => Colour::rgb(0xff, 0x4d, 0x6a),
+            Role::TonalBalanceUnder => Colour::rgb(0x4f, 0xd8, 0xff),
         };
         Palette {
             colours: Role::ALL.map(colour),

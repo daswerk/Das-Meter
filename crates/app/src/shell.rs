@@ -65,6 +65,7 @@ pub fn run() {
         started: false,
         theme_folder: Vec::new(),
         curve_folder: Vec::new(),
+        target_folder: Vec::new(),
         theme_scan_at: Duration::ZERO,
         menu_anchor: None,
         modifiers: ModifiersState::empty(),
@@ -202,9 +203,11 @@ struct Shell {
     send_plugins_listed_at: Duration,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
-    /// The themes and curves folders as last read, and when they're next looked at.
+    /// The themes, curves and targets folders as last read, and when they're
+    /// next looked at.
     theme_folder: crate::theme_files::Signature,
     curve_folder: crate::theme_files::Signature,
+    target_folder: crate::theme_files::Signature,
     theme_scan_at: Duration,
     /// Where the open menu was right-clicked, on screen.
     menu_anchor: Option<[f32; 2]>,
@@ -250,6 +253,7 @@ fn ui_view(scene: &Scene) -> Scene {
                     show_source_label: meter.show_source_label,
                     overrides: meter.overrides.clone(),
                     reference: meter.reference.clone(),
+                    tonal_balance: meter.tonal_balance.clone(),
                     overlay: meter.overlay.clone(),
                     activity: 1.0,
                     hovered: false,
@@ -269,6 +273,7 @@ fn ui_view(scene: &Scene) -> Scene {
     Scene {
         windows,
         reference_curves: scene.reference_curves.clone(),
+        targets: scene.targets.clone(),
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
@@ -703,6 +708,38 @@ impl Shell {
                         now,
                     );
                 }
+                Request::ChooseTarget { meter, name } => {
+                    self.core.handle(
+                        Event::ChooseTarget {
+                            meter,
+                            name: name.as_deref(),
+                        },
+                        now,
+                    );
+                }
+                Request::AddLearnedSong {
+                    meter,
+                    target,
+                    song,
+                } => {
+                    self.core.handle(
+                        Event::AddLearnedSong {
+                            meter,
+                            target: &target,
+                            song: &song,
+                        },
+                        now,
+                    );
+                }
+                Request::RemoveTargetSong { target, song } => {
+                    self.core.handle(
+                        Event::RemoveTargetSong {
+                            target: &target,
+                            song,
+                        },
+                        now,
+                    );
+                }
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
                 }
@@ -796,8 +833,8 @@ impl Shell {
         LogicalPosition::new(f64::from(x), f64::from(y))
     }
 
-    /// Reads the themes and curves folders into the core if they changed since
-    /// last time.
+    /// Reads the themes, curves and targets folders into the core if they
+    /// changed since last time.
     fn scan_themes(&mut self, now: Duration) {
         use crate::theme_files::{self as files, Folder};
         self.theme_scan_at = now + THEME_SCAN_EVERY;
@@ -813,6 +850,12 @@ impl Shell {
             let read = files::read(Folder::Curves);
             self.core.handle(Event::CurveFiles(&read), now);
         }
+        let signature = files::signature(Folder::Targets);
+        if signature != self.target_folder || now == Duration::ZERO {
+            self.target_folder = signature;
+            let read = files::read(Folder::Targets);
+            self.core.handle(Event::TargetFiles(&read), now);
+        }
     }
 
     /// Carries out the Preset writes, trashing and settings the core asked for.
@@ -823,8 +866,8 @@ impl Shell {
         }
     }
 
-    /// Saves Theme and Reference curve edits the core made, and remembers the
-    /// folders as written.
+    /// Saves Theme, Reference curve and Target edits the core made, and
+    /// remembers the folders as written.
     fn save_themes(&mut self) {
         use crate::theme_files::{self as files, Folder};
         let writes = self.core.take_writes();
@@ -836,6 +879,11 @@ impl Shell {
         if !writes.is_empty() {
             files::write(Folder::Curves, &writes);
             self.curve_folder = files::signature(Folder::Curves);
+        }
+        let writes = self.core.take_target_writes();
+        if !writes.is_empty() {
+            files::write(Folder::Targets, &writes);
+            self.target_folder = files::signature(Folder::Targets);
         }
     }
 

@@ -7,12 +7,13 @@ use dasmeter_analysis::{
     Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
     SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView,
     StereometerAnalyser, StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings,
-    note_name,
+    note_name, tonal_balance::Summary,
 };
 
 use crate::phase_scope::{PhaseScope, PhaseScopeView};
 use crate::scene::{Level, LoudnessDisplay};
 use crate::sources::Timing;
+use crate::tonal_balance::{TonalBalanceAnalyser, TonalBalanceMeterSettings};
 
 /// How the Waveform is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -401,6 +402,7 @@ pub enum MeterSettings {
     Spectrogram(SpectrogramMeterSettings),
     PhaseScope(PhaseScopeMeterSettings),
     Oscilloscope(OscilloscopeMeterSettings),
+    TonalBalance(TonalBalanceMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -414,10 +416,11 @@ pub enum MeterKind {
     Spectrogram,
     PhaseScope,
     Oscilloscope,
+    TonalBalance,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 8] = [
+    pub const ALL: [MeterKind; 9] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -426,6 +429,7 @@ impl MeterKind {
         MeterKind::Spectrogram,
         MeterKind::PhaseScope,
         MeterKind::Oscilloscope,
+        MeterKind::TonalBalance,
     ];
 }
 
@@ -447,6 +451,9 @@ impl MeterSettings {
             MeterKind::Oscilloscope => {
                 MeterSettings::Oscilloscope(OscilloscopeMeterSettings::default())
             }
+            MeterKind::TonalBalance => {
+                MeterSettings::TonalBalance(TonalBalanceMeterSettings::default())
+            }
         }
     }
 
@@ -460,6 +467,7 @@ impl MeterSettings {
             MeterSettings::Spectrogram(_) => MeterKind::Spectrogram,
             MeterSettings::PhaseScope(_) => MeterKind::PhaseScope,
             MeterSettings::Oscilloscope(_) => MeterKind::Oscilloscope,
+            MeterSettings::TonalBalance(_) => MeterKind::TonalBalance,
         }
     }
 
@@ -474,6 +482,7 @@ impl MeterSettings {
             MeterSettings::Spectrogram(_) => "Spectrogram",
             MeterSettings::PhaseScope(_) => "Phase Scope",
             MeterSettings::Oscilloscope(_) => "Oscilloscope",
+            MeterSettings::TonalBalance(_) => "Tonal Balance",
         }
     }
 }
@@ -575,6 +584,14 @@ pub enum MeterView {
         /// is held still and the auto gain.
         scope: Oscilloscope,
     },
+    TonalBalance {
+        settings: TonalBalanceMeterSettings,
+        /// The mix's average (its curve and region levels to 0.1 dB), once
+        /// it has heard something.
+        mix: Option<Box<Summary>>,
+        /// The mix's curve when frozen: a ghost to compare before and after.
+        frozen: Option<Vec<f32>>,
+    },
 }
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
@@ -624,6 +641,7 @@ enum Analyser {
     Spectrogram(Box<SpectrogramAnalyser>),
     PhaseScope(Box<PhaseScope>),
     Oscilloscope(Box<OscilloscopeAnalyser>),
+    TonalBalance(Box<TonalBalanceAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -883,15 +901,84 @@ impl Meter {
         true
     }
 
-    /// Starts a Spectrum's long-term average over. Other Meters have none;
-    /// returns whether this one did.
+    /// Starts a Spectrum's long-term average, or a Tonal Balance Meter's
+    /// average, over. Other Meters have none; returns whether this one did.
     pub fn reset_long_term(&mut self) -> bool {
-        let Some(Analyser::Spectrum(a)) = &mut self.analyser else {
-            return false;
-        };
-        a.reset_long_term();
+        match &mut self.analyser {
+            Some(Analyser::Spectrum(a)) => a.reset_long_term(),
+            Some(Analyser::TonalBalance(a)) => a.reset(),
+            _ => return false,
+        }
         self.view = None;
         true
+    }
+
+    fn tonal_balance(&mut self) -> Option<&mut TonalBalanceAnalyser> {
+        match &mut self.analyser {
+            Some(Analyser::TonalBalance(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// A Tonal Balance Meter's live average, once it has heard something.
+    pub fn tonal_summary(&self) -> Option<&Summary> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.summary(),
+            _ => None,
+        }
+    }
+
+    /// While a Tonal Balance Meter learns a song: the whole seconds heard.
+    pub fn learning_seconds(&self) -> Option<u32> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.learning_seconds().map(|s| s as u32),
+            _ => None,
+        }
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        matches!(&self.analyser, Some(Analyser::TonalBalance(a)) if a.frozen().is_some())
+    }
+
+    /// A Tonal Balance Meter starts (over) learning a song by playing;
+    /// returns whether this is one.
+    pub fn learn(&mut self) -> bool {
+        let Some(a) = self.tonal_balance() else {
+            return false;
+        };
+        a.learn();
+        self.view = None;
+        true
+    }
+
+    /// Stops learning without keeping anything; returns whether it was.
+    pub fn cancel_learning(&mut self) -> bool {
+        let changed = self.tonal_balance().is_some_and(|a| a.cancel_learning());
+        if changed {
+            self.view = None;
+        }
+        changed
+    }
+
+    /// Ends learning with what was heard, summed over the parts the
+    /// settings choose; `None` if it heard only silence (it goes on learning).
+    pub fn take_learned(&mut self) -> Option<Summary> {
+        let MeterSettings::TonalBalance(settings) = self.settings else {
+            return None;
+        };
+        let summary = self.tonal_balance()?.take_learned(settings.parts)?;
+        self.view = None;
+        Some(summary)
+    }
+
+    /// Freezes a Tonal Balance Meter's curve as a ghost, or lets it go;
+    /// returns whether anything changed.
+    pub fn toggle_freeze(&mut self) -> bool {
+        let changed = self.tonal_balance().is_some_and(|a| a.toggle_freeze());
+        if changed {
+            self.view = None;
+        }
+        changed
     }
 
     /// A Spectrum's long-term average as a Reference curve: the seconds it
@@ -959,6 +1046,7 @@ impl Meter {
             (Some(Analyser::Oscilloscope(a)), MeterSettings::Oscilloscope(s)) => {
                 a.set_settings(s.analysis)
             }
+            (Some(Analyser::TonalBalance(a)), MeterSettings::TonalBalance(s)) => a.set_settings(&s),
             _ => debug_assert!(!same_kind),
         }
         if !same_kind {
@@ -976,6 +1064,7 @@ impl Meter {
             Analyser::Spectrogram(a) => a.sample_rate(),
             Analyser::PhaseScope(a) => a.sample_rate(),
             Analyser::Oscilloscope(a) => a.sample_rate(),
+            Analyser::TonalBalance(a) => a.sample_rate(),
         })
     }
 
@@ -1006,6 +1095,12 @@ impl Meter {
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
             Some(Analyser::Oscilloscope(a)) => a.process(frames),
+            Some(Analyser::TonalBalance(a)) => {
+                // It only looks different once a frame is added.
+                if !a.process(frames) {
+                    return;
+                }
+            }
             Some(Analyser::Spectrogram(a)) => {
                 let before = a.completed();
                 a.process(frames);
@@ -1025,6 +1120,10 @@ impl Meter {
             None => return,
         }
         self.view = None;
+    }
+
+    pub fn is_tonal_balance(&self) -> bool {
+        matches!(self.settings, MeterSettings::TonalBalance(_))
     }
 
     pub fn is_phase_scope(&self) -> bool {
@@ -1201,6 +1300,9 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Oscilloscope(s) => {
             Analyser::Oscilloscope(Box::new(OscilloscopeAnalyser::new(sample_rate, s.analysis)))
         }
+        MeterSettings::TonalBalance(s) => {
+            Analyser::TonalBalance(Box::new(TonalBalanceAnalyser::new(sample_rate, s)))
+        }
     }
 }
 
@@ -1366,6 +1468,22 @@ fn build_view(
             MeterView::Oscilloscope {
                 settings,
                 scope: a.update().clone(),
+            }
+        }
+        (Analyser::TonalBalance(a), MeterSettings::TonalBalance(settings)) => {
+            let mix = a.summary().map(|summary| {
+                let mut mix = summary.clone();
+                for level in mix.curve.iter_mut().chain(&mut mix.regions) {
+                    *level = round_to(*level, 0.1);
+                }
+                Box::new(mix)
+            });
+            MeterView::TonalBalance {
+                settings,
+                mix,
+                frozen: a
+                    .frozen()
+                    .map(|curve| curve.iter().map(|&l| round_to(l, 0.1)).collect()),
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),

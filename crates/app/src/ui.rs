@@ -7,20 +7,23 @@
 use std::time::Duration;
 
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
+use dasmeter_analysis::tonal_balance::{Key, Parts};
 use dasmeter_analysis::{
     ChannelView, LongTerm, PeakHold, RmsMode, SpectrumStyle, StereoScaling, StereoView,
     WaveformScale, WindowFunction,
 };
+use dasmeter_core::KeyChoice;
 use dasmeter_core::docs::Topic;
 use dasmeter_core::layout::NO_RESERVE_SPACE_ON_MACOS;
 use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_URL};
+use dasmeter_core::tonal_balance as limits_tonal;
 use dasmeter_core::{
     BigReading, Card, CepstrumMeterSettings, Colour, CycleLength, Direction, Edge, Event,
     LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
     MeterSettings, OscilloscopeMeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role,
     Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings,
-    Steadiness, StereoDrawing, StereometerMeterSettings, WaveformColouring, WaveformMeterSettings,
-    WindowKey,
+    Steadiness, StereoDrawing, StereometerMeterSettings, TonalBalanceMeterSettings, TonalView,
+    WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -55,6 +58,22 @@ pub enum Request {
     ShowReferenceCurve {
         meter: usize,
         name: Option<String>,
+    },
+    /// Compare a Tonal Balance Meter with a Target, or none.
+    ChooseTarget {
+        meter: usize,
+        name: Option<String>,
+    },
+    /// End learning: add what was heard to a Target as a song.
+    AddLearnedSong {
+        meter: usize,
+        target: String,
+        song: String,
+    },
+    /// Remove a song from a Target.
+    RemoveTargetSong {
+        target: String,
+        song: usize,
     },
     /// Show a Preset file in Finder (Explorer on Windows).
     ShowPresetInFolder {
@@ -607,6 +626,255 @@ fn reference_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions
             return;
         }
         ui.data_mut(|d| d.insert_temp(id, name.clone()));
+    });
+}
+
+/// The 24 keys, C major to B minor.
+fn all_keys() -> impl Iterator<Item = Key> {
+    (0..24).map(|i| Key {
+        tonic: i % 12,
+        minor: i >= 12,
+    })
+}
+
+/// The Tonal Balance Meter's basic settings.
+fn tonal_balance_basic(ui: &mut egui::Ui, s: &mut TonalBalanceMeterSettings) -> bool {
+    let mut changed = choice(
+        ui,
+        "View",
+        &mut s.view,
+        &[
+            (TonalView::Auto, "Auto"),
+            (TonalView::Fine, "Fine"),
+            (TonalView::Broad, "Broad"),
+        ],
+    );
+    changed |= ui
+        .add(Toggle::new(&mut s.low_end_zoom, "Low end zoom"))
+        .on_hover_text("Fine shows only 20–300 Hz, a grid line on every note")
+        .changed();
+    changed |= choice(
+        ui,
+        "Average",
+        &mut s.averaging,
+        &[
+            (LongTerm::Seconds(3.0), "3 s"),
+            (LongTerm::Seconds(10.0), "10 s"),
+            (LongTerm::Seconds(30.0), "30 s"),
+            (LongTerm::Whole, "Whole"),
+        ],
+    );
+    ui.horizontal(|ui| {
+        ui.label("Key");
+        let shown = match s.key {
+            KeyChoice::Auto => "Auto (detected)".to_owned(),
+            KeyChoice::Fixed(key) => key.name(),
+        };
+        egui::ComboBox::from_id_salt("tonal balance key")
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                changed |= ui
+                    .selectable_value(&mut s.key, KeyChoice::Auto, "Auto (detected)")
+                    .changed();
+                for key in all_keys() {
+                    changed |= ui
+                        .selectable_value(&mut s.key, KeyChoice::Fixed(key), key.name())
+                        .changed();
+                }
+            });
+    });
+    changed |= ui
+        .add(Toggle::new(
+            &mut s.shift_to_key,
+            "Shift Target to the mix's key",
+        ))
+        .on_hover_text("Move the Target's low end (below 300 Hz) to the mix's key")
+        .changed();
+    changed
+}
+
+fn tonal_balance_advanced(ui: &mut egui::Ui, s: &mut TonalBalanceMeterSettings) -> bool {
+    let mut changed = choice(
+        ui,
+        "Teach with",
+        &mut s.parts,
+        &[(Parts::Loud, "Loud parts"), (Parts::Whole, "Whole song")],
+    );
+    changed |= ui
+        .add(
+            Slider::new(
+                &mut s.mono_cutoff,
+                limits_tonal::MONO_CUTOFF_RANGE.0..=limits_tonal::MONO_CUTOFF_RANGE.1,
+            )
+            .text("Low end mono below")
+            .suffix(" Hz")
+            .logarithmic(true),
+        )
+        .changed();
+    changed
+}
+
+/// A Tonal Balance Meter's Target: which one, the key suggestion,
+/// teaching a song by playing, its songs, Freeze and Reset.
+fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &mut Actions) {
+    let MeterSettings::TonalBalance(settings) = meter.settings else {
+        return;
+    };
+    let Some(state) = &meter.tonal_balance else {
+        return;
+    };
+    let index = meter.meter;
+    let (learning, frozen, target) = (state.learning, state.frozen, state.target.as_ref());
+    let chosen = target.map(|t| t.name.clone());
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Target");
+        let mut pick = |ui: &mut egui::Ui, name: Option<&String>, label: &str| {
+            if ui
+                .selectable_label(chosen.as_ref() == name, label)
+                .clicked()
+                && chosen.as_ref() != name
+            {
+                actions.requests.push(Request::ChooseTarget {
+                    meter: index,
+                    name: name.cloned(),
+                });
+            }
+        };
+        pick(ui, None, "None");
+        for name in &scene.targets {
+            pick(ui, Some(name), name);
+        }
+        if let Some(target) = target.filter(|t| t.missing) {
+            ui.label(RichText::new(format!("{} (missing)", target.name)).weak());
+        }
+    });
+    if let Some(target) = target
+        && let (Some(mix), Some(home)) = (target.suggest_shift, target.home_key)
+    {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!(
+                "Your mix is in {}, this Target's songs in {}.",
+                mix.name(),
+                home.name()
+            ));
+            if ui.button(format!("Shift to {}", mix.name())).clicked() {
+                actions.push(Event::SetMeter {
+                    meter: index,
+                    settings: MeterSettings::TonalBalance(TonalBalanceMeterSettings {
+                        shift_to_key: true,
+                        ..settings
+                    }),
+                });
+            }
+        });
+    }
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(frozen, "Freeze")
+            .on_hover_text("Keep the curve as it is now as a ghost, to compare before and after")
+            .clicked()
+        {
+            actions.push(Event::FreezeTonalBalance { meter: index });
+        }
+        if ui
+            .button("Reset average")
+            .on_hover_text("Start the mix's average over from now")
+            .clicked()
+        {
+            actions.push(Event::ResetLongTerm { meter: index });
+        }
+    });
+    // Teaching by playing: Learn, play the song, Add.
+    match learning {
+        None => {
+            if ui
+                .button("Learn a song…")
+                .on_hover_text("Play a reference song from start to end, then Add it to a Target")
+                .clicked()
+            {
+                actions.push(Event::LearnSong { meter: index });
+            }
+        }
+        Some(s) => {
+            ui.label(format!("Learning: {}:{:02} heard", s / 60, s % 60));
+            let ids = (
+                egui::Id::new(("learn target", index)),
+                egui::Id::new(("learn song", index)),
+            );
+            let mut target = ui
+                .data_mut(|d| d.get_temp::<String>(ids.0))
+                .or_else(|| chosen.clone())
+                .unwrap_or_default();
+            let mut song = ui
+                .data_mut(|d| d.get_temp::<String>(ids.1))
+                .unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut song)
+                        .hint_text("Song")
+                        .desired_width(110.0),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut target)
+                        .hint_text("Target")
+                        .desired_width(110.0),
+                );
+            });
+            let mut done = false;
+            ui.horizontal(|ui| {
+                let can_add = !target.trim().is_empty() && s > 0;
+                if ui
+                    .add_enabled(can_add, egui::Button::new("Add"))
+                    .on_disabled_hover_text("Name the Target and play something")
+                    .clicked()
+                {
+                    actions.requests.push(Request::AddLearnedSong {
+                        meter: index,
+                        target: target.trim().to_owned(),
+                        song: song.trim().to_owned(),
+                    });
+                    done = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    actions.push(Event::CancelLearning { meter: index });
+                    done = true;
+                }
+            });
+            ui.data_mut(|d| {
+                if done {
+                    d.remove::<String>(ids.0);
+                    d.remove::<String>(ids.1);
+                } else {
+                    d.insert_temp(ids.0, target);
+                    d.insert_temp(ids.1, song);
+                }
+            });
+        }
+    }
+    let Some(target) = target.filter(|t| !t.songs.is_empty()) else {
+        return;
+    };
+    ui.collapsing(format!("Songs ({})", target.songs.len()), |ui| {
+        for (k, song) in target.songs.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let s = song.seconds.round() as u64;
+                let key = song
+                    .key
+                    .map(|k| format!(" · {}", k.name()))
+                    .unwrap_or_default();
+                ui.label(format!("{} ({}:{:02}{key})", song.name, s / 60, s % 60));
+                if ui
+                    .small_button("×")
+                    .on_hover_text("Remove this song from the Target")
+                    .clicked()
+                {
+                    actions.requests.push(Request::RemoveTargetSong {
+                        target: target.name.clone(),
+                        song: k,
+                    });
+                }
+            });
+        }
     });
 }
 
@@ -1164,6 +1432,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Spectrogram(w) => spectrogram_basic(ui, w),
         MeterSettings::PhaseScope(w) => phase_scope_basic(ui, w, &mut tap),
         MeterSettings::Oscilloscope(w) => oscilloscope_basic(ui, w),
+        MeterSettings::TonalBalance(w) => tonal_balance_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1187,6 +1456,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Spectrogram(w) => spectrogram_advanced(ui, w),
         MeterSettings::PhaseScope(_) => false, // all in the menu
         MeterSettings::Oscilloscope(_) => false, // all in the basics
+        MeterSettings::TonalBalance(w) => tonal_balance_advanced(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1418,6 +1688,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::Spectrogram => "Spectrogram",
         MeterKind::PhaseScope => "Phase Scope",
         MeterKind::Oscilloscope => "Oscilloscope",
+        MeterKind::TonalBalance => "Tonal Balance",
     }
 }
 
@@ -1554,6 +1825,7 @@ fn menu_contents(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut A
     ui.separator();
     basic(ui, meter, meter_scene.settings, actions);
     reference_items(ui, scene, meter_scene, actions);
+    target_items(ui, scene, meter_scene, actions);
     ui.separator();
     placement_item(ui, scene, meter, actions);
     if ui.button("Settings…").clicked() {
@@ -2031,7 +2303,7 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
 }
 
 /// The Theme's colours by the Meter that uses them.
-const COLOUR_GROUPS: [(&str, &[Role]); 8] = [
+const COLOUR_GROUPS: [(&str, &[Role]); 9] = [
     (
         "General",
         &[
@@ -2087,6 +2359,14 @@ const COLOUR_GROUPS: [(&str, &[Role]); 8] = [
         "Oscilloscope",
         &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
     ),
+    ("Tonal Balance", TONAL_BALANCE_ROLES),
+];
+
+const TONAL_BALANCE_ROLES: &[Role] = &[
+    Role::TonalBalanceMix,
+    Role::TonalBalanceRange,
+    Role::TonalBalanceOver,
+    Role::TonalBalanceUnder,
 ];
 
 /// A small Meter drawn in the Theme's colours: a panel with a grid, a
@@ -2208,6 +2488,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::PhaseScopeGrid,
         ],
         MeterSettings::Oscilloscope(_) => &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
+        MeterSettings::TonalBalance(_) => TONAL_BALANCE_ROLES,
     }
 }
 
@@ -2611,6 +2892,7 @@ fn meter_settings(
         })
         .unwrap_or(meter_scene.settings);
     reference_items(ui, scene, meter_scene, actions);
+    target_items(ui, scene, meter_scene, actions);
     ui.separator();
     advanced(ui, meter, settings, &mut edited);
     ui.separator();

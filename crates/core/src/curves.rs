@@ -4,7 +4,7 @@
 use dasmeter_analysis::{REFERENCE_POINTS_PER_OCTAVE, REFERENCE_RANGE, reference_grid};
 use serde::{Deserialize, Serialize};
 
-use crate::themes::{FileWrite, ThemeFile};
+use crate::library::{Library, LibraryItem};
 
 /// The file layout's version.
 pub const CURVE_VERSION: u32 = 1;
@@ -60,127 +60,37 @@ impl ReferenceCurve {
     }
 }
 
-struct Entry {
-    curve: ReferenceCurve,
-    file: String,
+impl LibraryItem for ReferenceCurve {
+    const UNNAMED: &'static str = "Reference curve";
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn to_toml(&self) -> String {
+        ReferenceCurve::to_toml(self)
+    }
+
+    fn from_toml(text: &str) -> Result<Self, String> {
+        ReferenceCurve::from_toml(text)
+    }
+
+    fn same_contents(&self, other: &Self) -> bool {
+        self.levels == other.levels
+    }
 }
 
 /// The curves folder as the app knows it, and the files edits write.
-#[derive(Default)]
-pub struct Curves {
-    entries: Vec<Entry>,
-    writes: Vec<FileWrite>,
-}
-
-impl Curves {
-    /// Replaces what's known with the folder's files. Unreadable files, and
-    /// ones whose name another curve has, are skipped.
-    pub fn load(&mut self, files: &[ThemeFile]) {
-        self.entries.clear();
-        for file in files {
-            let Ok(curve) = ReferenceCurve::from_toml(&file.text) else {
-                continue;
-            };
-            if self.get(&curve.name).is_some() {
-                continue;
-            }
-            self.entries.push(Entry {
-                curve,
-                file: file.file_name.clone(),
-            });
-        }
-        self.entries.sort_by(|a, b| a.curve.name.cmp(&b.curve.name));
-    }
-
-    pub fn get(&self, name: &str) -> Option<&ReferenceCurve> {
-        self.entries
-            .iter()
-            .find(|e| e.curve.name == name)
-            .map(|e| &e.curve)
-    }
-
-    /// The names, sorted, for menus.
-    pub fn names(&self) -> Vec<String> {
-        self.entries.iter().map(|e| e.curve.name.clone()).collect()
-    }
-
-    /// Saves a curve: over the one with its name, or as a new file. Returns
-    /// the name it got (trimmed; "Reference curve" when blank).
-    pub fn save(&mut self, curve: ReferenceCurve) -> String {
-        let name = match curve.name.trim() {
-            "" => "Reference curve".to_owned(),
-            name => name.to_owned(),
-        };
-        let curve = ReferenceCurve {
-            name: name.clone(),
-            ..curve
-        };
-        let file = match self.entries.iter().find(|e| e.curve.name == name) {
-            Some(entry) => entry.file.clone(),
-            None => self.file_name_for(&name),
-        };
-        self.writes.push(FileWrite {
-            file_name: file.clone(),
-            contents: curve.to_toml(),
-        });
-        self.entries.retain(|e| e.curve.name != name);
-        self.entries.push(Entry { curve, file });
-        self.entries.sort_by(|a, b| a.curve.name.cmp(&b.curve.name));
-        name
-    }
-
-    /// Adds a curve from elsewhere (an imported Preset) unless an identical
-    /// one is there, under " (2)" if its name is taken. Returns its name.
-    pub fn install(&mut self, curve: ReferenceCurve) -> String {
-        if let Some(existing) = self.get(&curve.name)
-            && existing.levels == curve.levels
-        {
-            return curve.name;
-        }
-        let name = if self.get(&curve.name).is_none() {
-            curve.name.clone()
-        } else {
-            (2..)
-                .map(|n| format!("{} ({n})", curve.name))
-                .find(|name| self.get(name).is_none())
-                .expect("some number is free")
-        };
-        self.save(ReferenceCurve { name, ..curve })
-    }
-
-    /// The files to write since the last call.
-    pub fn take_writes(&mut self) -> Vec<FileWrite> {
-        std::mem::take(&mut self.writes)
-    }
-
-    fn file_name_for(&self, name: &str) -> String {
-        let slug: String = name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let slug = slug.trim_matches('-');
-        let slug = if slug.is_empty() { "curve" } else { slug };
-        let taken = |file: &str| self.entries.iter().any(|e| e.file == file);
-        let first = format!("{slug}.toml");
-        if !taken(&first) {
-            return first;
-        }
-        (2..)
-            .map(|n| format!("{slug}-{n}.toml"))
-            .find(|file| !taken(file))
-            .expect("some number is free")
-    }
-}
+pub type Curves = Library<ReferenceCurve>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::themes::ThemeFile;
 
     fn curve(name: &str, level: f32) -> ReferenceCurve {
         ReferenceCurve::new(name, 30.0, vec![level; reference_grid().len()])

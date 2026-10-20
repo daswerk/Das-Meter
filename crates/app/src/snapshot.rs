@@ -190,6 +190,7 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         "phase-scope" => MeterKind::PhaseScope,
         "cepstrum" => MeterKind::Cepstrum,
         "oscilloscope" => MeterKind::Oscilloscope,
+        "tonal-balance" => MeterKind::TonalBalance,
         other => return Err(format!("no Meter kind {other:?}")),
     };
     core.handle(Event::SetMode(LayoutMode::Window), now);
@@ -217,6 +218,73 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         }
         _ => play(core, &music(10.0), now),
     })
+}
+
+fn tonal_balance(core: &mut AppCore, variant: &str, now: Duration) -> Result<Duration, String> {
+    use dasmeter_core::{MeterSettings, TonalView};
+    let mut now = solo(core, "tonal-balance", now)?;
+    let Some(MeterSettings::TonalBalance(mut settings)) = core.meter_settings(0) else {
+        return Err("no Tonal Balance Meter".into());
+    };
+    settings.averaging = dasmeter_analysis::LongTerm::Whole;
+    settings.view = match variant {
+        "-broad" => TonalView::Broad,
+        _ => TonalView::Fine,
+    };
+    settings.low_end_zoom = variant == "-low" || variant == "-shift";
+    if variant == "-shift" {
+        settings.key = dasmeter_core::KeyChoice::Fixed(dasmeter_analysis::tonal_balance::Key {
+            tonic: 5,
+            minor: true,
+        });
+    }
+    core.handle(
+        Event::SetMeter {
+            meter: 0,
+            settings: MeterSettings::TonalBalance(settings),
+        },
+        now,
+    );
+    // The Target's song: the music darker, with its lows lifted.
+    let darker: Vec<f32> = {
+        let mut state = [0.0f32; 2];
+        music(10.0)
+            .chunks(2)
+            .flat_map(|frame| {
+                let mut out = [0.0f32; 2];
+                for ((s, &x), o) in state.iter_mut().zip(frame).zip(&mut out) {
+                    *s += 0.02 * (x - *s);
+                    *o = 0.7 * x + 2.0 * *s;
+                }
+                out
+            })
+            .collect()
+    };
+    core.handle(Event::LearnSong { meter: 0 }, now);
+    now = play(core, &darker, now);
+    core.handle(
+        Event::AddLearnedSong {
+            meter: 0,
+            target: "My references",
+            song: "Darker mix",
+        },
+        now,
+    );
+    core.handle(Event::ResetLongTerm { meter: 0 }, now);
+    now = play(core, &music(10.0), now);
+    // Its menu, learning another song.
+    if variant == "-menu" {
+        core.handle(Event::LearnSong { meter: 0 }, now);
+        now = play(core, &music(3.0), now);
+        core.handle(
+            Event::OpenMenu {
+                window: WindowKey::Main,
+                at: [0.5, 0.5],
+            },
+            now,
+        );
+    }
+    Ok(now)
 }
 
 /// DASMETER_THEME="Name": use that Theme. DASMETER_STYLE="key=value,…" (keys:
@@ -315,7 +383,13 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
     // The silence hint only shows when nothing has played.
     let noise_for = match open {
-        Some(option) if option.starts_with("solo-") || option == "spectrum-reference" => 0,
+        Some(option)
+            if option.starts_with("solo-")
+                || option.starts_with("tonal-balance")
+                || option == "spectrum-reference" =>
+        {
+            0
+        }
         Some(
             "hint" | "showcase" | "showcase-bar" | "showcase-light" | "showcase-contrast"
             | "theme-settings",
@@ -358,7 +432,11 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             _,
         ) => (2400, 1440),
         (Some("theme-settings"), _) => (2400, 1800),
-        (Some(option), _) if option.starts_with("solo-") || option == "spectrum-reference" => {
+        (Some(option), _)
+            if option.starts_with("solo-")
+                || option.starts_with("tonal-balance")
+                || option == "spectrum-reference" =>
+        {
             (1440, 900)
         }
         _ => (WIDTH, HEIGHT),
@@ -734,6 +812,13 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             );
             core.handle(Event::ResetLongTerm { meter: 0 }, now);
             now = play(&mut core, &music(10.0), now);
+        }
+        // A Tonal Balance Meter alone, its Target taught with the music
+        // made darker and with more bass, then the music played against it;
+        // "-broad" and "-low" for those views, "-shift" with the Target
+        // shifted to a fixed key.
+        Some(option) if option.starts_with("tonal-balance") => {
+            now = tonal_balance(&mut core, &option["tonal-balance".len()..], now)?;
         }
         // One Meter alone in a window, on a signal that suits it.
         Some(option) if option.starts_with("solo-") => {
