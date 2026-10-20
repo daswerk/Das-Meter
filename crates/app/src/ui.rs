@@ -1703,9 +1703,7 @@ fn source_item(ui: &mut egui::Ui, scene: &Scene, meter: usize, actions: &mut Act
 /// or none, and the ± ms offset that nudges it. Shown disabled on System
 /// Capture, which has only the one Source.
 fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, actions: &mut Actions) {
-    let (Some(overlay), MeterSettings::PhaseScope(mut settings)) =
-        (&meter_scene.overlay, meter_scene.settings)
-    else {
+    let Some(overlay) = &meter_scene.overlay else {
         return;
     };
     let meter = meter_scene.meter;
@@ -1743,7 +1741,44 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
     if overlay.choices.is_empty() && overlay.picked.is_none() {
         ui.label(RichText::new("No other Send Plugin in this DAW").weak());
     }
-    if overlay.picked.is_some() {
+    if overlay.picked.is_none() {
+        return;
+    }
+    // A Spectrum: where the two collide.
+    if let MeterSettings::Spectrum(mut settings) = meter_scene.settings {
+        let mut changed = ui
+            .add(
+                Slider::new(
+                    &mut settings.collision_floor,
+                    limits::COLLISION_FLOOR.0..=limits::COLLISION_FLOOR.1,
+                )
+                .text("Collisions above")
+                .suffix(" dB")
+                .step_by(1.0),
+            )
+            .on_hover_text("Both must be louder than this, on the Spectrum's scale")
+            .changed();
+        changed |= ui
+            .add(
+                Slider::new(
+                    &mut settings.collision_within,
+                    limits::COLLISION_WITHIN.0..=limits::COLLISION_WITHIN.1,
+                )
+                .text("…and within")
+                .suffix(" dB")
+                .step_by(1.0),
+            )
+            .on_hover_text("of each other: then they fight for the same frequencies")
+            .changed();
+        if changed {
+            actions.push(Event::SetMeter {
+                meter,
+                settings: MeterSettings::Spectrum(settings),
+            });
+        }
+        return;
+    }
+    if let MeterSettings::PhaseScope(mut settings) = meter_scene.settings {
         let (low, high) = limits::PHASE_SCOPE_OFFSET;
         let mut changed = ui
             .add(
@@ -2499,6 +2534,7 @@ const COLOUR_GROUPS: [(&str, &[Role]); 10] = [
             Role::SpectrumPeakDots,
             Role::SpectrumHarmonics,
             Role::SpectrumSecond,
+            Role::SpectrumCollision,
         ],
     ),
     (
@@ -2637,6 +2673,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::SpectrumPeakDots,
             Role::SpectrumHarmonics,
             Role::SpectrumSecond,
+            Role::SpectrumCollision,
         ],
         MeterSettings::Loudness(_) => &[
             Role::LoudnessBar,

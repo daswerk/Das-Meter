@@ -84,6 +84,9 @@ pub const PEAK_HOLD: (Duration, Duration) = (Duration::from_millis(100), Duratio
 pub const LOUDNESS_TARGET: (f64, f64) = (-40.0, 0.0);
 /// The VU's reference: the peak of the sine that reads 0 VU, in dBFS.
 pub const VU_REFERENCE: (f64, f64) = (-24.0, -8.0);
+/// A Spectrum's collision floor and how close two levels must be, in dB.
+pub const COLLISION_FLOOR: (f32, f32) = (-90.0, -10.0);
+pub const COLLISION_WITHIN: (f32, f32) = (1.0, 12.0);
 /// The Tuner's reference pitch, A4 in Hz.
 pub const TUNER_A4: (f32, f32) = (415.0, 466.0);
 /// The true-peak ceiling the counter counts overs of, in dBTP.
@@ -210,6 +213,19 @@ impl WaveformMeterSettings {
 
 impl SpectrumMeterSettings {
     fn clamped(mut self) -> Self {
+        let spectrum_defaults = SpectrumMeterSettings::default();
+        self.collision_floor = clamp_f32(
+            self.collision_floor,
+            COLLISION_FLOOR,
+            spectrum_defaults.collision_floor,
+        )
+        .round();
+        self.collision_within = clamp_f32(
+            self.collision_within,
+            COLLISION_WITHIN,
+            spectrum_defaults.collision_within,
+        )
+        .round();
         let defaults = SpectrumMeterSettings::default().analysis;
         let a = &mut self.analysis;
         a.slope = nearest(a.slope, &SPECTRUM_SLOPES, |s| s);

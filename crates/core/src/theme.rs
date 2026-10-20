@@ -103,6 +103,7 @@ pub enum Role {
     SpectrumHarmonics,
     /// The second trace, R or Side, when the Spectrum shows two.
     SpectrumSecond,
+    SpectrumCollision,
     // Loudness Meter.
     LoudnessBar,
     LoudnessPeak,
@@ -151,6 +152,7 @@ impl Role {
             Role::SpectrumPeakDots => "spectrum_peak_dots",
             Role::SpectrumHarmonics => "spectrum_harmonics",
             Role::SpectrumSecond => "spectrum_second",
+            Role::SpectrumCollision => "spectrum_collision",
             Role::LoudnessBar => "loudness_bar",
             Role::LoudnessPeak => "loudness_peak",
             Role::LoudnessOverTarget => "loudness_over_target",
@@ -191,6 +193,7 @@ impl Role {
             Role::SpectrumPeakDots => "Spectrum peak dots",
             Role::SpectrumHarmonics => "Spectrum harmonics",
             Role::SpectrumSecond => "Spectrum R / Side",
+            Role::SpectrumCollision => "Spectrum collisions",
             Role::LoudnessBar => "Loudness bar",
             Role::LoudnessPeak => "Loudness peak",
             Role::LoudnessOverTarget => "Loudness over target",
@@ -214,7 +217,7 @@ impl Role {
         }
     }
 
-    pub const ALL: [Role; 34] = [
+    pub const ALL: [Role; 35] = [
         Role::Background,
         Role::Panel,
         Role::Grid,
@@ -229,6 +232,7 @@ impl Role {
         Role::SpectrumPeakDots,
         Role::SpectrumHarmonics,
         Role::SpectrumSecond,
+        Role::SpectrumCollision,
         Role::LoudnessBar,
         Role::LoudnessPeak,
         Role::LoudnessOverTarget,
@@ -296,6 +300,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xf0, 0x3e, 0x3e),
             Role::TunerInTune => Colour::rgb(0x2f, 0xbf, 0x71),
             Role::TunerOff => Colour::rgb(0xff, 0xb3, 0x47),
+            Role::SpectrumCollision => Colour::rgb(0xff, 0x5c, 0x5c),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -341,6 +346,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xd6, 0x28, 0x28),
             Role::TunerInTune => Colour::rgb(0x1f, 0x9d, 0x5a),
             Role::TunerOff => Colour::rgb(0xd9, 0x7a, 0x00),
+            Role::SpectrumCollision => Colour::rgb(0xd6, 0x28, 0x28),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -385,6 +391,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xff, 0x9f, 0x1c),
             Role::TunerInTune => Colour::rgb(0x3d, 0xa5, 0xff),
             Role::TunerOff => Colour::rgb(0xff, 0x9f, 0x1c),
+            Role::SpectrumCollision => Colour::rgb(0xff, 0x9f, 0x1c),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -428,6 +435,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::TunerInTune => Colour::rgb(0x57, 0xd6, 0x8d),
             Role::TunerOff => Colour::rgb(0xff, 0xcf, 0x6e),
+            Role::SpectrumCollision => Colour::rgb(0xff, 0x4d, 0x6a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -471,6 +479,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x5e),
             Role::TunerInTune => Colour::rgb(0x3d, 0xdc, 0x97),
             Role::TunerOff => Colour::rgb(0xff, 0xd1, 0x66),
+            Role::SpectrumCollision => Colour::rgb(0xff, 0x6b, 0x5c),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -514,6 +523,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xe0, 0x5a, 0x5a),
             Role::TunerInTune => Colour::rgb(0x7f, 0xc9, 0x9a),
             Role::TunerOff => Colour::rgb(0xe0, 0xb0, 0x5a),
+            Role::SpectrumCollision => Colour::rgb(0xe0, 0x5a, 0x5a),
         };
         Palette {
             colours: Role::ALL.map(colour),
@@ -558,6 +568,7 @@ impl Palette {
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::TunerInTune => Colour::rgb(0x3d, 0xdc, 0x84),
             Role::TunerOff => Colour::rgb(0xf2, 0xc9, 0x4c),
+            Role::SpectrumCollision => Colour::rgb(0xff, 0x4d, 0x6a),
         };
         Palette {
             colours: Role::ALL.map(colour),

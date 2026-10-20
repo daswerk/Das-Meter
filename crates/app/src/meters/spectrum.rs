@@ -7,7 +7,9 @@
 
 use dasmeter_analysis::{Spectrum, SpectrumStyle, note_name};
 use dasmeter_core::scene::ReferenceScene;
-use dasmeter_core::{Colour, CursorReadout, Role, SpectrumMeterSettings, SpectrumZoom};
+use dasmeter_core::{
+    Colour, CursorReadout, Role, SpectrumMeterSettings, SpectrumOverlay, SpectrumZoom,
+};
 
 use super::labels::Align;
 use super::shapes::{Area, smooth};
@@ -58,6 +60,7 @@ pub fn draw(
     selecting: Option<[f32; 4]>,
     zoom: Option<&SpectrumZoom>,
     reference: Option<&ReferenceScene>,
+    overlay: Option<&SpectrumOverlay>,
 ) {
     let Marks {
         cursor,
@@ -91,6 +94,9 @@ pub fn draw(
     let db_range = spectrum.db_range;
     let y_of = |db: f32| map(db, db_range, area.bottom(), area.y);
     long_term_lines(c, area, spectrum, reference, &x_of, &y_of);
+    if let Some(overlay) = overlay {
+        overlay_lines(c, area, spectrum, overlay, &x_of, &y_of);
+    }
     // The loudest peak's readout pinned to the top right, a leader line from
     // the peak to it; the cursor's line and readout under it.
     if let Some(peak) = peak {
@@ -515,6 +521,77 @@ fn long_term_lines(
             9.0,
             c.dim(),
             Align::Right,
+        );
+    }
+}
+
+/// The Overlay Source's line in its colour, its name at the top right, and
+/// the collisions as a strip along the bottom: the stronger, the more solid.
+fn overlay_lines(
+    c: &mut Canvas,
+    area: Area,
+    spectrum: &Spectrum,
+    overlay: &SpectrumOverlay,
+    x_of: &dyn Fn(f32) -> f32,
+    y_of: &dyn Fn(f32) -> f32,
+) {
+    let colour = overlay
+        .colour
+        .unwrap_or_else(|| c.colour(Role::SpectrumSecond));
+    let label = if overlay.waiting {
+        format!("Waiting for {}", overlay.name)
+    } else {
+        overlay.name.clone()
+    };
+    let label_colour = if overlay.waiting { c.dim() } else { colour };
+    c.text(
+        &label,
+        area.right() - c.px(4.0),
+        area.y + c.px(32.0),
+        10.0,
+        label_colour,
+        Align::Right,
+    );
+    if overlay.levels.len() != spectrum.frequencies.len() {
+        return;
+    }
+    let floor = spectrum.db_range.0;
+    let points: Vec<[f32; 2]> = spectrum
+        .frequencies
+        .iter()
+        .zip(&overlay.levels)
+        .map(|(&f, &db)| [x_of(f), y_of(db.max(floor))])
+        .collect();
+    let line = smooth(&points, c.px(2.0));
+    c.edge_faded(area, &line, |c, piece, strength| {
+        c.shapes
+            .polyline(piece, c.stroke(1.5), colour.faded(0.9 * strength));
+    });
+    if overlay.collisions.len() != spectrum.frequencies.len() {
+        return;
+    }
+    let strip = c.px(8.0);
+    let collision = c.colour(Role::SpectrumCollision);
+    let xs: Vec<f32> = spectrum.frequencies.iter().map(|&f| x_of(f)).collect();
+    for (i, &strength) in overlay.collisions.iter().enumerate() {
+        if strength <= 0.0 {
+            continue;
+        }
+        // From halfway to the point before to halfway to the one after.
+        let left = if i == 0 {
+            xs[0]
+        } else {
+            (xs[i - 1] + xs[i]) / 2.0
+        };
+        let right = xs.get(i + 1).map_or(xs[i], |&next| (xs[i] + next) / 2.0);
+        c.shapes.rect(
+            Area {
+                x: left.max(area.x),
+                y: area.bottom() - strip,
+                width: (right.min(area.right()) - left.max(area.x)).max(0.0),
+                height: strip,
+            },
+            collision.faded(0.25 + 0.75 * strength),
         );
     }
 }

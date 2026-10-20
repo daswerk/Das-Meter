@@ -942,6 +942,24 @@ fn layout(sample_rate: u32, settings: &SpectrumSettings) -> (Vec<f32>, Vec<Point
     (spans.iter().map(|&(f, _, _)| f).collect(), points)
 }
 
+/// Where two Sources' spectra collide (#99): at each point, how strongly,
+/// from 0 (no collision) to 1. A point collides where both levels are over
+/// `floor` and within `within` dB of each other; the louder the quieter of
+/// the two is, up to `top`, the stronger. Not a perceptual masking model.
+pub fn collisions(a: &[f32], b: &[f32], floor: f32, within: f32, top: f32) -> Vec<f32> {
+    let span = (top - floor).max(1.0);
+    a.iter()
+        .zip(b)
+        .map(|(&a, &b)| {
+            if a > floor && b > floor && (a - b).abs() <= within {
+                ((a.min(b) - floor) / span).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
 /// A frequency as the nearest equal-tempered note (A4 = 440 Hz), for the cursor readout.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Note {
