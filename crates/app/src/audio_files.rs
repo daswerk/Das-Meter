@@ -299,7 +299,16 @@ mod tests {
         }
         let found: Vec<String> = audio_files_in(std::slice::from_ref(&dir))
             .iter()
-            .map(|p| p.strip_prefix(&dir).unwrap().to_string_lossy().into_owned())
+            .map(|p| {
+                // "/" between folders on every system, to compare.
+                let parts: Vec<String> = p
+                    .strip_prefix(&dir)
+                    .unwrap()
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                parts.join("/")
+            })
             .collect();
         assert_eq!(found, ["a.FLAC", "b.wav", "inner/c.mp3"]);
     }
