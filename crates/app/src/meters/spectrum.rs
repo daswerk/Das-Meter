@@ -520,7 +520,14 @@ fn long_term_lines(
 }
 
 /// A polyline drawn in dashes `dash` long with `gap` between, measured along it.
-fn dashed(c: &mut Canvas, points: &[[f32; 2]], dash: f32, gap: f32, width: f32, colour: Colour) {
+pub(super) fn dashed(
+    c: &mut Canvas,
+    points: &[[f32; 2]],
+    dash: f32,
+    gap: f32,
+    width: f32,
+    colour: Colour,
+) {
     let period = dash + gap;
     let mut along = 0.0f32;
     for pair in points.windows(2) {

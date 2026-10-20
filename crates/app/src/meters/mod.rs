@@ -12,6 +12,7 @@ mod smooth;
 mod spectrogram;
 mod spectrum;
 mod stereometer;
+mod tonal_balance;
 mod waveform;
 
 use dasmeter_core::{
@@ -364,6 +365,26 @@ impl MeterRenderer {
                 MeterView::Oscilloscope { settings, scope } => {
                     oscilloscope::draw(&mut c, inner, settings, scope)
                 }
+                MeterView::TonalBalance {
+                    settings,
+                    mix,
+                    frozen,
+                } => tonal_balance::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    tonal_balance::Drawn {
+                        mix: mix.as_deref(),
+                        frozen: frozen.as_deref(),
+                        learning: meter.tonal_balance.as_ref().and_then(|t| t.learning),
+                        comparing: meter
+                            .tonal_balance
+                            .as_ref()
+                            .and_then(|t| t.comparing.as_deref()),
+                        target: meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref()),
+                    },
+                    look.bar,
+                ),
             },
         }
         if let Some(source) = &meter.source {

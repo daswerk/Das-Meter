@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::curves::ReferenceCurve;
 use crate::displays::DisplayRef;
 use crate::presets::PresetData;
+use crate::targets::Target;
 use crate::theme::Theme;
 
 /// What the file says it is.
@@ -34,6 +35,18 @@ pub struct SharedPreset {
     /// The Reference curves its Spectrums show, as in the curves folder.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub curves: Vec<EmbeddedTheme>,
+    /// The Targets its Tonal Balance Meters compare with, as in the targets folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<EmbeddedTheme>,
+}
+
+/// What a shared Preset file holds, read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Imported {
+    pub preset: PresetData,
+    pub themes: Vec<Theme>,
+    pub curves: Vec<ReferenceCurve>,
+    pub targets: Vec<Target>,
 }
 
 impl SharedPreset {
@@ -58,6 +71,7 @@ impl SharedPreset {
                 })
                 .collect(),
             curves: Vec::new(),
+            targets: Vec::new(),
         }
     }
 
@@ -72,13 +86,24 @@ impl SharedPreset {
         self
     }
 
+    /// The Targets to embed with it.
+    pub fn with_targets(mut self, targets: Vec<Target>) -> SharedPreset {
+        self.targets = targets
+            .iter()
+            .map(|target| EmbeddedTheme {
+                toml: target.to_toml(),
+            })
+            .collect();
+        self
+    }
+
     pub fn to_toml(&self) -> String {
         toml::to_string(self).expect("a shared Preset always serialises")
     }
 
     /// Reads a file; anything that isn't a Das-Meter Preset, or has an
-    /// unreadable Theme or Reference curve in it, is refused whole.
-    pub fn from_toml(text: &str) -> Result<(PresetData, Vec<Theme>, Vec<ReferenceCurve>), String> {
+    /// unreadable Theme, Reference curve or Target in it, is refused whole.
+    pub fn from_toml(text: &str) -> Result<Imported, String> {
         let shared: SharedPreset = toml::from_str(text)
             .or_else(|e| toml::from_str(&crate::presets::wrap_large_ids(text)).map_err(|_| e))
             .map_err(|e: toml::de::Error| e.to_string())?;
@@ -98,6 +123,16 @@ impl SharedPreset {
             .iter()
             .map(|c| ReferenceCurve::from_toml(&c.toml))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok((shared.preset.sanitised(), themes, curves))
+        let targets = shared
+            .targets
+            .iter()
+            .map(|t| Target::from_toml(&t.toml))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Imported {
+            preset: shared.preset.sanitised(),
+            themes,
+            curves,
+            targets,
+        })
     }
 }

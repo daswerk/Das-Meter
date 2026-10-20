@@ -14,6 +14,7 @@ pub mod spectrogram;
 pub mod spectrum;
 pub mod stereometer;
 pub mod test_signal;
+pub mod tonal_balance;
 pub mod waveform;
 
 pub use cepstrum::{Cepstrum, CepstrumAnalyser, CepstrumSettings, Pitch};

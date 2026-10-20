@@ -20,6 +20,8 @@ pub struct Scene {
     pub windows: Vec<WindowScene>,
     /// The Reference curves in the curves folder, by name, for menus.
     pub reference_curves: Vec<String>,
+    /// The Targets in the targets folder, by name, for menus.
+    pub targets: Vec<String>,
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
     /// The Theme in use's colours; a Meter's own overrides go over them.
@@ -126,6 +128,8 @@ pub struct MeterScene {
     pub overrides: Vec<(Role, Colour)>,
     /// The Reference curve a Spectrum shows, if it shows one.
     pub reference: Option<ReferenceScene>,
+    /// A Tonal Balance Meter's Target, learning and Freeze; `None` for other Meters.
+    pub tonal_balance: Option<crate::tonal_balance::TonalBalanceScene>,
     /// A Phase Scope's Overlay Source item; `None` for other Meters.
     pub overlay: Option<OverlayScene>,
     /// How lit it is, 0 (dimmed in silence) to 1. Always 1 unless the Theme

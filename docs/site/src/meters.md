@@ -208,6 +208,70 @@ labelled in milliseconds.
 To show it, right-click a Meter and choose **Change Meter ▸ Oscilloscope**,
 or **Add Meter ▸ Oscilloscope**.
 
+## Tonal Balance
+
+![The Tonal Balance Meter](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-tonal-balance.png)
+
+Compares the shape of your mix's spectrum with a **Target**: a reference
+made from songs you choose. Both are measured over a long stretch and set to
+their own loudness, so only the balance counts, not how loud each is. The
+mix's line is drawn over the Target's range: in its own colour where it's
+inside, **too much** or **too little** colours where it's outside, judged
+over about a third of an octave, as the ear hears balance.
+
+![Broad and the low end zoom](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/tonal-balance-views.png)
+
+- **Fine** draws the curves from 20 Hz to 20 kHz, finest in the low end:
+  1/24 octave (two points per semitone) up to 300 Hz, coarser above.
+- **Broad** draws five regions, **Sub** (20–60 Hz), **Bass** (60–120),
+  **Low-mid** (120–300), **Mid** (300 Hz–2 kHz) and **High**, each a bar
+  showing how far the mix is from the Target, inside its range or not.
+- **Auto** (the default) shows Fine in a window and Broad in the Bar.
+- **Low end zoom** shows only 20–300 Hz, with a grid line on every note and
+  the keys' root notes marked, so a bass that's too much on one note shows.
+
+Under the curves, the low end's figures: the loudest **Sub** and **Bass**
+notes ("Sub A1 55.0 Hz"), **Low mono** (how alike Left and Right are below
+120 Hz, from +1, mono, down; under +0.8 it's marked, as a wide low end
+loses punch and can cancel on mono systems), and the **crest** of the Sub and
+Bass (peak over average, in dB: how punchy they are) against the Target's.
+
+**Average** sets how far back the mix's curve reaches: **3 s**, **10 s**
+(the default), **30 s** or **Whole** (everything since **Reset average**).
+**Freeze** keeps the curve as it is now as a ghost, to compare before and
+after a change. **Compare file…** compares a bounce of your mix instead of
+the live Source.
+
+### Targets
+
+Make a Target from songs that sound the way you want, your own references:
+
+- **Learn a song…**, play a song from start to end, name it and the Target,
+  then **Add**.
+- **Add files…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
+  ALAC) in the background, far faster than playing them. You can also drop
+  files or whole folders on the Meter. Files that can't be read are listed
+  with the reason.
+
+By default only each song's **loud parts** count (its drops and choruses,
+within 4 LU of its loudest moments); **Teach with ▸ Whole song** counts all
+of it. The Target's range is how far its songs differ from each other; with
+one song it's ±2.5 dB. **Songs** lists them, and **×** removes one.
+
+Each song's key is detected, and its low end is lined up by key before the
+songs are averaged, so the Target stays note-sharp. When your mix is in
+another key ("Your mix is in F minor, this Target's songs in A minor"),
+**Shift** moves the Target's low end (below 300 Hz) to your key. **Key**
+can also be set by hand instead of detected.
+
+Targets are files in the targets folder (next to `curves` and `themes`),
+one per Target, holding each song's figures but never any audio. An
+exported Preset takes its Targets along. Das-Meter ships no Targets: make
+your own from music you know.
+
+To show it, right-click a Meter and choose **Change Meter ▸ Tonal Balance**,
+or **Add Meter ▸ Tonal Balance**.
+
 ## Small sizes
 
 When a Meter gets small, it shows less (fewer labels and readings) rather than

@@ -1,9 +1,9 @@
 # Das-Meter
 
-**Live audio Meters for producers: eight Meters, two Looks, any colour you
+**Live audio Meters for producers: nine Meters, two Looks, any colour you
 like.** Das-Meter shows whatever your computer plays, or single tracks from
 your DAW, as Waveform, Spectrum, Spectrogram, Loudness, Stereometer, Phase
-Scope, Cepstrum and Oscilloscope. Put them in a Bar along the edge of your
+Scope, Cepstrum, Oscilloscope and Tonal Balance. Put them in a Bar along the edge of your
 screen or in a window of their own, and make them look the way you want.
 It's free and open source, for macOS and Linux, with Windows on the way.
 
@@ -27,7 +27,7 @@ Every Theme is drawn in one of two **Looks**, and switching is one click in
 
 ## The Meters
 
-Eight kinds, as many of each as you like. Right-click any Meter for its
+Nine kinds, as many of each as you like. Right-click any Meter for its
 settings.
 
 <table>
@@ -62,6 +62,12 @@ settings.
 <tr>
 <td><b>Cepstrum</b>: the pitch of a voice or instrument, with its note: handy for tuning.</td>
 <td><b>Oscilloscope</b>: the wave itself over 1–200 ms, held still on a steady tone.</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/meter-tonal-balance.png" alt="The Tonal Balance Meter: the mix's curve over a Target's range, too much highs marked"></td>
+</tr>
+<tr>
+<td colspan="2"><b>Tonal Balance</b>: your mix's balance against a <b>Target</b> made from your own reference songs (played, or analysed from files), finest in the low end (two points per semitone below 300 Hz), with the Sub and Bass notes, low end mono and punch, and the Target shifted to your mix's key (<a href="https://daswerk.github.io/Das-Meter/meters.html#tonal-balance">more</a>).</td>
 </tr>
 </table>
 

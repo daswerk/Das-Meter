@@ -65,6 +65,10 @@ pub fn run() {
         started: false,
         theme_folder: Vec::new(),
         curve_folder: Vec::new(),
+        target_folder: Vec::new(),
+        audio_files: None,
+        upload_progress: HashMap::new(),
+        dropped: Vec::new(),
         theme_scan_at: Duration::ZERO,
         menu_anchor: None,
         modifiers: ModifiersState::empty(),
@@ -202,9 +206,17 @@ struct Shell {
     send_plugins_listed_at: Duration,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
-    /// The themes and curves folders as last read, and when they're next looked at.
+    /// The themes, curves and targets folders as last read, and when they're
+    /// next looked at.
     theme_folder: crate::theme_files::Signature,
     curve_folder: crate::theme_files::Signature,
+    target_folder: crate::theme_files::Signature,
+    /// Audio files being analysed for Tonal Balance Meters, started on first use.
+    audio_files: Option<crate::audio_files::Uploads>,
+    /// Each Meter's files in progress, and those that failed.
+    upload_progress: HashMap<usize, dasmeter_core::UploadScene>,
+    /// Files dropped on a window since the last pump: where, and the path.
+    dropped: Vec<(WindowKey, Option<[f32; 2]>, std::path::PathBuf)>,
     theme_scan_at: Duration,
     /// Where the open menu was right-clicked, on screen.
     menu_anchor: Option<[f32; 2]>,
@@ -250,6 +262,7 @@ fn ui_view(scene: &Scene) -> Scene {
                     show_source_label: meter.show_source_label,
                     overrides: meter.overrides.clone(),
                     reference: meter.reference.clone(),
+                    tonal_balance: meter.tonal_balance.clone(),
                     overlay: meter.overlay.clone(),
                     activity: 1.0,
                     hovered: false,
@@ -269,6 +282,7 @@ fn ui_view(scene: &Scene) -> Scene {
     Scene {
         windows,
         reference_curves: scene.reference_curves.clone(),
+        targets: scene.targets.clone(),
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
@@ -703,6 +717,71 @@ impl Shell {
                         now,
                     );
                 }
+                Request::ChooseTarget { meter, name } => {
+                    self.core.handle(
+                        Event::ChooseTarget {
+                            meter,
+                            name: name.as_deref(),
+                        },
+                        now,
+                    );
+                }
+                Request::AddLearnedSong {
+                    meter,
+                    target,
+                    song,
+                } => {
+                    self.core.handle(
+                        Event::AddLearnedSong {
+                            meter,
+                            target: &target,
+                            song: &song,
+                        },
+                        now,
+                    );
+                }
+                Request::RemoveTargetSong { target, song } => {
+                    self.core.handle(
+                        Event::RemoveTargetSong {
+                            target: &target,
+                            song,
+                        },
+                        now,
+                    );
+                }
+                Request::AddTargetFiles { meter } => {
+                    let picked = rfd::FileDialog::new()
+                        .set_title("Add songs to the Target")
+                        .add_filter("Audio", crate::audio_files::EXTENSIONS)
+                        .pick_files();
+                    if let Some(files) = picked {
+                        self.add_target_files(meter, files, now);
+                    }
+                }
+                Request::CompareFile { meter } => {
+                    let picked = rfd::FileDialog::new()
+                        .set_title("Compare a file")
+                        .add_filter("Audio", crate::audio_files::EXTENSIONS)
+                        .pick_file();
+                    if let Some(file) = picked {
+                        self.analyse_files(
+                            meter,
+                            crate::audio_files::Purpose::Compare,
+                            vec![file],
+                            now,
+                        );
+                    }
+                }
+                Request::DismissUpload { meter } => {
+                    self.upload_progress.remove(&meter);
+                    self.core.handle(
+                        Event::UploadProgress {
+                            meter,
+                            progress: None,
+                        },
+                        now,
+                    );
+                }
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
                 }
@@ -796,8 +875,8 @@ impl Shell {
         LogicalPosition::new(f64::from(x), f64::from(y))
     }
 
-    /// Reads the themes and curves folders into the core if they changed since
-    /// last time.
+    /// Reads the themes, curves and targets folders into the core if they
+    /// changed since last time.
     fn scan_themes(&mut self, now: Duration) {
         use crate::theme_files::{self as files, Folder};
         self.theme_scan_at = now + THEME_SCAN_EVERY;
@@ -813,6 +892,12 @@ impl Shell {
             let read = files::read(Folder::Curves);
             self.core.handle(Event::CurveFiles(&read), now);
         }
+        let signature = files::signature(Folder::Targets);
+        if signature != self.target_folder || now == Duration::ZERO {
+            self.target_folder = signature;
+            let read = files::read(Folder::Targets);
+            self.core.handle(Event::TargetFiles(&read), now);
+        }
     }
 
     /// Carries out the Preset writes, trashing and settings the core asked for.
@@ -823,8 +908,8 @@ impl Shell {
         }
     }
 
-    /// Saves Theme and Reference curve edits the core made, and remembers the
-    /// folders as written.
+    /// Saves Theme, Reference curve and Target edits the core made, and
+    /// remembers the folders as written.
     fn save_themes(&mut self) {
         use crate::theme_files::{self as files, Folder};
         let writes = self.core.take_writes();
@@ -836,6 +921,11 @@ impl Shell {
         if !writes.is_empty() {
             files::write(Folder::Curves, &writes);
             self.curve_folder = files::signature(Folder::Curves);
+        }
+        let writes = self.core.take_target_writes();
+        if !writes.is_empty() {
+            files::write(Folder::Targets, &writes);
+            self.target_folder = files::signature(Folder::Targets);
         }
     }
 
@@ -1228,6 +1318,13 @@ impl ApplicationHandler for Shell {
             WindowEvent::DroppedFile(path) if crate::sharing::is_preset(&path) => {
                 crate::sharing::import(&mut self.core, &path, now);
             }
+            // Audio files or folders: songs for a Tonal Balance Meter's Target.
+            WindowEvent::DroppedFile(path) => {
+                if let Role::Meters(window) = role {
+                    let at = app.cursor.map(|cursor| app.fraction(cursor));
+                    self.dropped.push((window, at, path));
+                }
+            }
             WindowEvent::RedrawRequested => self.draw(id),
             _ => {}
         }
@@ -1317,6 +1414,7 @@ impl ApplicationHandler for Shell {
                 menu.show_missing_displays(&scene.missing_displays);
             }
         }
+        self.pump_audio_files(now);
         self.save_themes();
         self.save_presets();
         if now >= self.theme_scan_at {
@@ -1361,6 +1459,173 @@ impl ApplicationHandler for Shell {
 }
 
 impl Shell {
+    /// Songs from files (or folders) for a Tonal Balance Meter's Target: its
+    /// Target, or a new one named after their folder.
+    fn add_target_files(&mut self, meter: usize, paths: Vec<std::path::PathBuf>, now: Duration) {
+        let target = self
+            .core
+            .scene()
+            .and_then(|scene| {
+                scene
+                    .windows
+                    .iter()
+                    .flat_map(|w| &w.meters)
+                    .find(|m| m.meter == meter)
+            })
+            .and_then(|m| m.tonal_balance.as_ref())
+            .and_then(|t| t.target.as_ref())
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| crate::audio_files::target_name(&paths));
+        let files = crate::audio_files::audio_files_in(&paths);
+        if files.is_empty() {
+            return;
+        }
+        self.analyse_files(
+            meter,
+            crate::audio_files::Purpose::Target(target),
+            files,
+            now,
+        );
+    }
+
+    /// Hands files to the background thread for a Tonal Balance Meter.
+    fn analyse_files(
+        &mut self,
+        meter: usize,
+        purpose: crate::audio_files::Purpose,
+        files: Vec<std::path::PathBuf>,
+        now: Duration,
+    ) {
+        let Some(dasmeter_core::MeterSettings::TonalBalance(settings)) =
+            self.core.meter_settings(meter)
+        else {
+            return;
+        };
+        let progress = self.upload_progress.entry(meter).or_default();
+        progress.total += files.len();
+        let progress = progress.clone();
+        self.core.handle(
+            Event::UploadProgress {
+                meter,
+                progress: Some(&progress),
+            },
+            now,
+        );
+        let wake = self.wake.clone();
+        self.audio_files
+            .get_or_insert_with(|| crate::audio_files::Uploads::start(wake))
+            .add(crate::audio_files::Job {
+                meter,
+                purpose,
+                files,
+                mono_cutoff: settings.mono_cutoff,
+                parts: settings.parts,
+            });
+    }
+
+    /// Files dropped on a Tonal Balance Meter go to its Target; what the
+    /// background thread finished goes to the core.
+    fn pump_audio_files(&mut self, now: Duration) {
+        use crate::audio_files::{Purpose, Report};
+        let dropped = std::mem::take(&mut self.dropped);
+        let mut batches: Vec<(usize, Vec<std::path::PathBuf>)> = Vec::new();
+        for (window, at, path) in dropped {
+            let tonal = |meter: &usize| {
+                matches!(
+                    self.core.meter_settings(*meter),
+                    Some(dasmeter_core::MeterSettings::TonalBalance(_))
+                )
+            };
+            let under = at
+                .and_then(|at| self.core.meter_at(window, at))
+                .filter(tonal);
+            // Else the window's only Tonal Balance Meter, if there's one.
+            let meter = under.or_else(|| {
+                let scene = self.core.scene()?;
+                let window = scene.windows.iter().find(|w| w.key == window)?;
+                let mut tonal_meters = window.meters.iter().map(|m| m.meter).filter(tonal);
+                let first = tonal_meters.next()?;
+                tonal_meters.next().is_none().then_some(first)
+            });
+            let Some(meter) = meter else { continue };
+            match batches.iter_mut().find(|(m, _)| *m == meter) {
+                Some((_, paths)) => paths.push(path),
+                None => batches.push((meter, vec![path])),
+            }
+        }
+        for (meter, paths) in batches {
+            self.add_target_files(meter, paths, now);
+        }
+        let Some(files) = &self.audio_files else {
+            return;
+        };
+        let reports: Vec<Report> = files.reports().collect();
+        for report in reports {
+            match report {
+                Report::File {
+                    meter,
+                    purpose,
+                    parts,
+                    name,
+                    result,
+                } => {
+                    match (purpose, result) {
+                        (Purpose::Target(target), Ok(summary)) => {
+                            let song = dasmeter_core::TargetSong::new(&name, parts, &summary);
+                            self.core.handle(
+                                Event::AddTargetSongs {
+                                    meter,
+                                    target: &target,
+                                    songs: &[song],
+                                },
+                                now,
+                            );
+                        }
+                        (Purpose::Compare, Ok(summary)) => {
+                            self.core.handle(
+                                Event::CompareFile {
+                                    meter,
+                                    file: Some((&name, &*summary)),
+                                },
+                                now,
+                            );
+                        }
+                        (_, Err(reason)) => {
+                            let progress = self.upload_progress.entry(meter).or_default();
+                            progress.failed.push((name, reason));
+                        }
+                    }
+                    let progress = self.upload_progress.entry(meter).or_default();
+                    progress.done += 1;
+                    let progress = progress.clone();
+                    self.core.handle(
+                        Event::UploadProgress {
+                            meter,
+                            progress: Some(&progress),
+                        },
+                        now,
+                    );
+                }
+                Report::Done { meter } => {
+                    // Over once every batch is done; failures stay until dismissed.
+                    let Some(progress) = self.upload_progress.get(&meter) else {
+                        continue;
+                    };
+                    if progress.done >= progress.total && progress.failed.is_empty() {
+                        self.upload_progress.remove(&meter);
+                        self.core.handle(
+                            Event::UploadProgress {
+                                meter,
+                                progress: None,
+                            },
+                            now,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// A Pop-out moved or was resized: by the user if it isn't where the
     /// scene last put it.
     fn moved(&mut self, id: WindowId) {

@@ -1,4 +1,4 @@
-//! The themes and curves folders on disk: read into the app core, written
+//! The themes, curves and targets folders on disk: read into the app core, written
 //! from its edits.
 
 use std::path::PathBuf;
@@ -13,6 +13,8 @@ pub enum Folder {
     Themes,
     /// `curves`: Reference curves.
     Curves,
+    /// `targets`: the Tonal Balance Meter's Targets.
+    Targets,
 }
 
 impl Folder {
@@ -20,6 +22,7 @@ impl Folder {
         match self {
             Folder::Themes => "themes",
             Folder::Curves => "curves",
+            Folder::Targets => "targets",
         }
     }
 }

@@ -170,6 +170,7 @@ impl MeterSettings {
             MeterSettings::Spectrogram(s) => MeterSettings::Spectrogram(s.clamped()),
             MeterSettings::PhaseScope(s) => MeterSettings::PhaseScope(s.clamped()),
             MeterSettings::Oscilloscope(s) => MeterSettings::Oscilloscope(s.clamped()),
+            MeterSettings::TonalBalance(s) => MeterSettings::TonalBalance(s.clamped()),
         }
     }
 }
