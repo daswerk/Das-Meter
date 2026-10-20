@@ -129,6 +129,10 @@ impl SendPluginInput {
         }
 
         for (&id, listening) in &mut self.listened {
+            // The DAW can change its sample rate while we listen.
+            if let Some(info) = self.slots.iter().find(|info| info.slot == listening.slot) {
+                listening.sample_rate = info.details.sample_rate;
+            }
             let Some(read) = reader.read(listening.slot, listening.cursor, &mut self.buffer) else {
                 continue;
             };

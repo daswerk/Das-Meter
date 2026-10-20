@@ -35,6 +35,16 @@ impl SlotTiming {
         if timing.playing && sample_rate > 0 {
             let frames = frame as f64 - self.frame as f64;
             timing.beats += frames / f64::from(sample_rate) * timing.tempo / 60.0;
+            // Carry the bar start over any bar lines crossed, so it stays the
+            // start of the bar `beats` is in.
+            let (count, unit) = timing.signature;
+            if count > 0 && unit > 0 {
+                let bar = f64::from(count) * 4.0 / f64::from(unit);
+                let bars = ((timing.beats - timing.bar_start) / bar).floor();
+                if bars > 0.0 {
+                    timing.bar_start += bars * bar;
+                }
+            }
         }
         timing
     }
@@ -288,5 +298,48 @@ impl Reader {
         let slot = self.tables[slot_ref.table].slot(slot_ref.index);
         slot.state.load(Acquire) == SLOT_LIVE
             && slot.generation.load(Acquire) == slot_ref.generation
+    }
+}
+
+#[cfg(test)]
+mod slot_timing_tests {
+    use super::*;
+
+    fn said(beats: f64, bar_start: f64, signature: (u16, u16)) -> SlotTiming {
+        SlotTiming {
+            frame: 0,
+            timing: Timing {
+                tempo: 120.0,
+                beats,
+                bar_start,
+                signature,
+                playing: true,
+            },
+        }
+    }
+
+    #[test]
+    fn moving_past_a_bar_line_carries_the_bar_start() {
+        // 4/4 at 120 BPM: two beats a second. Beat 3.0 of the bar at 0,
+        // then 1.5 s later the song is at beat 6.0, in the bar that began at 4.0.
+        let later = said(3.0, 0.0, (4, 4)).at(72_000, 48_000);
+        assert_eq!(later.beats, 6.0);
+        assert_eq!(later.bar_start, 4.0);
+    }
+
+    #[test]
+    fn bars_in_other_signatures_use_quarter_notes() {
+        // 6/8: a bar is 3 quarter notes. From beat 0, 5 s on is beat 10.0,
+        // in the bar that began at 9.0.
+        let later = said(0.0, 0.0, (6, 8)).at(240_000, 48_000);
+        assert_eq!(later.beats, 10.0);
+        assert_eq!(later.bar_start, 9.0);
+    }
+
+    #[test]
+    fn within_the_bar_the_bar_start_stays() {
+        let later = said(0.0, 0.0, (4, 4)).at(24_000, 48_000);
+        assert_eq!(later.beats, 1.0);
+        assert_eq!(later.bar_start, 0.0);
     }
 }

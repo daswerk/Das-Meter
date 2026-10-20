@@ -1228,12 +1228,12 @@ fn overlay_item(ui: &mut egui::Ui, scene: &Scene, meter_scene: &MeterScene, acti
         changed |= ui
             .add(
                 Slider::new(&mut settings.cutoff, low..=high)
-                    .text("Correlation below")
+                    .text("Cycle correlation below")
                     .suffix(" Hz")
                     .logarithmic(true)
                     .max_decimals(0),
             )
-            .on_hover_text("How well the two agree below this frequency, −1 to +1")
+            .on_hover_text("Cycle correlation: how well the two agree below this frequency over one Cycle, −1 to +1")
             .changed();
         changed |= ui
             .add(Toggle::new(&mut settings.show_sum, "Show sum"))

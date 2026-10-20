@@ -454,8 +454,8 @@ fn phase_lane(c: &mut Canvas, lane: Area, overlay: &ScopeOverlay, main: &ScopeTr
     }
 }
 
-/// The low end's correlation in its row above the waves: the number at the
-/// right, what it means to its left when there's room.
+/// The low end's Cycle correlation in its row above the waves: the number at
+/// the right, what it means to its left when there's room.
 fn correlation_readout(c: &mut Canvas, row: Area, correlation: f32, cutoff: f32) {
     let colour = if correlation < 0.0 {
         c.colour(Role::PhaseScopeCancel)

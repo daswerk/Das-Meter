@@ -50,6 +50,10 @@ _Avoid_: Scope (alone), waveform view
 
 **Cycle**:
 The stretch of time a Phase Scope shows: one beat or one bar. It follows the DAW's tempo when listening to Send Plugins, and a typed-in or tapped tempo with System Capture.
+
+**Cycle correlation**:
+How closely the lows of a Phase Scope's main Source and its Overlay Source move together over one Cycle, from +1 (together) to −1 (cancelling). It is not the Stereometer's correlation, which compares Left with Right.
+_Avoid_: Correlation (on its own, for this number), phase match
 _Avoid_: Window, period, sweep
 
 **Stereometer**:

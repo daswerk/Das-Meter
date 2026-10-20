@@ -60,6 +60,18 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         stereo(&pink_noise(n, -12.0, seed), &pink_noise(n, -15.0, seed + 1))
     };
     let mut now = Duration::ZERO;
+    // DASMETER_CLASSIC=1: Dark drawn Classic as the app used to draw it, to
+    // compare with snapshots from before the Smooth Look. Set before any
+    // audio, so the Meters see the same frames as they did then.
+    if std::env::var_os("DASMETER_CLASSIC").is_some() {
+        let styling = Styling {
+            look: dasmeter_core::Look::Classic,
+            corner_radius: 4.0,
+            ..Styling::default()
+        };
+        core.handle(Event::SetThemeStyling { theme: 0, styling }, now);
+        core.take_writes();
+    }
     core.handle(Event::CaptureStarted { sample_rate: RATE }, now);
     // The silence hint only shows when nothing has played.
     let noise_for = if open == Some("hint") { 0 } else { 2 };
@@ -95,17 +107,6 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         }
         _ => (WIDTH, HEIGHT),
     };
-    // DASMETER_CLASSIC=1: Dark drawn Classic as the app used to draw it, to
-    // compare with snapshots from before the Smooth Look.
-    if std::env::var_os("DASMETER_CLASSIC").is_some() {
-        let styling = Styling {
-            look: dasmeter_core::Look::Classic,
-            corner_radius: 4.0,
-            ..Styling::default()
-        };
-        core.handle(Event::SetThemeStyling { theme: 0, styling }, now);
-        core.take_writes();
-    }
     match open {
         None | Some("bar") => {}
         Some("window") => {

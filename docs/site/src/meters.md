@@ -127,10 +127,12 @@ own waveform on top (**Show sum**, on by default), or in its own row under
 the two with **Sum in its own row**. A coloured
 lane under the Cycle shows how their lows move at each point: green where
 they push together, red where they cancel, stronger where they're louder.
-The number in the row above the waves is their correlation below the
-**Correlation below** frequency (150 Hz by default), with what it means in
-words: +1 when the lows move together, −1 when one is the other upside
-down. It's blank in silence, and the first thing left out when the Meter is
+The number in the row above the waves is their **Cycle correlation** below
+the **Cycle correlation below** frequency (150 Hz by default), with what it
+means in words: +1 when the lows move together, −1 when one is the other
+upside down. It's measured over the last whole Cycle, about each track's own
+average, so it isn't the Stereometer's correlation (see
+[Measurements](measurements.md)). It's blank in silence, and the first thing left out when the Meter is
 small. **Offset** nudges it
 a few milliseconds later (+) or earlier (−). Turn on **Suggestions** and,
 when the lows don't fit, it says what would help under the lane: flip the
