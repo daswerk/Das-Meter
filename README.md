@@ -234,3 +234,6 @@ audio. To redo them after a visual change, build the app and run
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
 option. Contributions are accepted under the same terms.
+The crates it's built from keep their own licences, listed with their texts
+in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md); among them, Symphonia
+(audio file decoding) is MPL-2.0 and used unmodified.

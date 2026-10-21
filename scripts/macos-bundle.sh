@@ -53,8 +53,11 @@ plugins="$root/target/bundle-plugins"
 
 app="$out/$name.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/PlugIns"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/PlugIns" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/das-meter"
+# Our licences and the third-party ones the app is built from.
+cp "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$root/THIRD-PARTY-LICENSES.md" \
+    "$app/Contents/Resources/"
 # The Send Plugin bundles, signed already, as the app installs them.
 cp -R "$plugins/" "$app/Contents/PlugIns/"
 

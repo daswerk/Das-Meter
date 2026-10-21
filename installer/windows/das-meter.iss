@@ -42,6 +42,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#Root}\target\release\das-meter.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Root}\THIRD-PARTY-LICENSES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\target\plugins\Das-Meter Send.clap"; DestDir: "{commoncf64}\CLAP"; Flags: ignoreversion
 Source: "{#Root}\target\plugins\Das-Meter Send.vst3\*"; DestDir: "{commoncf64}\VST3\Das-Meter Send.vst3"; Flags: ignoreversion recursesubdirs
 
