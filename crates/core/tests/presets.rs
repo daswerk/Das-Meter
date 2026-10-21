@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use dasmeter_core::{
-    AUTOSAVE_DELAY, AppCore, Edge, Event, LayoutMode, ListenTo, MeterKind, MeterSettings,
-    MeterState, PresetData, PresetFile, PresetOp, Scene, SendPlugin, SendPluginState, WindowKey,
+    AUTOSAVE_DELAY, AppCore, Edge, Event, LayoutMode, ListenTo, MeterKind, MeterState, PresetData,
+    PresetFile, PresetOp, Scene, SendPlugin, SendPluginState, WindowKey,
 };
 
 /// The presets folder, `settings.toml`, the trash and the Preset files' `.bak`s.
@@ -165,14 +165,6 @@ impl App {
         meters.iter().map(|m| m.settings.kind()).collect()
     }
 
-    /// The kinds of all the open Preset's Meters, shown or not, in order.
-    fn kinds(&mut self) -> Vec<MeterKind> {
-        (0..)
-            .map_while(|i| self.core.meter_settings(i))
-            .map(|settings| settings.kind())
-            .collect()
-    }
-
     fn switch_to(&mut self, name: &str) {
         let index = self.names().iter().position(|n| n == name).unwrap();
         self.send(Event::SwitchPreset { index });
@@ -220,48 +212,38 @@ fn the_built_ins_hold_the_meters_for_their_job_in_their_own_theme() {
 }
 
 #[test]
-fn an_older_install_gets_the_new_built_ins_once() {
-    // Copied by a version with three built-ins; the Mixing one untouched.
-    let mut old_mixing = PresetData::built_in(dasmeter_core::BuiltIn::Bar);
-    old_mixing.name = "Mixing".to_owned();
-    old_mixing.built_in = Some(dasmeter_core::BuiltIn::Mixing);
-    old_mixing.mode = LayoutMode::Window;
-    old_mixing.meters[3].show_source_label = true;
-    old_mixing.bar.thickness = 120.0;
+fn an_older_install_gets_the_new_built_ins_once_and_keeps_its_own() {
+    // Copied by a version with other built-ins, which this one doesn't have.
     let mut disk = Disk::default();
-    for (file, data) in [
-        (
-            "bar.toml",
-            PresetData::built_in(dasmeter_core::BuiltIn::Bar),
-        ),
-        ("mixing.toml", old_mixing.clone()),
-        (
-            "mastering.toml",
-            PresetData::built_in(dasmeter_core::BuiltIn::Mastering),
-        ),
+    for (file, name, built_in) in [
+        ("bar.toml", "Bar", "bar"),
+        ("mixing.toml", "Mixing", "mixing"),
+        ("mastering.toml", "Mastering", "mastering"),
     ] {
-        disk.files.insert(file.to_owned(), data.to_toml());
+        let data = PresetData {
+            name: name.to_owned(),
+            ..PresetData::default()
+        };
+        let text = format!("built_in = \"{built_in}\"\n{}", data.to_toml());
+        disk.files.insert(file.to_owned(), text);
     }
     disk.settings = Some(
         "order = [\"bar.toml\", \"mixing.toml\", \"mastering.toml\"]\n\
-         [first_launch]\nbuilt_ins_copied = true\n"
+         [first_launch]\nbuilt_ins_copied = true\nbuilt_ins_version = 2\n"
             .to_owned(),
     );
-    let mut app = App::launch(disk.clone());
+    let mut app = App::launch(disk);
     assert_eq!(
         app.names(),
         ["Bar", "Mixing", "Mastering", TOP_BAR, MIXING, MASTERING],
-        "the standard built-ins come after its own"
+        "the built-ins come after its own"
     );
-    app.switch_to("Mixing");
+    let list = app.scene().presets.list;
     assert!(
-        app.kinds().contains(&MeterKind::PhaseScope),
-        "the untouched Mixing is the new one"
+        list[..3].iter().all(|p| !p.built_in && !p.broken),
+        "the earlier built-ins' copies read as its own Presets"
     );
-    let mixing: PresetData = toml::from_str(&app.disk.files["mixing.toml"]).unwrap();
-    assert!(mixing.meters[3].show_source_label, "its own bits are kept");
-    assert_eq!(mixing.bar.thickness, 120.0);
-    assert_eq!(mixing.bar.meters.len(), 5);
+    assert!(list[3..].iter().all(|p| p.built_in));
 
     // Deleted after: not copied again.
     let index = app.names().iter().position(|n| n == MASTERING).unwrap();
@@ -269,23 +251,6 @@ fn an_older_install_gets_the_new_built_ins_once() {
     app.flush();
     let mut app = app.relaunch();
     assert_eq!(app.names(), ["Bar", "Mixing", "Mastering", TOP_BAR, MIXING]);
-
-    // A Mixing the user changed is left as it is.
-    let mut changed = old_mixing;
-    changed.meters[2].settings = MeterSettings::default_of(MeterKind::Cepstrum);
-    disk.files
-        .insert("mixing.toml".to_owned(), changed.to_toml());
-    let mut app = App::launch(disk);
-    app.switch_to("Mixing");
-    assert_eq!(
-        app.kinds(),
-        [
-            MeterKind::Waveform,
-            MeterKind::Spectrum,
-            MeterKind::Cepstrum,
-            MeterKind::Loudness
-        ]
-    );
 }
 
 #[test]

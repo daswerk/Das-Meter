@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::{BarLayout, LayoutMode, Platform};
 use crate::meters::MeterSettings;
-use crate::panes::{Direction, Node, WindowLayout};
+use crate::panes::{Node, WindowLayout};
 use crate::settings::DEFAULT_FRAME_RATE_CAP;
 use crate::sources::{ListenTo, Pick};
 use crate::theme::{Colour, LIGHT, NOCTURNE, Role};
@@ -21,11 +21,10 @@ pub const SETTINGS_VERSION: u32 = 1;
 /// The settings file's name, next to the presets folder.
 pub const SETTINGS_FILE: &str = "settings.toml";
 
-/// The built-in Presets. The standard ones are bundled `.dasmeter-preset`
-/// files, each with its own Theme; the rest are retired: no longer copied
-/// in, but a copy made by an earlier version still resets to its layout.
+/// The built-in Presets: bundled `.dasmeter-preset` files, each with its
+/// own Theme. A file naming a built-in this version doesn't have (one of
+/// the earlier ones) reads as a Preset of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum BuiltIn {
     /// Window mode for mastering: Spectrum over Tonal Balance on top;
     /// Stereo Bands, Waveform, Loudness Meter and Stereometer below.
@@ -39,31 +38,23 @@ pub enum BuiltIn {
     /// Stereometer and a Mid/Side Spectrum.
     #[serde(rename = "producing-top-bar-1.0")]
     ProducingTopBar1,
-    /// Retired: Bar mode at the bottom edge with four Meters.
-    Bar,
-    /// Retired: Spectrum and Phase Scope on top; Waveform, Loudness Meter
-    /// and Stereometer below.
-    Mixing,
-    /// Retired: a large Loudness Meter, Spectrum and Stereometer beside it.
-    Mastering,
-    /// Retired: a large Loudness Meter with its graph, beside Spectrum,
-    /// Spectrogram, Waveform and Stereometer.
-    #[serde(rename = "mastering-advanced")]
-    MasteringAdvanced,
-    /// Retired: Spectrum on top; Phase Scope, Cepstrum and a small Loudness
-    /// Meter below.
-    Producing,
-    /// Retired: a thin Bar with Loudness numbers, Spectrum and Stereometer.
-    Compact,
 }
 
-/// The standard built-ins' files.
+/// Reads `built_in`, taking a built-in this version doesn't have as none.
+fn known_built_in<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<BuiltIn>, D::Error> {
+    let name = Option::<String>::deserialize(deserializer)?;
+    Ok(name.and_then(|name| BuiltIn::deserialize(toml::Value::String(name)).ok()))
+}
+
+/// The built-ins' files.
 const MASTERING_1: &str = include_str!("../presets/mastering-1.0.dasmeter-preset");
 const MIXING_PRODUCING_1: &str = include_str!("../presets/mixing-producing-1.0.dasmeter-preset");
 const PRODUCING_TOP_BAR_1: &str = include_str!("../presets/producing-top-bar-1.0.dasmeter-preset");
 
 impl BuiltIn {
-    /// The standard built-ins, in the order they're listed. The first is
+    /// The built-ins, in the order they're listed. The first is
     /// what a new install opens with: a Bar, which the first-launch card
     /// sits beside.
     pub const ALL: [BuiltIn; 3] = [
@@ -77,12 +68,6 @@ impl BuiltIn {
             BuiltIn::Mastering1 => "Mastering 1.0",
             BuiltIn::MixingProducing1 => "Mixing/Producing 1.0",
             BuiltIn::ProducingTopBar1 => "Producing Top-Bar 1.0",
-            BuiltIn::Bar => "Bar",
-            BuiltIn::Mixing => "Mixing",
-            BuiltIn::Mastering => "Mastering",
-            BuiltIn::MasteringAdvanced => "Mastering advanced",
-            BuiltIn::Producing => "Producing",
-            BuiltIn::Compact => "Compact",
         }
     }
 
@@ -91,34 +76,28 @@ impl BuiltIn {
         format!("{name}.toml")
     }
 
-    /// A standard built-in's bundled file, read: the Preset and its Theme.
-    fn bundled(self) -> Option<crate::sharing::Imported> {
+    /// Its bundled file, read: the Preset and its Theme.
+    fn bundled(self) -> crate::sharing::Imported {
         let text = match self {
             BuiltIn::Mastering1 => MASTERING_1,
             BuiltIn::MixingProducing1 => MIXING_PRODUCING_1,
             BuiltIn::ProducingTopBar1 => PRODUCING_TOP_BAR_1,
-            _ => return None,
         };
-        Some(crate::sharing::SharedPreset::from_toml(text).expect("a bundled Preset reads"))
+        crate::sharing::SharedPreset::from_toml(text).expect("a bundled Preset reads")
     }
 
-    /// The Themes the standard built-ins come with.
+    /// The Themes the built-ins come with.
     pub fn themes() -> Vec<crate::theme::Theme> {
         BuiltIn::ALL
             .into_iter()
-            .filter_map(BuiltIn::bundled)
-            .flat_map(|imported| imported.themes)
+            .flat_map(|kind| kind.bundled().themes)
             .collect()
     }
 }
 
-/// The set of built-ins copied in: 1 the first three, 2 adds Mastering
-/// advanced, Producing and Compact, and the Mixing with a Phase Scope; 3 the
-/// standard ones from bundled files (Mixing/Producing, Mastering and
-/// Producing Top-Bar 1.0).
+/// The set of built-ins copied in: 1 and 2 were earlier versions' own; 3 the
+/// bundled ones (Producing Top-Bar, Mixing/Producing and Mastering 1.0).
 const BUILT_INS_VERSION: u32 = 3;
-/// The Bar Compact docks: thin.
-const COMPACT_THICKNESS: f32 = 90.0;
 
 /// A Meter as a Preset saves it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -171,7 +150,11 @@ pub struct PresetData {
     pub name: String,
     /// Which built-in this was copied from, for Reset to built-in. (Its own
     /// default: a file without it is no built-in, whatever the struct default.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "known_built_in",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub built_in: Option<BuiltIn>,
     pub mode: LayoutMode,
     pub listen_to: ListenTo,
@@ -182,34 +165,31 @@ pub struct PresetData {
 }
 
 impl Default for PresetData {
+    /// What a file leaves out is filled in from this: four Meters in a Bar.
+    /// (Not a built-in: reading those files needs this default.)
     fn default() -> Self {
-        PresetData::built_in(BuiltIn::Bar)
+        let meters = default_meters();
+        PresetData {
+            version: PRESET_VERSION,
+            name: "Bar".to_owned(),
+            built_in: None,
+            mode: LayoutMode::Bar,
+            listen_to: ListenTo::SystemCapture,
+            theme: ThemeRef::default(),
+            bar: BarLayout::new(meters.len(), Platform::current()),
+            window: WindowLayout::mixing(),
+            meters,
+        }
     }
 }
 
+/// Each kind's default Meter: Waveform, Spectrum, Stereometer and Loudness.
 fn default_meters() -> Vec<MeterPreset> {
     use crate::meters::MeterKind::*;
-    meters_of(&[Waveform, Spectrum, Stereometer, Loudness])
-}
-
-/// Waveform 0, Loudness Meter 3 and Stereometer 2 side by side.
-fn mixing_row() -> Node {
-    use Direction::SideBySide;
-    Node::split(
-        SideBySide,
-        1.0 / 3.0,
-        Node::Pane(0),
-        Node::split(SideBySide, 0.5, Node::Pane(3), Node::Pane(2)),
-    )
-}
-
-/// Each kind's default Meter, in order.
-fn meters_of(kinds: &[crate::meters::MeterKind]) -> Vec<MeterPreset> {
-    kinds
-        .iter()
-        .map(|&kind| MeterSettings::default_of(kind))
-        .map(|settings| MeterPreset {
-            settings,
+    [Waveform, Spectrum, Stereometer, Loudness]
+        .into_iter()
+        .map(|kind| MeterPreset {
+            settings: MeterSettings::default_of(kind),
             send_plugin: None,
             overlay: None,
             show_source_label: false,
@@ -220,108 +200,13 @@ fn meters_of(kinds: &[crate::meters::MeterKind]) -> Vec<MeterPreset> {
 }
 
 impl PresetData {
-    /// A built-in, as this version of Das-Meter defines it.
+    /// A built-in, as this version of Das-Meter bundles it.
     pub fn built_in(kind: BuiltIn) -> PresetData {
-        use crate::meters::MeterKind::*;
-        use Direction::{SideBySide, Stacked};
-        if let Some(imported) = kind.bundled() {
-            return PresetData {
-                name: kind.name().to_owned(),
-                built_in: Some(kind),
-                ..imported.preset
-            };
-        }
-        let (meters, tree) = match kind {
-            BuiltIn::Mastering1 | BuiltIn::MixingProducing1 | BuiltIn::ProducingTopBar1 => {
-                unreachable!("read from its file above")
-            }
-            // Waveform 0, Spectrum 1, Stereometer 2, Loudness Meter 3.
-            BuiltIn::Bar => (default_meters(), WindowLayout::mixing().tree),
-            BuiltIn::Mastering => (
-                default_meters(),
-                Node::split(
-                    SideBySide,
-                    0.55,
-                    Node::Pane(3),
-                    Node::split(Stacked, 0.5, Node::Pane(1), Node::Pane(2)),
-                ),
-            ),
-            BuiltIn::Mixing => {
-                let mut meters = default_meters();
-                meters.extend(meters_of(&[PhaseScope]));
-                let top = Node::split(SideBySide, 0.6, Node::Pane(1), Node::Pane(4));
-                (meters, Node::split(Stacked, 0.5, top, mixing_row()))
-            }
-            BuiltIn::MasteringAdvanced => {
-                let meters = meters_of(&[Loudness, Spectrum, Spectrogram, Stereometer, Waveform]);
-                let bottom = Node::split(SideBySide, 0.6, Node::Pane(4), Node::Pane(3));
-                let right = Node::split(
-                    Stacked,
-                    1.0 / 3.0,
-                    Node::Pane(1),
-                    Node::split(Stacked, 0.5, Node::Pane(2), bottom),
-                );
-                (meters, Node::split(SideBySide, 0.4, Node::Pane(0), right))
-            }
-            BuiltIn::Producing => {
-                let meters = meters_of(&[Spectrum, PhaseScope, Cepstrum, Loudness]);
-                let bottom = Node::split(
-                    SideBySide,
-                    0.45,
-                    Node::Pane(1),
-                    Node::split(SideBySide, 0.65, Node::Pane(2), Node::Pane(3)),
-                );
-                (meters, Node::split(Stacked, 0.5, Node::Pane(0), bottom))
-            }
-            BuiltIn::Compact => {
-                let mut meters = meters_of(&[Loudness, Spectrum, Stereometer]);
-                // The numbers only: no room for the graph in a thin Bar.
-                if let MeterSettings::Loudness(loudness) = &mut meters[0].settings {
-                    loudness.show_history = false;
-                }
-                let tree = Node::split(
-                    SideBySide,
-                    1.0 / 3.0,
-                    Node::Pane(0),
-                    Node::split(SideBySide, 0.5, Node::Pane(1), Node::Pane(2)),
-                );
-                (meters, tree)
-            }
-        };
-        let mut bar = BarLayout::new(meters.len(), Platform::current());
-        if kind == BuiltIn::Compact {
-            bar.thickness = COMPACT_THICKNESS;
-        }
         PresetData {
-            version: PRESET_VERSION,
             name: kind.name().to_owned(),
             built_in: Some(kind),
-            mode: match kind {
-                BuiltIn::Bar | BuiltIn::Compact => LayoutMode::Bar,
-                _ => LayoutMode::Window,
-            },
-            listen_to: ListenTo::SystemCapture,
-            theme: ThemeRef::default(),
-            bar,
-            window: WindowLayout {
-                frame: None,
-                display: None,
-                on_top: false,
-                tree,
-            },
-            meters,
+            ..kind.bundled().preset
         }
-    }
-
-    /// Whether this is the Mixing built-in as the first version defined it,
-    /// untouched but for where its window sits: it gets the new one.
-    fn is_first_mixing(&self) -> bool {
-        let settings: Vec<&MeterSettings> = self.meters.iter().map(|m| &m.settings).collect();
-        let first: Vec<MeterSettings> = default_meters().into_iter().map(|m| m.settings).collect();
-        self.built_in == Some(BuiltIn::Mixing)
-            && self.mode == LayoutMode::Window
-            && self.window.tree == WindowLayout::mixing().tree
-            && settings.iter().copied().eq(first.iter())
     }
 
     pub fn to_toml(&self) -> String {
@@ -667,12 +552,10 @@ impl Presets {
         self.settings.order = self.entries.iter().map(|e| e.file.clone()).collect();
     }
 
-    /// For an install from before the standard built-ins: copies them in
-    /// once, at the end of the list (its own Presets, the earlier built-ins'
-    /// copies among them, stay). From before version 2, an untouched first
-    /// Mixing also becomes the one with a Phase Scope.
+    /// For an install from before these built-ins: copies them in once, at
+    /// the end of the list. Its own Presets, earlier built-ins' copies among
+    /// them, stay.
     fn add_later_built_ins(&mut self) {
-        let before = self.settings.first_launch.built_ins_version;
         for kind in BuiltIn::ALL {
             let file = kind.file_name();
             if self.position(&file).is_none() {
@@ -693,42 +576,6 @@ impl Presets {
             if !self.settings.order.is_empty() && !self.settings.order.contains(&file) {
                 self.settings.order.push(file);
             }
-        }
-        let mixing = BuiltIn::Mixing.file_name();
-        if before < 2
-            && let Some(entry) = self.entries.iter_mut().find(|e| e.file == mixing)
-            && let State::Ok {
-                data,
-                read_only: false,
-            } = &mut entry.state
-            && data.is_first_mixing()
-        {
-            let mut new = PresetData::built_in(BuiltIn::Mixing);
-            // The first four Meters are the same ones: their picks, labels
-            // and colours stay, and so does the Bar, with the Phase Scope added.
-            for (now, before) in new.meters.iter_mut().zip(&data.meters) {
-                *now = before.clone();
-            }
-            let added = new.meters.len() - 1;
-            new.bar = data.bar.clone();
-            if new.bar.meters.iter().all(|&(m, _)| m != added) {
-                new.bar.meters.push((added, 1.0 / new.meters.len() as f32));
-                let total: f32 = new.bar.meters.iter().map(|(_, s)| s).sum();
-                for (_, share) in &mut new.bar.meters {
-                    *share /= total;
-                }
-            }
-            new.name = data.name.clone();
-            new.listen_to = data.listen_to;
-            new.theme = data.theme.clone();
-            new.window.frame = data.window.frame;
-            new.window.display = data.window.display.clone();
-            new.window.on_top = data.window.on_top;
-            self.ops.push(PresetOp::Write {
-                file_name: mixing,
-                contents: new.to_toml(),
-            });
-            **data = new;
         }
         self.settings.first_launch.built_ins_version = BUILT_INS_VERSION;
         self.save_settings();

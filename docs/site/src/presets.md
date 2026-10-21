@@ -17,8 +17,8 @@ them; **Revert Preset** goes back to how the Preset was when you opened it.
     Loudness Meter and Stereometer below.
 
   An update that brings new built-ins adds them once, at the end of the list.
-  Presets made by an earlier version, its built-ins among them, stay as they
-  are.
+  Copies of an earlier version's built-ins stay in the list as your own
+  Presets.
 
 Presets are files in the presets folder:
 

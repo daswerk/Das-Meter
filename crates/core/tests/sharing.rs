@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use dasmeter_core::sharing::SharedPreset;
 use dasmeter_core::{
-    AppCore, BuiltIn, Colour, DisplayRef, Edge, Event, Fingerprint, Note, Pick, PresetData,
-    PresetOp, Role, Scene, Theme, ThemeFile,
+    AppCore, Colour, DisplayRef, Edge, Event, Fingerprint, Note, Pick, PresetData, PresetOp, Role,
+    Scene, Theme, ThemeFile,
 };
 
 struct App {
@@ -130,7 +130,7 @@ fn display_serials_are_stripped() {
         name: "DELL U2720Q".into(),
         position: [1512.0, 0.0],
     };
-    let mut data = PresetData::built_in(BuiltIn::Bar);
+    let mut data = PresetData::default();
     data.bar.display = Some(monitor(0x384b_3132));
     data.window.display = Some(monitor(0x0bad_cafe));
     let text = SharedPreset::new(data, Vec::new()).to_toml();
@@ -262,7 +262,7 @@ fn a_malformed_file_is_refused_without_side_effects() {
 #[test]
 fn an_exported_file_with_a_too_large_send_plugin_id_imports() {
     let big = u64::MAX - 7;
-    let mut data = PresetData::built_in(BuiltIn::Bar);
+    let mut data = PresetData::default();
     data.meters[0].send_plugin = Some(Pick {
         id: big,
         name: "Kick".into(),
