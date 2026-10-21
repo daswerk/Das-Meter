@@ -194,7 +194,6 @@ impl MeterSettings {
             }),
             MeterSettings::StereoBands(s) => MeterSettings::StereoBands(StereoBandsMeterSettings {
                 time: clamp_duration(s.time, CORRELATION_TIME),
-                ..s
             }),
         }
     }

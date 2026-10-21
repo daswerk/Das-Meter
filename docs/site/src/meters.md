@@ -265,14 +265,12 @@ or **Add Meter ▸ Needle Meter**.
 
 How alike Left and Right are in each of ten octave bands, from 31 Hz to
 16 kHz: is the low end mono, and where is the width? Each band's **band
-correlation** is a bar up toward +1 (alike) or down toward −1 (opposite
-polarity), in the Correlation colours. It's the Stereometer's Correlation
-measured on that band alone, named apart so the two aren't confused.
-
-Under it, when there's room and **Show width** is on, each band's **width**:
-how much of the band is Side, from mono (empty) through unrelated channels
-(half-way, the line) to opposite polarity (full). A silent band is left
-empty. **Averaging** sets how calmly the readings move (300 ms by default).
+correlation** is drawn as the Stereometer draws its Correlation: a bar
+from −1 (opposite polarity) to +1 (alike), filled from 0 with a marker at
+the reading, in the Correlation colours. It's the Stereometer's
+Correlation measured on that band alone, named apart so the two aren't
+confused. A silent band is left empty. **Averaging** sets how calmly the
+readings move (300 ms by default).
 
 A common aim for electronic music: band correlation near +1 below about
 120 Hz, so the low end stays punchy and survives mono playback. Tonal
