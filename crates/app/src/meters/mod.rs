@@ -27,6 +27,7 @@ use heatmap::Heatmap;
 use labels::{Align, Labels, Style};
 pub use shapes::Area;
 use shapes::Shapes;
+pub use tonal_balance::controls as tonal_balance_controls;
 
 /// What a Meter's drawing code draws with: shapes, labels, colours and the scale factor.
 pub struct Canvas<'a> {

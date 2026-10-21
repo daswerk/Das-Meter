@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use dasmeter_core::sharing::SharedPreset;
 use dasmeter_core::{
-    AppCore, BuiltIn, Colour, DisplayRef, Edge, Event, Fingerprint, Note, Pick, PresetData,
-    PresetOp, Role, Scene, Theme, ThemeFile,
+    AppCore, Colour, DisplayRef, Edge, Event, Fingerprint, Note, Pick, PresetData, PresetOp, Role,
+    Scene, Theme, ThemeFile,
 };
 
 struct App {
@@ -106,7 +106,7 @@ fn exported() -> (String, String) {
 #[test]
 fn export_holds_the_preset_and_its_custom_themes_only() {
     let (name, text) = exported();
-    assert_eq!(name, "Bar");
+    assert_eq!(name, "Producing Top-Bar 1.0");
     let imported = SharedPreset::from_toml(&text).unwrap();
     let (data, themes) = (imported.preset, imported.themes);
     assert_eq!(data.bar.edge, Edge::Top);
@@ -130,7 +130,7 @@ fn display_serials_are_stripped() {
         name: "DELL U2720Q".into(),
         position: [1512.0, 0.0],
     };
-    let mut data = PresetData::built_in(BuiltIn::Bar);
+    let mut data = PresetData::default();
     data.bar.display = Some(monitor(0x384b_3132));
     data.window.display = Some(monitor(0x0bad_cafe));
     let text = SharedPreset::new(data, Vec::new()).to_toml();
@@ -146,8 +146,8 @@ fn importing_switches_to_the_preset_under_a_free_name() {
     let (_, text) = exported();
     let mut other = App::launch(Vec::new());
     other.import(&text);
-    // Another Mac already has a "Bar": nothing is overwritten.
-    assert_eq!(other.current(), "Bar (2)");
+    // Another Mac already has this built-in: nothing is overwritten.
+    assert_eq!(other.current(), "Producing Top-Bar 1.0 (2)");
     let scene = other.scene();
     assert_eq!(scene.windows[0].edge, Some(Edge::Top));
     assert_eq!(
@@ -162,9 +162,12 @@ fn importing_switches_to_the_preset_under_a_free_name() {
             _ => None,
         })
         .collect();
-    assert!(written.contains(&"bar-2.toml"), "{written:?}");
     assert!(
-        written.contains(&"bar.toml"),
+        written.contains(&"producing-top-bar-1-0-2.toml"),
+        "{written:?}"
+    );
+    assert!(
+        written.contains(&"producing-top-bar-1.0.toml"),
         "the built-in copy is still there"
     );
 }
@@ -259,7 +262,7 @@ fn a_malformed_file_is_refused_without_side_effects() {
 #[test]
 fn an_exported_file_with_a_too_large_send_plugin_id_imports() {
     let big = u64::MAX - 7;
-    let mut data = PresetData::built_in(BuiltIn::Bar);
+    let mut data = PresetData::default();
     data.meters[0].send_plugin = Some(Pick {
         id: big,
         name: "Kick".into(),

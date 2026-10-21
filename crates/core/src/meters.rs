@@ -346,22 +346,19 @@ pub struct NeedleDisplay {
     pub over: bool,
 }
 
-/// Stereo Bands: band correlation and width per octave band.
+/// Stereo Bands: band correlation per octave band.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct StereoBandsMeterSettings {
     /// The averaging's time constant. Default 300 ms, as the Stereometer.
     #[serde(with = "dasmeter_analysis::seconds")]
     pub time: Duration,
-    /// Whether each band's width is shown beside its correlation. Default on.
-    pub show_width: bool,
 }
 
 impl Default for StereoBandsMeterSettings {
     fn default() -> Self {
         StereoBandsMeterSettings {
             time: Duration::from_millis(300),
-            show_width: true,
         }
     }
 }
@@ -1306,7 +1303,8 @@ impl Meter {
             Some(Analyser::Needle(a)) => a.process(frames),
             Some(Analyser::Oscilloscope(a)) => a.process(frames),
             Some(Analyser::TonalBalance(a)) => {
-                // It only looks different once a frame is added.
+                // It only looks different once a frame is added, and while
+                // the drawn curve eases toward it.
                 if !a.process(frames) {
                     return;
                 }
@@ -1755,7 +1753,7 @@ fn build_view(
             }
         }
         (Analyser::TonalBalance(a), MeterSettings::TonalBalance(settings)) => {
-            let mix = a.summary().map(|summary| {
+            let mix = a.shown().map(|summary| {
                 let mut mix = summary.clone();
                 for level in mix.curve.iter_mut().chain(&mut mix.regions) {
                     *level = round_to(*level, 0.1);

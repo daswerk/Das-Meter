@@ -654,7 +654,7 @@ pub struct Styling {
     pub shape_cues: bool,
     /// How it's drawn. Default Smooth; the rest below only count there.
     pub look: Look,
-    /// How strongly traces and big numbers glow, 0 (none) to 1. Default 0.6.
+    /// How strongly traces and big numbers glow, 0 (none) to 1. Default 0.35.
     pub glow: f32,
     /// How much of a plot grid lines fade out over toward each edge, 0 to
     /// 0.4. Default 0.15.
@@ -678,7 +678,7 @@ impl Default for Styling {
             text_scale: 1.0,
             shape_cues: false,
             look: Look::Smooth,
-            glow: 0.6,
+            glow: 0.35,
             grid_fade: 0.15,
             gradient: 0.5,
             vignette: 0.35,
@@ -772,9 +772,10 @@ impl Theme {
         }
     }
 
-    /// The built-ins, in the order they're listed.
-    pub fn built_ins() -> [Theme; 7] {
-        [
+    /// The built-ins, in the order they're listed: the palettes, then the
+    /// Themes the standard built-in Presets come with.
+    pub fn built_ins() -> Vec<Theme> {
+        let mut themes = vec![
             Theme::dark(),
             Theme::light(),
             Theme::high_contrast(),
@@ -782,7 +783,9 @@ impl Theme {
             Theme::plain(DEEP_TURQUOISE, Palette::deep_turquoise()),
             Theme::plain(GRAPHITE, Palette::graphite()),
             Theme::plain(NOCTURNE, Palette::nocturne()),
-        ]
+        ];
+        themes.extend(crate::presets::BuiltIn::themes());
+        themes
     }
 
     /// The Theme as a TOML file.

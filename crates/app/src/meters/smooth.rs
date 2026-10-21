@@ -18,7 +18,7 @@ const HOVER_STRENGTH: f32 = 1.35;
 /// How wide a trace's glow spreads each side, in logical px, at full glow.
 const GLOW_WIDTH: f32 = 7.0;
 /// How strong the glow is at the line, at full glow.
-const GLOW_ALPHA: f32 = 0.32;
+const GLOW_ALPHA: f32 = 0.26;
 /// How much a Meter dims in silence (at activity 0).
 pub const SILENT_DIM: f32 = 0.5;
 

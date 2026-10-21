@@ -466,3 +466,40 @@ fn upload_progress_shows_on_the_meter_until_it_is_over() {
     );
     assert_eq!(app.meter().tonal_balance.unwrap().upload, None);
 }
+
+#[test]
+fn the_drawn_curve_glides_to_a_new_frame_instead_of_jumping() {
+    let mut app = App::launch();
+    app.set(TonalBalanceMeterSettings {
+        averaging: LongTerm::Seconds(3.0),
+        ..TonalBalanceMeterSettings::default()
+    });
+    let curve = |app: &mut App| match app.meter().state {
+        MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) => mix.curve.clone(),
+        other => panic!("no mix yet: {other:?}"),
+    };
+    app.play(4.0, 55.0);
+    let before = curve(&mut app);
+    // Another note: its frame arrives within half a second, and the curve
+    // is only part of the way there just after.
+    app.play(0.55, 82.4);
+    let soon = curve(&mut app);
+    app.feed(&silence(4 * RATE as usize));
+    let settled = curve(&mut app);
+    let moved = |a: &[f32], b: &[f32]| {
+        a.iter()
+            .zip(b)
+            .filter(|(x, y)| x.is_finite() && y.is_finite())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max)
+    };
+    let (first, rest) = (moved(&before, &soon), moved(&soon, &settled));
+    assert!(first > 0.0, "the curve moved toward the new note");
+    assert!(rest > 0.0, "it was still on its way: {first} then {rest}");
+    // Silence adds no frames, so the curve settles where the average is.
+    let later = {
+        app.feed(&silence(4 * RATE as usize));
+        curve(&mut app)
+    };
+    assert_eq!(later, settled, "settled curves stop moving");
+}

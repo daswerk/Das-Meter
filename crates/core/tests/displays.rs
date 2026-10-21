@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use dasmeter_core::{
-    AppCore, BuiltIn, Display, DisplayRef, Edge, Event, Fingerprint, LayoutMode, PresetData,
-    PresetFile, Rect, Scene, Screen, WindowKey, WindowScene,
+    AppCore, Display, DisplayRef, Edge, Event, Fingerprint, LayoutMode, PresetData, PresetFile,
+    Rect, Scene, Screen, WindowKey, WindowScene,
 };
 
 const DELL: (u32, u32) = (0x10ac, 0xa0c4);
@@ -202,8 +202,10 @@ fn preset_on_unknown_monitors() -> PresetData {
         name: "Samsung Odyssey".into(),
         position: [0.0, -1440.0],
     };
-    let mut data = PresetData::built_in(BuiltIn::Bar);
-    data.name = "Studio".into();
+    let mut data = PresetData {
+        name: "Studio".into(),
+        ..PresetData::default()
+    };
     data.bar.display = Some(elsewhere.clone());
     data.bar.edge = Edge::Top;
     data.bar.thickness = 300.0;

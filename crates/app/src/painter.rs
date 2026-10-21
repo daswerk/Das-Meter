@@ -86,28 +86,7 @@ impl Painter {
         };
         let mut areas = Vec::with_capacity(meters.len());
         for (renderer, meter) in self.meters.iter_mut().zip(meters) {
-            let frame = meter.frame;
-            let area = Area {
-                x: frame.x * width,
-                y: frame.y * height,
-                width: frame.width * width,
-                height: frame.height * height,
-            };
-            // Half a gap around the window and around each Meter makes a
-            // full gap between Meters and at the window's edges.
-            let inner = |start: f32, length: f32, whole: f32| {
-                let start = gap / 2.0 + start * (whole - gap) / whole;
-                let length = length * (whole - gap) / whole;
-                (start + gap / 2.0, (length - gap).max(1.0))
-            };
-            let (x, width) = inner(area.x, area.width, width);
-            let (y, height) = inner(area.y, area.height, height);
-            let area = Area {
-                x,
-                y,
-                width,
-                height,
-            };
+            let area = meter_area(meter.frame, (width, height), gap);
             renderer.prepare(&self.gpu, &mut self.text, area, look, meter);
             areas.push(area);
         }
@@ -189,5 +168,26 @@ impl Painter {
             ui.textures.clear();
         }
         self.text.atlas.trim();
+    }
+}
+
+/// Where a Meter with `frame` (fractions of the window) is drawn in a
+/// window `size` wide and high, `gap` apart from the others: half a gap
+/// around the window and around each Meter makes a full gap between Meters
+/// and at the window's edges. In physical pixels, or logical ones with
+/// everything given in logical pixels.
+pub fn meter_area(frame: dasmeter_core::Frame, size: (f32, f32), gap: f32) -> Area {
+    let inner = |start: f32, length: f32, whole: f32| {
+        let start = gap / 2.0 + start * (whole - gap);
+        let length = length * (whole - gap);
+        (start + gap / 2.0, (length - gap).max(1.0))
+    };
+    let (x, width) = inner(frame.x, frame.width, size.0);
+    let (y, height) = inner(frame.y, frame.height, size.1);
+    Area {
+        x,
+        y,
+        width,
+        height,
     }
 }

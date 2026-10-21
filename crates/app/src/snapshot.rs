@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [solo-KIND|spectrum-reference|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
+//! Hidden `--render-snapshot PATH [solo-KIND|preset-N|spectrum-reference|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -462,6 +462,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
                 || option.starts_with("loudness-")
+                || option.starts_with("preset-")
                 || option == "spectrum-collisions"
                 || option == "spectrum-reference" =>
         {
@@ -498,8 +499,21 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         let (w, h) = o.split_once('x')?;
         Some((w.parse::<u32>().ok()? * 2, h.parse::<u32>().ok()? * 2))
     });
+    // "preset-N": the Nth built-in Preset, at its own window or Bar size.
+    let built_in = open
+        .and_then(|o| o.strip_prefix("preset-"))
+        .and_then(|n| n.parse::<usize>().ok())
+        .and_then(|n| dasmeter_core::BuiltIn::ALL.get(n).copied());
     let (width, height) = match (open, custom) {
         (_, Some(size)) => size,
+        _ if built_in.is_some() => {
+            let data = dasmeter_core::PresetData::built_in(built_in.expect("checked"));
+            match (data.mode, data.window.frame) {
+                (LayoutMode::Bar, _) => (3024, (data.bar.thickness * 2.0) as u32),
+                (_, Some(frame)) => ((frame.width * 2.0) as u32, (frame.height * 2.0) as u32),
+                (_, None) => (2400, 1440),
+            }
+        }
         (Some("bar" | "showcase-bar"), _) => BAR,
         (
             Some(
@@ -522,6 +536,27 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     };
     match open {
         None | Some("bar") => {}
+        Some(option) if option.starts_with("preset-") => {
+            let index = dasmeter_core::BuiltIn::ALL
+                .iter()
+                .position(|&b| Some(b) == built_in)
+                .ok_or("no such built-in Preset")?;
+            core.handle(
+                Event::PresetFiles {
+                    files: &[],
+                    settings: None,
+                },
+                now,
+            );
+            core.handle(Event::SwitchPreset { index }, now);
+            core.handle(Event::StartListening, now);
+            core.handle(Event::Pointer(None), now);
+            for block in music(10.0).chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
         // For the README: Window mode with six Meters on music, or the
         // settings open on the Theme page.
         Some("showcase-bar") => {

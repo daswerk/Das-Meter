@@ -10,6 +10,14 @@ use dasmeter_analysis::tonal_balance::{
 
 use crate::targets::Target;
 
+/// How quickly the drawn curve follows the live average, in seconds (time
+/// constant). Frames arrive every half second; easing toward each one lets
+/// the curve glide instead of jumping.
+pub const EASE_SECONDS: f64 = 0.15;
+/// Closer than this (dB) everywhere, the drawn curve takes the average's
+/// values and stops moving.
+const EASE_SNAP_DB: f32 = 0.05;
+
 /// How the Tonal Balance Meter shows its comparison.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum TonalView {
@@ -116,6 +124,8 @@ pub(crate) struct TonalBalanceAnalyser {
     mono_cutoff: f32,
     /// The live average, summed again whenever a frame arrives.
     summary: Option<Summary>,
+    /// What's drawn of it: its curve and regions eased toward the average's.
+    shown: Option<Summary>,
     /// While a song is being taught by playing: every frame since Learn.
     learning: Option<Vec<Frame>>,
     /// The mix's curve when frozen, drawn as a ghost.
@@ -132,6 +142,7 @@ impl TonalBalanceAnalyser {
             averaging: settings.averaging,
             mono_cutoff: settings.mono_cutoff,
             summary: None,
+            shown: None,
             learning: None,
             frozen: None,
             compare: None,
@@ -149,6 +160,7 @@ impl TonalBalanceAnalyser {
             self.averaging = settings.averaging;
             self.live = LiveSummary::new(settings.averaging);
             self.summary = None;
+            self.shown = None;
         }
         if settings.mono_cutoff != self.mono_cutoff {
             self.mono_cutoff = settings.mono_cutoff;
@@ -156,13 +168,12 @@ impl TonalBalanceAnalyser {
         }
     }
 
-    /// Takes audio; returns whether a frame was added (the view changed).
+    /// Takes audio; returns whether the view changed: a frame was added, or
+    /// the drawn curve moved toward the average.
     pub fn process(&mut self, interleaved: &[f32]) -> bool {
         self.frames.process(interleaved);
         let frames = self.frames.take_frames();
-        if frames.is_empty() {
-            return false;
-        }
+        let added = !frames.is_empty();
         for frame in frames {
             if let Some(learning) = &mut self.learning
                 && learning.len() < WHOLE_LIMIT_FRAMES
@@ -171,8 +182,58 @@ impl TonalBalanceAnalyser {
             }
             self.live.push(frame);
         }
-        self.summary = self.live.summary();
-        true
+        if added {
+            self.summary = self.live.summary();
+        }
+        let seconds = (interleaved.len() / 2) as f64 / f64::from(self.sample_rate());
+        self.ease(seconds) || added
+    }
+
+    /// Moves the drawn curve `seconds` toward the live average; returns
+    /// whether it moved.
+    fn ease(&mut self, seconds: f64) -> bool {
+        let Some(summary) = &self.summary else {
+            return self.shown.take().is_some();
+        };
+        let Some(shown) = self
+            .shown
+            .as_mut()
+            .filter(|s| s.curve.len() == summary.curve.len())
+        else {
+            self.shown = Some(summary.clone());
+            return true;
+        };
+        let step = (1.0 - (-seconds / EASE_SECONDS).exp()) as f32;
+        let mut next = summary.clone();
+        let mut far = false;
+        let pairs = next
+            .curve
+            .iter_mut()
+            .zip(&shown.curve)
+            .chain(next.regions.iter_mut().zip(&shown.regions));
+        for (goal, &from) in pairs {
+            // Silent points (−∞) and the first values show at once.
+            if goal.is_finite() && from.is_finite() {
+                let eased = from + (*goal - from) * step;
+                far |= (*goal - eased).abs() > EASE_SNAP_DB;
+                *goal = eased;
+            }
+        }
+        if !far {
+            next = summary.clone();
+        }
+        let moved = *shown != next;
+        *shown = next;
+        moved
+    }
+
+    /// What's drawn: the file being compared, or the live average as it
+    /// eases toward each new frame.
+    pub fn shown(&self) -> Option<&Summary> {
+        match &self.compare {
+            Some((_, summary)) => Some(summary),
+            None => self.shown.as_ref(),
+        }
     }
 
     /// What's compared with the Target: the file being compared, or the
@@ -201,6 +262,7 @@ impl TonalBalanceAnalyser {
     pub fn reset(&mut self) {
         self.live.reset();
         self.summary = None;
+        self.shown = None;
     }
 
     pub fn learn(&mut self) {
