@@ -2,3 +2,5 @@
 .DS_Store
 docs/site/book/
 __pycache__/
+# The EBU loudness test set: never committed (ADR 0005).
+/ebu-test-set/

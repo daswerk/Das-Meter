@@ -37,9 +37,25 @@ reopen the budget issue with the measurements.
 
 ## Loudness conformance
 
-Run the EBU test set at 48 kHz (`--features ebu-conformance`), per
+Run the EBU test set at 48 kHz, per
 [ADR 0005](adr/0005-measurement-definitions-and-verification.md). The EBU
 files are downloaded by hand and never committed.
+
+1. Download the set from
+   <https://tech.ebu.ch/publications/ebu_loudness_test_set> and unzip it into
+   `ebu-test-set/` at the repository root (git-ignored), or set
+   `DASMETER_EBU_TEST_SET` to its folder.
+2. Run, with every file required:
+
+   ```sh
+   DASMETER_EBU_REQUIRE=1 cargo test -p dasmeter-analysis --features ebu-conformance \
+     --test ebu_conformance -- --nocapture
+   ```
+
+3. It passes, and the report lists every case with its expected and
+   measured values. A failure blocks the release. (CI's "EBU conformance"
+   job runs the same when it can get the files; a "skipped" there doesn't
+   count.)
 
 ## One-time setup: signing (ADR 0004)
 

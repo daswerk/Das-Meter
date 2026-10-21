@@ -2,8 +2,8 @@
 
 Das-Meter claims its **numbers**, not a display standard. The Loudness Meter
 measures to **ITU-R BS.1770-5** and **EBU Tech 3341/3342** (momentary,
-short-term and integrated LUFS, LRA, true peak), checked against the EBU test
-set. It does not claim "EBU Mode", because that also requires the EBU +9/+18
+short-term and integrated LUFS, LRA, true peak), tested on those standards'
+cases (see [How it's checked](#how-its-checked)). It does not claim "EBU Mode", because that also requires the EBU +9/+18
 display scales, which Das-Meter doesn't have yet.
 
 These definitions are fixed, because you compare readings across meters, and
@@ -51,10 +51,11 @@ changing them later would silently move everyone's numbers.
   48, 96 and 192 kHz. Tolerances: LUFS ±0.1 LU, LRA ±1 LU, true peak
   +0.2/−0.4 dB, sample peak ±0.01 dB, RMS ±0.05 dB, correlation ±0.02; a
   Spectrum sine on a bin ±0.1 dB.
-- **Before releases (planned):** the official EBU conformance test files at
-  48 kHz ([#45](https://github.com/daswerk/Das-Meter/issues/45)). Until that
-  run exists, the Tech 3341/3342 cases are covered only by our own signals
-  above.
+- **Before each release (from v0.1.0 on):** the official EBU loudness test
+  set (Tech 3341 and 3342) at 48 kHz, every stereo case with the tolerances
+  above. The EBU files may not be redistributed, so they're downloaded by
+  hand and never committed. Case 6 of Tech 3341 is 5.0 and 5.1 surround, which the stereo
+  Loudness Meter doesn't measure.
 
 There's no official certification, so there's no badge.
 
