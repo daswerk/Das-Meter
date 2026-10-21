@@ -97,74 +97,14 @@ begin
 end;
 
 { Uninstall: the app and the plug-ins go; Presets, Themes and settings.toml
-  stay unless "Also delete my Presets and Themes" is ticked. }
-function InitializeUninstall(): Boolean;
-var
-  Form: TSetupForm;
-  Text: TNewStaticText;
-  Box: TNewCheckBox;
-  Remove, Cancel: TNewButton;
-begin
-  Result := True;
-  DeleteData := False;
-  if UninstallSilent then
-    Exit;
-  Form := CreateCustomForm;
-  try
-    Form.ClientWidth := ScaleX(400);
-    Form.ClientHeight := ScaleY(132);
-    Form.Caption := 'Uninstall Das-Meter';
-    Form.Position := poScreenCenter;
-
-    Text := TNewStaticText.Create(Form);
-    Text.Parent := Form;
-    Text.Left := ScaleX(16);
-    Text.Top := ScaleY(16);
-    Text.Width := Form.ClientWidth - ScaleX(32);
-    Text.AutoSize := False;
-    Text.WordWrap := True;
-    Text.Height := ScaleY(32);
-    Text.Caption := 'Das-Meter and its Send Plugin will be removed. Your Presets, ' +
-      'Themes and settings stay, for when you install it again.';
-
-    Box := TNewCheckBox.Create(Form);
-    Box.Parent := Form;
-    Box.Left := ScaleX(16);
-    Box.Top := ScaleY(56);
-    Box.Width := Form.ClientWidth - ScaleX(32);
-    Box.Height := ScaleY(20);
-    Box.Caption := 'Also delete my Presets and Themes';
-    Box.Checked := False;
-
-    Remove := TNewButton.Create(Form);
-    Remove.Parent := Form;
-    Remove.Width := ScaleX(88);
-    Remove.Height := ScaleY(26);
-    Remove.Left := Form.ClientWidth - ScaleX(16 + 88 + 8 + 88);
-    Remove.Top := Form.ClientHeight - ScaleY(16 + 26);
-    Remove.Caption := 'Uninstall';
-    Remove.ModalResult := mrOk;
-    Remove.Default := True;
-
-    Cancel := TNewButton.Create(Form);
-    Cancel.Parent := Form;
-    Cancel.Width := ScaleX(88);
-    Cancel.Height := ScaleY(26);
-    Cancel.Left := Form.ClientWidth - ScaleX(16 + 88);
-    Cancel.Top := Remove.Top;
-    Cancel.Caption := 'Cancel';
-    Cancel.ModalResult := mrCancel;
-    Cancel.Cancel := True;
-
-    Result := Form.ShowModal() = mrOk;
-    DeleteData := Box.Checked;
-  finally
-    Form.Free();
-  end;
-end;
-
+  stay unless the user says to delete them too (No, the default, keeps them).
+  Asked once the uninstall is confirmed; a silent uninstall keeps them. }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  if (CurUninstallStep = usUninstall) and not UninstallSilent then
+    DeleteData := MsgBox('Also delete my Presets and Themes?' + #13#10#13#10 +
+      'Choose No to keep your Presets, Themes and settings for when you install ' +
+      'Das-Meter again.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
   if (CurUninstallStep = usPostUninstall) and DeleteData then
     DelTree(ExpandConstant('{userappdata}\Das-Meter'), True, True, True);
 end;

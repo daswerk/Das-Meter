@@ -275,8 +275,12 @@ jobs:
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
           }
-          & $iscc "/DAppVersion=$env:VERSION" "/DRoot=$PWD" installer\windows\das-meter.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DAppVersion=$env:VERSION" "/DRoot=$PWD" installer\windows\das-meter.iss 2>&1 | Tee-Object -Variable output
+          if ($LASTEXITCODE -ne 0) {
+            # The compiler's error, where the job summary shows it.
+            $output | Select-String -Pattern 'Error|Line \d+' | ForEach-Object { Write-Output "::error::$_" }
+            exit $LASTEXITCODE
+          }
 
       - name: Upload the installer
         if: steps.signing.outputs.on == 'true'

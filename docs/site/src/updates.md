@@ -32,4 +32,5 @@ stay, unless you choose **Uninstall and Delete My Presets and Themes**.
 
 **Windows:** use **Settings ▸ Apps ▸ Installed apps ▸ Das-Meter ▸
 Uninstall**. It removes the app and the Send Plugin. Your Presets, Themes and
-settings stay, unless you tick **Also delete my Presets and Themes**.
+settings stay, unless you answer **Yes** to **Also delete my Presets and
+Themes?**

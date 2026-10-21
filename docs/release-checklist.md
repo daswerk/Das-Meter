@@ -114,7 +114,7 @@ reads the results from the `release` environment.
    System Capture permission.
 4. On Windows 11: install, load the Send Plugin in a DAW, update an older
    install from the app (with the DAW open), and uninstall (Presets stay
-   unless ticked).
+   unless you answer Yes).
 5. Then publish the draft: apps find it within a day.
 
 A tag with a suffix (`v0.2.0-test1`) makes a pre-release, which apps never
