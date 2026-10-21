@@ -92,3 +92,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Headless crates stay free of platform, GPU and audio-device code
         run: scripts/check-headless-deps.sh
+      - name: THIRD-PARTY-LICENSES.md is up to date
+        run: python3 scripts/third-party-licenses.py --check

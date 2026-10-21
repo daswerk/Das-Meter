@@ -177,7 +177,7 @@ jobs:
           mkdir -p "dist/$dir"
           cp target/release/das-meter "dist/$dir/"
           strip "dist/$dir/das-meter"
-          cp LICENSE-MIT LICENSE-APACHE "dist/$dir/"
+          cp LICENSE-MIT LICENSE-APACHE THIRD-PARTY-LICENSES.md "dist/$dir/"
           cat >"dist/$dir/README.txt" <<TEXT
           Das-Meter $version for Linux (x86_64)
 
