@@ -18,6 +18,6 @@ Sources disagree on Type I's fall (1.5 s or 1.7 s for 20 dB); we use 1.7 s. The 
 ## Consequences
 
 - Only the bars use a Scale; the numbers stay LUFS, true peak and sample peak. On a standard scale the bars are the two channels alone, on that scale's range and numbers; the LUFS bar shows only on Peak.
-- A small VU needle Meter is a separate issue (#106).
+- The **Needle Meter** (#106) uses the same VU and PPM ballistics on a dial: a VU's spaced by voltage as real ones are, a PPM's by dB; its red zone starts at 0 VU or at the PPMs' permitted maximum (−9 dBFS).
 
 Decided in [Meter scales](https://github.com/daswerk/Das-Meter/issues/104).

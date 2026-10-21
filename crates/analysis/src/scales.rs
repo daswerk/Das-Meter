@@ -148,6 +148,38 @@ impl Scale {
     }
 }
 
+impl Scale {
+    /// Where `db` (dBFS of a sine's peak) sits across a needle's dial, 0 at
+    /// the scale's bottom and 1 at its top. A VU's dial is spaced by voltage,
+    /// as the meters' are (0 VU about two thirds across); a PPM's by dB.
+    pub fn dial_position(self, db: f64, vu_reference: f64) -> f64 {
+        let Some((low, high)) = self.range(vu_reference) else {
+            return 0.0;
+        };
+        let t = if self == Scale::Vu {
+            let volts = |db: f64| 10f64.powf(db / 20.0);
+            (volts(db) - volts(low)) / (volts(high) - volts(low))
+        } else {
+            (db - low) / (high - low)
+        };
+        if t.is_finite() {
+            t.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Where a needle's red zone starts, in dBFS: over 0 VU, or over a PPM's
+    /// permitted maximum (9 dB over alignment).
+    pub fn red_from(self, vu_reference: f64) -> f64 {
+        if self == Scale::Vu {
+            vu_reference
+        } else {
+            DIN_ZERO
+        }
+    }
+}
+
 /// One channel's VU or PPM, per sample.
 #[derive(Clone, Copy, Debug)]
 pub struct Ballistics {

@@ -242,6 +242,23 @@ labelled in milliseconds.
 To show it, right-click a Meter and choose **Change Meter ▸ Oscilloscope**,
 or **Add Meter ▸ Oscilloscope**.
 
+## Needle Meter
+
+![The Needle Meter](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-needle.png)
+
+A classic needle per channel, Left and Right side by side (or one over the
+other, whichever gives bigger dials), or one needle on the mono sum. **Scale**
+picks **VU** (0 VU at −18 dBFS by default, adjustable) or a PPM (**DIN**,
+**Nordic**, **BBC**, **EBU**), each with the timing and numbers of the
+Loudness Meter's Scales (see [Measurements](measurements.md)). A VU's dial is
+spaced as real ones are, by voltage, so 0 VU sits about two thirds across; a
+PPM's is spaced by dB. The red zone starts at 0 VU, or at a PPM's permitted
+maximum (−9 dBFS). The lamp in the corner lights when a needle reaches the end
+of its scale and stays lit for a second. It fits the Bar.
+
+To show it, right-click a Meter and choose **Change Meter ▸ Needle Meter**,
+or **Add Meter ▸ Needle Meter**.
+
 ## Stereo Bands
 
 ![Stereo Bands](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-stereo-bands.png)

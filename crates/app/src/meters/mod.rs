@@ -5,6 +5,7 @@ mod cepstrum;
 mod heatmap;
 mod labels;
 mod loudness;
+mod needle;
 mod oscilloscope;
 mod phase_scope;
 mod shapes;
@@ -368,6 +369,9 @@ impl MeterRenderer {
                 }
                 MeterView::Oscilloscope { settings, scope } => {
                     oscilloscope::draw(&mut c, inner, settings, scope)
+                }
+                MeterView::Needle { settings, needles } => {
+                    needle::draw(&mut c, inner, settings, needles)
                 }
                 MeterView::StereoBands { settings, bands } => {
                     stereo_bands::draw(&mut c, inner, settings, bands)

@@ -120,7 +120,7 @@ def main():
 
     # Every Meter alone.
     for kind in ["waveform", "spectrum", "spectrogram", "loudness", "stereometer",
-                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands"]:
+                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands", "needle"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
     # A Spectrum with an Overlay Source, and where the two collide.

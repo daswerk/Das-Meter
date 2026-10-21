@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use dasmeter_analysis::{
     CepstrumAnalyser, CepstrumSettings, ChannelView, LoudnessAnalyser, LoudnessSettings,
-    Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
+    NeedleAnalyser, Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
     SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoBandsAnalyser,
     StereoReadings, StereoView, StereometerAnalyser, StereometerSettings, TunerAnalyser,
     WaveformAnalyser, WaveformColumn, WaveformSettings, note_name, tonal_balance::Summary,
@@ -317,6 +317,35 @@ impl Default for CepstrumMeterSettings {
     }
 }
 
+/// The Needle Meter: a classic needle per channel on a VU or PPM scale.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct NeedleMeterSettings {
+    /// VU (the default) or a PPM.
+    pub scale: dasmeter_analysis::Scale,
+    /// 0 VU: the peak of a sine that reads it, in dBFS. Default −18.
+    pub vu_reference: f64,
+    /// One needle on the mono sum instead of Left and Right. Default off.
+    pub mono: bool,
+}
+
+impl Default for NeedleMeterSettings {
+    fn default() -> Self {
+        NeedleMeterSettings {
+            scale: dasmeter_analysis::Scale::Vu,
+            vu_reference: dasmeter_analysis::scales::DEFAULT_VU_REFERENCE,
+            mono: false,
+        }
+    }
+}
+
+/// One needle as shown: its level (dBFS of a sine's peak) and the overload lamp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NeedleDisplay {
+    pub level: Level,
+    pub over: bool,
+}
+
 /// Stereo Bands: band correlation and width per octave band.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -492,6 +521,7 @@ pub enum MeterSettings {
     TonalBalance(TonalBalanceMeterSettings),
     Tuner(TunerMeterSettings),
     StereoBands(StereoBandsMeterSettings),
+    Needle(NeedleMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -508,10 +538,11 @@ pub enum MeterKind {
     TonalBalance,
     Tuner,
     StereoBands,
+    Needle,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 11] = [
+    pub const ALL: [MeterKind; 12] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -523,6 +554,7 @@ impl MeterKind {
         MeterKind::TonalBalance,
         MeterKind::Tuner,
         MeterKind::StereoBands,
+        MeterKind::Needle,
     ];
 }
 
@@ -551,6 +583,7 @@ impl MeterSettings {
             MeterKind::StereoBands => {
                 MeterSettings::StereoBands(StereoBandsMeterSettings::default())
             }
+            MeterKind::Needle => MeterSettings::Needle(NeedleMeterSettings::default()),
         }
     }
 
@@ -567,6 +600,7 @@ impl MeterSettings {
             MeterSettings::TonalBalance(_) => MeterKind::TonalBalance,
             MeterSettings::Tuner(_) => MeterKind::Tuner,
             MeterSettings::StereoBands(_) => MeterKind::StereoBands,
+            MeterSettings::Needle(_) => MeterKind::Needle,
         }
     }
 
@@ -584,6 +618,7 @@ impl MeterSettings {
             MeterSettings::TonalBalance(_) => "Tonal Balance",
             MeterSettings::Tuner(_) => "Tuner",
             MeterSettings::StereoBands(_) => "Stereo Bands",
+            MeterSettings::Needle(_) => "Needle Meter",
         }
     }
 }
@@ -700,6 +735,11 @@ pub enum MeterView {
         /// `None` while there's no pitch (and none is held).
         reading: Option<TunerDisplay>,
     },
+    Needle {
+        settings: NeedleMeterSettings,
+        /// One needle, or Left and Right.
+        needles: Vec<NeedleDisplay>,
+    },
     StereoBands {
         settings: StereoBandsMeterSettings,
         /// Lowest first; bands over Nyquist are left out.
@@ -757,6 +797,7 @@ enum Analyser {
     TonalBalance(Box<TonalBalanceAnalyser>),
     Tuner(Box<TunerAnalyser>),
     StereoBands(Box<StereoBandsAnalyser>),
+    Needle(Box<NeedleAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -1192,6 +1233,11 @@ impl Meter {
             }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Tuner(a)), MeterSettings::Tuner(s)) => a.set_settings(s.analysis),
+            (Some(Analyser::Needle(a)), MeterSettings::Needle(s)) => {
+                if a.differs(s.scale, s.vu_reference, s.mono) {
+                    **a = NeedleAnalyser::new(sample_rate, s.scale, s.vu_reference, s.mono);
+                }
+            }
             (Some(Analyser::StereoBands(a)), MeterSettings::StereoBands(s)) => {
                 if a.time() != s.time {
                     **a = StereoBandsAnalyser::new(sample_rate, s.time);
@@ -1221,6 +1267,7 @@ impl Meter {
             Analyser::Cepstrum(a) => a.sample_rate(),
             Analyser::Tuner(a) => a.sample_rate(),
             Analyser::StereoBands(a) => a.sample_rate(),
+            Analyser::Needle(a) => a.sample_rate(),
             Analyser::Spectrogram(a) => a.sample_rate(),
             Analyser::PhaseScope(a) => a.sample_rate(),
             Analyser::Oscilloscope(a) => a.sample_rate(),
@@ -1256,6 +1303,7 @@ impl Meter {
             Some(Analyser::Cepstrum(a)) => a.process(frames),
             Some(Analyser::Tuner(a)) => a.process(frames),
             Some(Analyser::StereoBands(a)) => a.process(frames),
+            Some(Analyser::Needle(a)) => a.process(frames),
             Some(Analyser::Oscilloscope(a)) => a.process(frames),
             Some(Analyser::TonalBalance(a)) => {
                 // It only looks different once a frame is added.
@@ -1481,6 +1529,12 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::StereoBands(s) => {
             Analyser::StereoBands(Box::new(StereoBandsAnalyser::new(sample_rate, s.time)))
         }
+        MeterSettings::Needle(s) => Analyser::Needle(Box::new(NeedleAnalyser::new(
+            sample_rate,
+            s.scale,
+            s.vu_reference,
+            s.mono,
+        ))),
         MeterSettings::Tuner(s) => {
             Analyser::Tuner(Box::new(TunerAnalyser::new(sample_rate, s.analysis)))
         }
@@ -1608,6 +1662,17 @@ fn build_view(
                 points,
             }
         }
+        (Analyser::Needle(a), MeterSettings::Needle(settings)) => MeterView::Needle {
+            settings,
+            needles: a
+                .readings()
+                .into_iter()
+                .map(|r| NeedleDisplay {
+                    level: Level::from_db(r.level, -120.0),
+                    over: r.over,
+                })
+                .collect(),
+        },
         (Analyser::StereoBands(a), MeterSettings::StereoBands(settings)) => {
             MeterView::StereoBands {
                 settings,
