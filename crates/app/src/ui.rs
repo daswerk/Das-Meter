@@ -103,6 +103,30 @@ pub enum Request {
     Learn(dasmeter_core::docs::Topic),
     /// macOS: open Privacy & Security ▸ Screen & System Audio Recording.
     OpenPrivacySettings,
+    /// Windows: look for an update now (macOS has it in the menu bar).
+    CheckForUpdates,
+    /// Windows: install the update found.
+    Update,
+}
+
+/// What the settings offer for updates on Windows, where there's no menu
+/// bar: set by the shell before each frame.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UpdateOffer {
+    /// The newer version found, if any.
+    pub available: Option<String>,
+    /// A check or an update is under way.
+    pub busy: bool,
+}
+
+fn update_offer_id() -> egui::Id {
+    egui::Id::new("das-meter update offer")
+}
+
+/// Hands the settings what they offer for updates.
+#[cfg(windows)]
+pub fn set_update_offer(ctx: &egui::Context, offer: UpdateOffer) {
+    ctx.data_mut(|data| data.insert_temp(update_offer_id(), offer));
 }
 
 impl Actions {
@@ -3109,6 +3133,28 @@ fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         .changed();
     if changed {
         actions.push(Event::SetApp(app));
+    }
+    if cfg!(windows) {
+        let offer: UpdateOffer = ui
+            .ctx()
+            .data(|data| data.get_temp(update_offer_id()))
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(!offer.busy, egui::Button::new("Check Now"))
+                .clicked()
+            {
+                actions.requests.push(Request::CheckForUpdates);
+            }
+            if let Some(version) = &offer.available {
+                let button = egui::Button::new(
+                    RichText::new(format!("Update to Das-Meter {version}…")).strong(),
+                );
+                if ui.add_enabled(!offer.busy, button).clicked() {
+                    actions.requests.push(Request::Update);
+                }
+            }
+        });
     }
     let mut launch_at_login = scene.launch_at_login;
     if ui
