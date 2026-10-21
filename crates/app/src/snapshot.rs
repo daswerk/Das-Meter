@@ -240,6 +240,7 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         "tonal-balance" => MeterKind::TonalBalance,
         "tuner" => MeterKind::Tuner,
         "stereo-bands" => MeterKind::StereoBands,
+        "needle" => MeterKind::Needle,
         other => return Err(format!("no Meter kind {other:?}")),
     };
     core.handle(Event::SetMode(LayoutMode::Window), now);
@@ -275,6 +276,11 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
                 frame[1] -= w;
             }
             play(core, &audio, now)
+        }
+        // The music at a sensible level for a VU at −18 dBFS.
+        MeterKind::Needle => {
+            let quieter: Vec<f32> = music(10.0).iter().map(|s| s * 0.25).collect();
+            play(core, &quieter, now)
         }
         // A bass note 7 cents sharp of A2.
         MeterKind::Tuner => {

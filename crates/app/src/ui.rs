@@ -21,11 +21,11 @@ use dasmeter_core::tonal_balance as limits_tonal;
 use dasmeter_core::{
     BigReading, Card, CepstrumMeterSettings, Colour, CycleLength, Direction, Edge, Event,
     LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
-    MeterSettings, OscilloscopeMeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role,
-    Scene, ScreenMode, SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings,
-    Steadiness, StereoBandsMeterSettings, StereoDrawing, StereometerMeterSettings,
-    TonalBalanceMeterSettings, TonalView, TunerMeterSettings, WaveformColouring,
-    WaveformMeterSettings, WindowKey,
+    MeterSettings, NeedleMeterSettings, OscilloscopeMeterSettings, Palette,
+    PhaseScopeMeterSettings, Platform, Role, Scene, ScreenMode, SpectrogramMeterSettings,
+    SpectrumColouring, SpectrumMeterSettings, Steadiness, StereoBandsMeterSettings, StereoDrawing,
+    StereometerMeterSettings, TonalBalanceMeterSettings, TonalView, TunerMeterSettings,
+    WaveformColouring, WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -1282,6 +1282,41 @@ fn cepstrum_basic(ui: &mut egui::Ui, s: &mut CepstrumMeterSettings) -> bool {
         .changed()
 }
 
+fn needle_basic(ui: &mut egui::Ui, s: &mut NeedleMeterSettings) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Scale");
+        egui::ComboBox::from_id_salt("needle scale")
+            .selected_text(s.scale.name())
+            .show_ui(ui, |ui| {
+                for scale in Scale::ALL.into_iter().filter(|s| s.ballistic()) {
+                    changed |= ui
+                        .selectable_value(&mut s.scale, scale, scale.name())
+                        .changed();
+                }
+            });
+    });
+    if s.scale == Scale::Vu {
+        changed |= ui
+            .add(
+                Slider::new(
+                    &mut s.vu_reference,
+                    limits::VU_REFERENCE.0..=limits::VU_REFERENCE.1,
+                )
+                .text("0 VU at")
+                .suffix(" dBFS")
+                .step_by(1.0),
+            )
+            .on_hover_text("The peak of the sine that reads 0 VU")
+            .changed();
+    }
+    changed |= ui
+        .add(Toggle::new(&mut s.mono, "One needle (mono)"))
+        .on_hover_text("One needle on the mono sum instead of Left and Right")
+        .changed();
+    changed
+}
+
 fn stereo_bands_basic(ui: &mut egui::Ui, s: &mut StereoBandsMeterSettings) -> bool {
     let mut changed = ui
         .add(Toggle::new(&mut s.show_width, "Show width"))
@@ -1601,6 +1636,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::TonalBalance(w) => tonal_balance_basic(ui, w),
         MeterSettings::Tuner(w) => tuner_basic(ui, w),
         MeterSettings::StereoBands(w) => stereo_bands_basic(ui, w),
+        MeterSettings::Needle(w) => needle_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1626,7 +1662,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::Oscilloscope(_) => false, // all in the basics
         MeterSettings::TonalBalance(w) => tonal_balance_advanced(ui, w),
         MeterSettings::Tuner(w) => tuner_advanced(ui, w),
-        MeterSettings::StereoBands(_) => false, // all in the basics
+        MeterSettings::StereoBands(_) | MeterSettings::Needle(_) => false, // all in the basics
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1896,6 +1932,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::TonalBalance => "Tonal Balance",
         MeterKind::Tuner => "Tuner",
         MeterKind::StereoBands => "Stereo Bands",
+        MeterKind::Needle => "Needle Meter",
     }
 }
 
@@ -2702,6 +2739,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
         MeterSettings::Oscilloscope(_) => &[Role::OscilloscopeTrace, Role::OscilloscopeSecond],
         MeterSettings::TonalBalance(_) => TONAL_BALANCE_ROLES,
         MeterSettings::Tuner(_) => &[Role::TunerInTune, Role::TunerOff],
+        MeterSettings::Needle(_) => &[Role::Text, Role::LoudnessCounter],
         MeterSettings::StereoBands(_) => &[
             Role::CorrelationPositive,
             Role::CorrelationNegative,

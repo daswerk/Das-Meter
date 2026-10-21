@@ -76,6 +76,10 @@ _Avoid_: Genre curve, preset, profile
 The Meter that shows the pitch the Cepstrum finds as a note and how many cents it is off.
 _Avoid_: Pitch meter
 
+**Needle Meter**:
+The Meter with a classic needle per channel (or one on the mono sum) on a VU or PPM Scale, with an overload lamp.
+_Avoid_: VU Meter (VU is one of its Scales), analog meter
+
 **Stereo Bands**:
 The Meter that shows correlation and width per octave band. Its per-band correlation is the **Band correlation**, named apart from the Stereometer's Correlation.
 _Avoid_: Multiband correlator, band correlation

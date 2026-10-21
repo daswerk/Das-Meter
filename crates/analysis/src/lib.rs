@@ -7,6 +7,7 @@
 pub mod cepstrum;
 mod channel_view;
 pub mod loudness;
+pub mod needle;
 pub mod oscilloscope;
 pub mod scales;
 pub mod seconds;
@@ -26,6 +27,7 @@ pub use channel_view::ChannelView;
 pub use loudness::{
     ChannelLevels, LoudnessAnalyser, LoudnessReadings, LoudnessSettings, PeakHold, RmsMode,
 };
+pub use needle::{NeedleAnalyser, NeedleReading};
 pub use oscilloscope::{Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings};
 pub use scales::{Ballistics, Scale};
 pub use spectrogram::{SpectrogramAnalyser, SpectrogramSettings};

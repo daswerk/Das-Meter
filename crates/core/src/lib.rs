@@ -37,10 +37,11 @@ pub use layout::{
 };
 pub use meters::{
     BandDisplay, BigReading, CepstrumMeterSettings, CursorReadout, CycleLength,
-    LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView, OscilloscopeMeterSettings,
-    PhaseScopeMeterSettings, SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring,
-    SpectrumMeterSettings, SpectrumOverlay, SpectrumZoom, Steadiness, StereoBandsMeterSettings,
-    StereoDrawing, StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
+    LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView, NeedleDisplay,
+    NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings,
+    SpectrumOverlay, SpectrumZoom, Steadiness, StereoBandsMeterSettings, StereoDrawing,
+    StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
     WaveformMeterSettings,
 };
 pub use onboarding::{Card, Onboarding};

@@ -1,9 +1,9 @@
 # Das-Meter
 
-**Live audio Meters for producers: eleven Meters, two Looks, any colour you
+**Live audio Meters for producers: twelve Meters, two Looks, any colour you
 like.** Das-Meter shows whatever your computer plays, or single tracks from
 your DAW, as Waveform, Spectrum, Spectrogram, Loudness, Stereometer, Phase
-Scope, Cepstrum, Oscilloscope, Tonal Balance, Tuner and Stereo Bands. Put them in a Bar along the edge of your
+Scope, Cepstrum, Oscilloscope, Tonal Balance, Tuner, Stereo Bands and Needle. Put them in a Bar along the edge of your
 screen or in a window of their own, and make them look the way you want.
 It's free and open source, for macOS and Linux, with Windows on the way.
 
@@ -27,7 +27,7 @@ Every Theme is drawn in one of two **Looks**, and switching is one click in
 
 ## The Meters
 
-Eleven kinds, as many of each as you like. Right-click any Meter for its
+Twelve kinds, as many of each as you like. Right-click any Meter for its
 settings.
 
 <table>
@@ -70,6 +70,10 @@ settings.
 <tr>
 <td><img src="docs/images/meter-stereo-bands.png" alt="Stereo Bands: the low end mono, the highs wide"></td>
 <td><b>Stereo Bands</b>: correlation and width in ten octave bands, 31 Hz to 16 kHz: is the low end mono, and where is the width?</td>
+</tr>
+<tr>
+<td><img src="docs/images/meter-needle.png" alt="The Needle Meter: two VU needles"></td>
+<td><b>Needle Meter</b>: classic VU or PPM (DIN, Nordic, BBC, EBU) needles with their standard timing, a red zone and an overload lamp. Fits the Bar.</td>
 </tr>
 <tr>
 <td colspan="2"><img src="docs/images/meter-tonal-balance.png" alt="The Tonal Balance Meter: the mix's curve over a Target's range, too much highs marked"></td>
