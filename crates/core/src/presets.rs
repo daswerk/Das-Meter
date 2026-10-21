@@ -21,47 +21,62 @@ pub const SETTINGS_VERSION: u32 = 1;
 /// The settings file's name, next to the presets folder.
 pub const SETTINGS_FILE: &str = "settings.toml";
 
-/// The built-in Presets.
+/// The built-in Presets. The standard ones are bundled `.dasmeter-preset`
+/// files, each with its own Theme; the rest are retired: no longer copied
+/// in, but a copy made by an earlier version still resets to its layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BuiltIn {
-    /// Bar mode at the bottom edge with four Meters.
+    /// Window mode for mastering: Spectrum over Tonal Balance on top;
+    /// Stereo Bands, Waveform, Loudness Meter and Stereometer below.
+    #[serde(rename = "mastering-1.0")]
+    Mastering1,
+    /// Window mode for mixing and producing: Spectrum and Stereo Bands on
+    /// top; Waveform, Loudness Meter and Stereometer below.
+    #[serde(rename = "mixing-producing-1.0")]
+    MixingProducing1,
+    /// A Bar along the top edge for producing: Waveform, Spectrogram,
+    /// Stereometer and a Mid/Side Spectrum.
+    #[serde(rename = "producing-top-bar-1.0")]
+    ProducingTopBar1,
+    /// Retired: Bar mode at the bottom edge with four Meters.
     Bar,
-    /// Window mode: Spectrum and Phase Scope on top; Waveform, Loudness
-    /// Meter and Stereometer below.
+    /// Retired: Spectrum and Phase Scope on top; Waveform, Loudness Meter
+    /// and Stereometer below.
     Mixing,
-    /// Window mode: a large Loudness Meter, Spectrum and Stereometer beside it.
+    /// Retired: a large Loudness Meter, Spectrum and Stereometer beside it.
     Mastering,
-    /// Window mode: a large Loudness Meter with its graph, beside Spectrum,
+    /// Retired: a large Loudness Meter with its graph, beside Spectrum,
     /// Spectrogram, Waveform and Stereometer.
     #[serde(rename = "mastering-advanced")]
     MasteringAdvanced,
-    /// Window mode: Spectrum on top; Phase Scope, Cepstrum and a small
-    /// Loudness Meter below.
+    /// Retired: Spectrum on top; Phase Scope, Cepstrum and a small Loudness
+    /// Meter below.
     Producing,
-    /// A thin Bar: Loudness numbers, Spectrum and Stereometer.
+    /// Retired: a thin Bar with Loudness numbers, Spectrum and Stereometer.
     Compact,
 }
 
+/// The standard built-ins' files.
+const MASTERING_1: &str = include_str!("../presets/mastering-1.0.dasmeter-preset");
+const MIXING_PRODUCING_1: &str = include_str!("../presets/mixing-producing-1.0.dasmeter-preset");
+const PRODUCING_TOP_BAR_1: &str = include_str!("../presets/producing-top-bar-1.0.dasmeter-preset");
+
 impl BuiltIn {
-    pub const ALL: [BuiltIn; 6] = [
-        BuiltIn::Bar,
-        BuiltIn::Mixing,
-        BuiltIn::Mastering,
-        BuiltIn::MasteringAdvanced,
-        BuiltIn::Producing,
-        BuiltIn::Compact,
-    ];
-    /// The built-ins added after the first three: an older install gets
-    /// them once.
-    const LATER: [BuiltIn; 3] = [
-        BuiltIn::MasteringAdvanced,
-        BuiltIn::Producing,
-        BuiltIn::Compact,
+    /// The standard built-ins, in the order they're listed. The first is
+    /// what a new install opens with: a Bar, which the first-launch card
+    /// sits beside.
+    pub const ALL: [BuiltIn; 3] = [
+        BuiltIn::ProducingTopBar1,
+        BuiltIn::MixingProducing1,
+        BuiltIn::Mastering1,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
+            BuiltIn::Mastering1 => "Mastering 1.0",
+            BuiltIn::MixingProducing1 => "Mixing/Producing 1.0",
+            BuiltIn::ProducingTopBar1 => "Producing Top-Bar 1.0",
             BuiltIn::Bar => "Bar",
             BuiltIn::Mixing => "Mixing",
             BuiltIn::Mastering => "Mastering",
@@ -72,13 +87,36 @@ impl BuiltIn {
     }
 
     fn file_name(self) -> String {
-        format!("{}.toml", self.name().to_lowercase().replace(' ', "-"))
+        let name = self.name().to_lowercase().replace([' ', '/'], "-");
+        format!("{name}.toml")
+    }
+
+    /// A standard built-in's bundled file, read: the Preset and its Theme.
+    fn bundled(self) -> Option<crate::sharing::Imported> {
+        let text = match self {
+            BuiltIn::Mastering1 => MASTERING_1,
+            BuiltIn::MixingProducing1 => MIXING_PRODUCING_1,
+            BuiltIn::ProducingTopBar1 => PRODUCING_TOP_BAR_1,
+            _ => return None,
+        };
+        Some(crate::sharing::SharedPreset::from_toml(text).expect("a bundled Preset reads"))
+    }
+
+    /// The Themes the standard built-ins come with.
+    pub fn themes() -> Vec<crate::theme::Theme> {
+        BuiltIn::ALL
+            .into_iter()
+            .filter_map(BuiltIn::bundled)
+            .flat_map(|imported| imported.themes)
+            .collect()
     }
 }
 
 /// The set of built-ins copied in: 1 the first three, 2 adds Mastering
-/// advanced, Producing and Compact, and the Mixing with a Phase Scope.
-const BUILT_INS_VERSION: u32 = 2;
+/// advanced, Producing and Compact, and the Mixing with a Phase Scope; 3 the
+/// standard ones from bundled files (Mixing/Producing, Mastering and
+/// Producing Top-Bar 1.0).
+const BUILT_INS_VERSION: u32 = 3;
 /// The Bar Compact docks: thin.
 const COMPACT_THICKNESS: f32 = 90.0;
 
@@ -186,7 +224,17 @@ impl PresetData {
     pub fn built_in(kind: BuiltIn) -> PresetData {
         use crate::meters::MeterKind::*;
         use Direction::{SideBySide, Stacked};
+        if let Some(imported) = kind.bundled() {
+            return PresetData {
+                name: kind.name().to_owned(),
+                built_in: Some(kind),
+                ..imported.preset
+            };
+        }
         let (meters, tree) = match kind {
+            BuiltIn::Mastering1 | BuiltIn::MixingProducing1 | BuiltIn::ProducingTopBar1 => {
+                unreachable!("read from its file above")
+            }
             // Waveform 0, Spectrum 1, Stereometer 2, Loudness Meter 3.
             BuiltIn::Bar => (default_meters(), WindowLayout::mixing().tree),
             BuiltIn::Mastering => (
@@ -619,11 +667,13 @@ impl Presets {
         self.settings.order = self.entries.iter().map(|e| e.file.clone()).collect();
     }
 
-    /// For an install from before the later built-ins: copies them in once,
-    /// at the end of the list, and makes an untouched first Mixing the new
-    /// one.
+    /// For an install from before the standard built-ins: copies them in
+    /// once, at the end of the list (its own Presets, the earlier built-ins'
+    /// copies among them, stay). From before version 2, an untouched first
+    /// Mixing also becomes the one with a Phase Scope.
     fn add_later_built_ins(&mut self) {
-        for kind in BuiltIn::LATER {
+        let before = self.settings.first_launch.built_ins_version;
+        for kind in BuiltIn::ALL {
             let file = kind.file_name();
             if self.position(&file).is_none() {
                 let data = PresetData::built_in(kind);
@@ -645,7 +695,8 @@ impl Presets {
             }
         }
         let mixing = BuiltIn::Mixing.file_name();
-        if let Some(entry) = self.entries.iter_mut().find(|e| e.file == mixing)
+        if before < 2
+            && let Some(entry) = self.entries.iter_mut().find(|e| e.file == mixing)
             && let State::Ok {
                 data,
                 read_only: false,

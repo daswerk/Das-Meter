@@ -106,7 +106,7 @@ fn exported() -> (String, String) {
 #[test]
 fn export_holds_the_preset_and_its_custom_themes_only() {
     let (name, text) = exported();
-    assert_eq!(name, "Bar");
+    assert_eq!(name, "Producing Top-Bar 1.0");
     let imported = SharedPreset::from_toml(&text).unwrap();
     let (data, themes) = (imported.preset, imported.themes);
     assert_eq!(data.bar.edge, Edge::Top);
@@ -146,8 +146,8 @@ fn importing_switches_to_the_preset_under_a_free_name() {
     let (_, text) = exported();
     let mut other = App::launch(Vec::new());
     other.import(&text);
-    // Another Mac already has a "Bar": nothing is overwritten.
-    assert_eq!(other.current(), "Bar (2)");
+    // Another Mac already has this built-in: nothing is overwritten.
+    assert_eq!(other.current(), "Producing Top-Bar 1.0 (2)");
     let scene = other.scene();
     assert_eq!(scene.windows[0].edge, Some(Edge::Top));
     assert_eq!(
@@ -162,9 +162,12 @@ fn importing_switches_to_the_preset_under_a_free_name() {
             _ => None,
         })
         .collect();
-    assert!(written.contains(&"bar-2.toml"), "{written:?}");
     assert!(
-        written.contains(&"bar.toml"),
+        written.contains(&"producing-top-bar-1-0-2.toml"),
+        "{written:?}"
+    );
+    assert!(
+        written.contains(&"producing-top-bar-1.0.toml"),
         "the built-in copy is still there"
     );
 }

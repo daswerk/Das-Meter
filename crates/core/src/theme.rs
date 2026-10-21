@@ -772,9 +772,10 @@ impl Theme {
         }
     }
 
-    /// The built-ins, in the order they're listed.
-    pub fn built_ins() -> [Theme; 7] {
-        [
+    /// The built-ins, in the order they're listed: the palettes, then the
+    /// Themes the standard built-in Presets come with.
+    pub fn built_ins() -> Vec<Theme> {
+        let mut themes = vec![
             Theme::dark(),
             Theme::light(),
             Theme::high_contrast(),
@@ -782,7 +783,9 @@ impl Theme {
             Theme::plain(DEEP_TURQUOISE, Palette::deep_turquoise()),
             Theme::plain(GRAPHITE, Palette::graphite()),
             Theme::plain(NOCTURNE, Palette::nocturne()),
-        ]
+        ];
+        themes.extend(crate::presets::BuiltIn::themes());
+        themes
     }
 
     /// The Theme as a TOML file.

@@ -37,7 +37,8 @@ Das-Meter copies the Send Plugin into your plug-in folders itself (see
 
 ## First launch
 
-Das-Meter opens as a **Bar** docked to the edge of your screen, with a welcome
+Das-Meter opens as a **Bar** docked to the top of your screen (the
+**Producing Top-Bar 1.0** Preset), with a welcome
 card next to it:
 
 - **Start listening** starts [System Capture](listen-to.md). On macOS, this is

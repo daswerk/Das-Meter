@@ -171,8 +171,9 @@ any of them, so one Meter can stand apart from its Theme:
 
 A **Preset** saves which Meters you see, how they're arranged, their settings
 and their Theme. Changes save on their own, and **Revert Preset** undoes them.
-Switch with ⌘1–⌘9. Built-ins for **Bar**, **Mixing**, **Mastering**,
-**Mastering advanced**, **Producing** and **Compact** get you started.
+Switch with ⌘1–⌘9. Three built-ins, each with its own Theme, get you
+started: **Producing Top-Bar 1.0**, **Mixing/Producing 1.0** and
+**Mastering 1.0**.
 **Export Preset…** writes one `.dasmeter-preset` file with its Theme inside,
 for someone else to import.
 
