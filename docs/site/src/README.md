@@ -20,5 +20,5 @@ Look are all yours to change; see [Themes](themes.md).
 - Using a DAW? See [Send Plugins](send-plugins.md).
 - What do the numbers mean? See [Measurements](measurements.md).
 
-The Loudness Meter measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, checked
-against the EBU test set.
+The Loudness Meter measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, tested
+on those standards' cases with signals we generate ourselves.

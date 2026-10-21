@@ -45,7 +45,7 @@ settings.
 </tr>
 <tr>
 <td><b>Spectrogram</b>: the Spectrum over time, scrolling. Drag a box to zoom in.</td>
-<td><b>Loudness Meter</b>: momentary, short-term and integrated LUFS, LRA, true peak, PLR and PSR, as big numbers, bars or a loudness graph, with a target line. It measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, checked against the EBU test set (<a href="https://daswerk.github.io/Das-Meter/measurements.html">what that means</a>).</td>
+<td><b>Loudness Meter</b>: momentary, short-term and integrated LUFS, LRA, true peak, PLR and PSR, as big numbers, bars or a loudness graph, with a target line. It measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, tested on those standards' cases with our own signals (<a href="https://daswerk.github.io/Das-Meter/measurements.html">what that means</a>).</td>
 </tr>
 <tr>
 <td><img src="docs/images/meter-stereometer.png" alt="The Stereometer and its correlation bar"></td>
