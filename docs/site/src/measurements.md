@@ -51,7 +51,10 @@ changing them later would silently move everyone's numbers.
   48, 96 and 192 kHz. Tolerances: LUFS ±0.1 LU, LRA ±1 LU, true peak
   +0.2/−0.4 dB, sample peak ±0.01 dB, RMS ±0.05 dB, correlation ±0.02; a
   Spectrum sine on a bin ±0.1 dB.
-- **Every release:** the EBU conformance test set at 48 kHz.
+- **Before releases (planned):** the official EBU conformance test files at
+  48 kHz ([#45](https://github.com/daswerk/Das-Meter/issues/45)). Until that
+  run exists, the Tech 3341/3342 cases are covered only by our own signals
+  above.
 
 There's no official certification, so there's no badge.
 
