@@ -317,8 +317,14 @@ over about a third of an octave, as the ear hears balance.
   **Low-mid** (120–300), **Mid** (300 Hz–2 kHz) and **High**, each a bar
   showing how far the mix is from the Target, inside its range or not.
 - **Auto** (the default) shows Fine in a window and Broad in the Bar.
-- **Low end zoom** shows only 20–300 Hz, with a grid line on every note and
-  the keys' root notes marked, so a bass that's too much on one note shows.
+- **Low end zoom** (the **Low end** button on the Meter) shows only
+  20–300 Hz, with a grid line on every note and the keys' root notes marked,
+  so a bass that's too much on one note shows.
+
+The view keeps its level range steady as the music moves: it widens at once
+when the curves would leave it, and narrows, smoothly, only when there's
+plenty of room. Point at the curves to see the frequency and note there, and
+how far the mix sits from the Target at that point.
 
 Under the curves, the low end's figures: the loudest **Sub** and **Bass**
 notes ("Sub A1 55.0 Hz"), **Low mono** (how alike Left and Right are below
@@ -332,9 +338,24 @@ Bass (peak over average, in dB: how punchy they are) against the Target's.
 after a change. **Compare file…** compares a bounce of your mix instead of
 the live Source.
 
+### Listening A/B
+
+When the song you compare with came from a file, **A** and **B** appear on
+the Meter: **A** is your mix, **B** plays the song, turned up or down to
+your mix's loudness so the louder one doesn't sound better just for being
+louder. The song keeps running while you hear A, so switching back picks up
+where it is; it loops at its end. While B plays, the mix's average pauses.
+
+Listening to a Send Plugin, that Send Plugin goes quiet while B plays (and
+plays again if Das-Meter quits). On System Capture Das-Meter can't quiet
+other apps: stop your DAW's playback to hear the song alone.
+
 ### Targets
 
-Make a Target from songs that sound the way you want, your own references:
+Make a Target from songs that sound the way you want, your own references.
+The Meter compares with one of its songs, picked at the top left of the
+Meter (the song you just added, at first); **Average of all** compares with
+all of them together instead.
 
 - **Learn a song…**, play a song from start to end, name it and the Target,
   then **Add**.
@@ -345,18 +366,20 @@ Make a Target from songs that sound the way you want, your own references:
 
 By default only each song's **loud parts** count (its drops and choruses,
 within 4 LU of its loudest moments); **Teach with ▸ Whole song** counts all
-of it. The Target's range is how far its songs differ from each other; with
-one song it's ±2.5 dB. **Songs** lists them, and **×** removes one.
+of it. Averaged, the Target's range is how far its songs differ from each
+other; one song's is ±2.5 dB. **Songs** lists them, and **×** removes one.
 
 Each song's key is detected, and its low end is lined up by key before the
 songs are averaged, so the Target stays note-sharp. When your mix is in
 another key ("Your mix is in F minor, this Target's songs in A minor"),
-**Shift** moves the Target's low end (below 300 Hz) to your key. **Key**
-can also be set by hand instead of detected.
+**Shift** moves the Target's low end (below 300 Hz) to your key, and it
+stays there, whatever the key detection says next, until **Undo shift**.
+**Mix key** can also be set by hand instead of detected.
 
 Targets are files in the targets folder (next to `curves` and `themes`),
-one per Target, holding each song's figures but never any audio. An
-exported Preset takes its Targets along. Das-Meter ships no Targets: make
+one per Target, holding each song's figures and where its file is (for
+A/B), never any audio. An exported Preset takes its Targets along, without
+where the files are. Das-Meter ships no Targets: make
 your own from music you know.
 
 To show it, right-click a Meter and choose **Change Meter ▸ Tonal Balance**,

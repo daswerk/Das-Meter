@@ -149,11 +149,25 @@ impl SendPluginInput {
         }
     }
 
+    /// A/B: asks the Send Plugin with `id` for silence, or its audio again.
+    pub fn set_muted(&self, id: u64, muted: bool) {
+        let Some(reader) = &self.reader else {
+            return;
+        };
+        if let Some(info) = self.slots.iter().find(|s| s.id == id) {
+            reader.set_muted(info.slot, muted);
+        }
+    }
+
     /// Stops listening to everything: the app switched to System Capture.
     pub fn stop(&mut self) {
         if let Some(reader) = &self.reader {
             for listening in self.listened.values() {
                 reader.set_listened(listening.slot, false);
+            }
+            // A/B: nothing stays quiet once the app stops listening.
+            for info in &self.slots {
+                reader.set_muted(info.slot, false);
             }
         }
         self.listened.clear();

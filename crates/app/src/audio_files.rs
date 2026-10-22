@@ -69,6 +69,14 @@ pub fn song_name(path: &Path) -> String {
 /// Decodes `path`, handing `each` its audio as interleaved stereo (mono
 /// doubled, beyond two channels the first two) with its sample rate.
 pub fn decode(path: &Path, mut each: impl FnMut(&[f32], u32)) -> Result<(), String> {
+    decode_while(path, |audio, rate| {
+        each(audio, rate);
+        true
+    })
+}
+
+/// As [`decode`], stopping early when `each` returns false.
+pub fn decode_while(path: &Path, mut each: impl FnMut(&[f32], u32) -> bool) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let stream = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
@@ -130,7 +138,9 @@ pub fn decode(path: &Path, mut each: impl FnMut(&[f32], u32)) -> Result<(), Stri
         if frames as f64 > MAX_SECONDS * f64::from(rate) {
             return Err("longer than two hours".into());
         }
-        each(&stereo, rate);
+        if !each(&stereo, rate) {
+            return Ok(());
+        }
     }
     if frames == 0 {
         return Err("no audio in it".into());
@@ -181,6 +191,8 @@ pub enum Report {
         purpose: Purpose,
         parts: Parts,
         name: String,
+        /// The file, for listening to it later (A/B).
+        path: PathBuf,
         result: Result<Box<Summary>, String>,
     },
     /// The batch is done.
@@ -208,6 +220,7 @@ impl Uploads {
                             purpose: job.purpose.clone(),
                             parts: job.parts,
                             name: song_name(path),
+                            path: path.clone(),
                             result,
                         });
                         wake();

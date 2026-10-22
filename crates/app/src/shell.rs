@@ -74,6 +74,8 @@ pub fn run() {
         modifiers: ModifiersState::empty(),
         ui_view: None,
         ui_wake: None,
+        players: HashMap::new(),
+        quieted: Vec::new(),
         #[cfg(target_os = "macos")]
         main_menu: None,
         #[cfg(target_os = "macos")]
@@ -226,6 +228,11 @@ struct Shell {
     ui_view: Option<Scene>,
     /// When an egui layer asked to be drawn again (an animation, a tooltip).
     ui_wake: Option<Duration>,
+    /// A/B: each Tonal Balance Meter's song, playing since B was first
+    /// chosen (silent while A is heard), and the Send Plugins asked to be
+    /// quiet while B plays.
+    players: HashMap<usize, crate::playback::Player>,
+    quieted: Vec<u64>,
     #[cfg(target_os = "macos")]
     main_menu: Option<crate::main_menu::MainMenu>,
     /// The Send Plugin refresh, updates and uninstall.
@@ -951,6 +958,61 @@ impl Shell {
         }
     }
 
+    /// A/B: plays each Tonal Balance Meter's song while it's on B (at the
+    /// gain that matches the mix), silent but running on while on A, and
+    /// asks the Send Plugin it listens to for silence while B plays.
+    fn sync_ab(&mut self) {
+        let Some(scene) = self.core.scene() else {
+            return;
+        };
+        let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let wanted: Vec<(usize, dasmeter_core::AbScene, Option<u64>)> = scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .filter_map(|m| {
+                let ab = m.tonal_balance.as_ref()?.ab.clone()?;
+                Some((m.meter, ab, m.picked.filter(|_| on_send_plugins)))
+            })
+            .collect();
+        // A song that's no longer picked stops.
+        self.players.retain(|meter, player| {
+            wanted
+                .iter()
+                .any(|(m, ab, _)| m == meter && ab.file == player.file())
+        });
+        for (meter, ab, _) in &wanted {
+            if ab.b && !self.players.contains_key(meter) {
+                match crate::playback::Player::start(&ab.file) {
+                    Ok(player) => {
+                        self.players.insert(*meter, player);
+                    }
+                    Err(reason) => eprintln!("A/B: {reason}"),
+                }
+            }
+            if let Some(player) = self.players.get(meter) {
+                let gain = if ab.b {
+                    10f32.powf(ab.gain_db / 20.0)
+                } else {
+                    0.0
+                };
+                player.set_gain(gain);
+            }
+        }
+        let quiet: Vec<u64> = wanted
+            .iter()
+            .filter(|(_, ab, _)| ab.b)
+            .filter_map(|(_, _, picked)| *picked)
+            .collect();
+        for id in self.quieted.iter().filter(|id| !quiet.contains(id)) {
+            self.send_plugins.set_muted(*id, false);
+        }
+        for id in &quiet {
+            self.send_plugins.set_muted(*id, true);
+        }
+        self.quieted = quiet;
+    }
+
     /// Whether any window with Meters can be seen.
     fn report_visible(&mut self) {
         let visible = self
@@ -1439,6 +1501,7 @@ impl ApplicationHandler for Shell {
         let wake_at = match decision {
             Decision::Draw => {
                 self.sync_windows(event_loop);
+                self.sync_ab();
                 None
             }
             Decision::Sleep { until } => until,
@@ -1569,11 +1632,13 @@ impl Shell {
                     purpose,
                     parts,
                     name,
+                    path,
                     result,
                 } => {
                     match (purpose, result) {
                         (Purpose::Target(target), Ok(summary)) => {
-                            let song = dasmeter_core::TargetSong::new(&name, parts, &summary);
+                            let song = dasmeter_core::TargetSong::new(&name, parts, &summary)
+                                .with_file(&path.to_string_lossy());
                             self.core.handle(
                                 Event::AddTargetSongs {
                                     meter,

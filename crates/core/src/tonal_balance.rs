@@ -154,6 +154,9 @@ pub(crate) struct TonalBalanceAnalyser {
     frozen: Option<Vec<f32>>,
     /// A file compared in place of the live Source: its name and summary.
     compare: Option<(String, Summary)>,
+    /// A/B: the reference plays (B), so what comes in isn't the mix alone:
+    /// nothing is added to the average, nor to a song being learned.
+    paused: bool,
 }
 
 impl TonalBalanceAnalyser {
@@ -168,6 +171,7 @@ impl TonalBalanceAnalyser {
             learning: None,
             frozen: None,
             compare: None,
+            paused: false,
         }
     }
 
@@ -194,7 +198,10 @@ impl TonalBalanceAnalyser {
     /// the drawn curve moved toward the average.
     pub fn process(&mut self, interleaved: &[f32]) -> bool {
         self.frames.process(interleaved);
-        let frames = self.frames.take_frames();
+        let mut frames = self.frames.take_frames();
+        if self.paused {
+            frames.clear();
+        }
         let added = !frames.is_empty();
         for frame in frames {
             if let Some(learning) = &mut self.learning
@@ -323,6 +330,11 @@ impl TonalBalanceAnalyser {
     pub fn frozen(&self) -> Option<&Vec<f32>> {
         self.frozen.as_ref()
     }
+
+    /// A/B: B pauses the average; A carries on. Returns whether it changed.
+    pub fn set_paused(&mut self, paused: bool) -> bool {
+        std::mem::replace(&mut self.paused, paused) != paused
+    }
 }
 
 /// A Tonal Balance Meter's state for its menu and drawing.
@@ -338,7 +350,24 @@ pub struct TonalBalanceScene {
     pub comparing: Option<String>,
     /// Files being analysed for it, and those that couldn't be.
     pub upload: Option<UploadScene>,
+    /// A/B listening, when the picked song has an audio file to play.
+    pub ab: Option<AbScene>,
 }
+
+/// A/B listening on a Tonal Balance Meter: your mix (A) or the picked song (B).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AbScene {
+    /// B: the song plays (and a Send Plugin listened to goes quiet).
+    pub b: bool,
+    /// The song's audio file.
+    pub file: String,
+    /// How much to turn the song up (or down) to match the mix's loudness,
+    /// in dB, to 0.1; 0 until the mix has been heard.
+    pub gain_db: f32,
+}
+
+/// The most the gain match turns a song up or down, in dB.
+pub const AB_GAIN_RANGE: (f32, f32) = (-30.0, 12.0);
 
 /// Audio files being analysed for a Tonal Balance Meter, in the background.
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -381,6 +410,9 @@ pub struct TargetScene {
     pub suggest_shift: Option<Key>,
     /// The key it was shifted to, which stays until undone.
     pub shifted_to: Option<Key>,
+    /// The picked song's audio file and loudness (about LUFS), when one
+    /// song is picked and it came from a file.
+    pub song_file: Option<(String, f32)>,
 }
 
 impl TargetScene {
@@ -430,6 +462,7 @@ impl TargetScene {
                 home_key: None,
                 suggest_shift: None,
                 shifted_to: settings.shift_to,
+                song_file: None,
             };
         };
         // One song (clamped to the list), or all of them.
@@ -485,6 +518,13 @@ impl TargetScene {
             home_key,
             suggest_shift,
             shifted_to: settings.shift_to.filter(|_| home_key.is_some()),
+            song_file: match pick {
+                TargetPick::Song(_) => picked
+                    .songs
+                    .first()
+                    .and_then(|s| Some((s.file.clone()?, s.loudness))),
+                TargetPick::Average => None,
+            },
         }
     }
 }

@@ -1159,6 +1159,12 @@ impl Meter {
         Some(summary)
     }
 
+    /// A/B on a Tonal Balance Meter: B pauses its average. Returns whether
+    /// it changed.
+    pub fn set_listening_b(&mut self, b: bool) -> bool {
+        self.tonal_balance().is_some_and(|a| a.set_paused(b))
+    }
+
     /// Freezes a Tonal Balance Meter's curve as a ghost, or lets it go;
     /// returns whether anything changed.
     pub fn toggle_freeze(&mut self) -> bool {

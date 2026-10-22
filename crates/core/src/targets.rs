@@ -39,6 +39,10 @@ pub struct TargetSong {
     pub regions: [f32; 5],
     /// Level per point of the Tonal Balance grid, relative to the loudness.
     pub curve: Vec<f32>,
+    /// Where its audio file is on this machine, for listening to it (A/B).
+    /// None for a song taught by playing, or in a shared Preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 fn tenth(value: f32) -> f32 {
@@ -61,6 +65,15 @@ impl TargetSong {
             low_end_mono: summary.low_end_mono.map(|m| (m * 100.0).round() / 100.0),
             regions: summary.regions.map(tenth),
             curve: summary.curve.iter().copied().map(tenth).collect(),
+            file: None,
+        }
+    }
+
+    /// The same song, with where its audio file is.
+    pub fn with_file(self, file: &str) -> TargetSong {
+        TargetSong {
+            file: Some(file.to_owned()),
+            ..self
         }
     }
 
@@ -231,6 +244,7 @@ mod tests {
             low_end_mono: Some(0.95),
             regions: [level; 5],
             curve: vec![level; points],
+            file: None,
         }
     }
 

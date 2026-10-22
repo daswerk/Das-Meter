@@ -61,7 +61,7 @@ pub use targets::{Target, TargetSong, Targets};
 pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 pub use tonal_balance::{
-    KeyChoice, TargetPick, TargetScene, TargetSongInfo, TonalBalanceMeterSettings,
+    AbScene, KeyChoice, TargetPick, TargetScene, TargetSongInfo, TonalBalanceMeterSettings,
     TonalBalanceScene, TonalView, UploadScene,
 };
 
@@ -333,6 +333,12 @@ pub enum Event<'a> {
     FreezeTonalBalance {
         meter: usize,
     },
+    /// A/B listening on a Tonal Balance Meter: B plays its picked song (the
+    /// shell plays it) and pauses its average; A is the mix again.
+    ListenB {
+        meter: usize,
+        b: bool,
+    },
     /// How the files being analysed for a Tonal Balance Meter are getting
     /// on, or (`None`) that it's over.
     UploadProgress {
@@ -457,6 +463,8 @@ struct MeterSlot {
     overlay: Option<Pick>,
     /// The ID of the Overlay Source whose audio the Phase Scope takes.
     overlay_showing: Option<u64>,
+    /// A/B on a Tonal Balance Meter: its song plays (B). Not saved.
+    listening_b: bool,
     /// How lit it is: dims in silence in the Smooth Look.
     activity: activity::Activity,
 }
@@ -575,6 +583,7 @@ impl AppCore {
                     showing: None,
                     overlay: None,
                     overlay_showing: None,
+                    listening_b: false,
                     activity: activity::Activity::default(),
                 })
                 .collect(),
@@ -928,6 +937,7 @@ impl AppCore {
                 self.onboarding.loaded(&self.presets.settings.first_launch);
                 let stored = &self.presets.settings;
                 self.app.frame_rate_cap = stored.frame_rate_cap;
+                self.app.match_display = stored.match_display;
                 self.app.check_for_updates = stored.check_for_updates;
                 self.clamp_frame_rate_cap();
                 if let Some(data) = open {
@@ -997,6 +1007,7 @@ impl AppCore {
         if let SetApp(app) = event {
             let stored = &mut self.presets.settings;
             stored.frame_rate_cap = app.frame_rate_cap;
+            stored.match_display = app.match_display;
             stored.check_for_updates = app.check_for_updates;
             self.presets.save_settings();
         }
@@ -1170,8 +1181,23 @@ impl AppCore {
             let target = self.targets.get(&name);
             TargetScene::new(name, target, &settings, slot.meter.tonal_summary())
         });
+        let ab = target
+            .as_ref()
+            .and_then(|t| t.song_file.clone())
+            .map(|(file, loudness)| AbScene {
+                b: slot.listening_b,
+                file,
+                gain_db: slot.meter.tonal_summary().map_or(0.0, |mix| {
+                    let gain = (mix.loudness - loudness).clamp(
+                        tonal_balance::AB_GAIN_RANGE.0,
+                        tonal_balance::AB_GAIN_RANGE.1,
+                    );
+                    (gain * 10.0).round() / 10.0
+                }),
+            });
         Some(TonalBalanceScene {
             target,
+            ab,
             learning: slot.meter.learning_seconds(),
             frozen: slot.meter.is_frozen(),
             comparing: slot.meter.comparing().map(str::to_owned),
@@ -1181,6 +1207,34 @@ impl AppCore {
                 .find(|(m, _)| *m == meter)
                 .map(|(_, u)| u.clone()),
         })
+    }
+
+    /// The audio file a Tonal Balance Meter's A/B plays, if its pick has one.
+    fn ab_file(&self, meter: usize) -> Option<String> {
+        let slot = self.meters.get(meter)?;
+        let MeterSettings::TonalBalance(settings) = slot.meter.settings() else {
+            return None;
+        };
+        let name = slot.reference.clone()?;
+        TargetScene::new(
+            name,
+            self.targets.get(slot.reference.as_ref()?),
+            &settings,
+            None,
+        )
+        .song_file
+        .map(|(file, _)| file)
+    }
+
+    /// A/B ends on a Meter whose pick no longer has a file to play.
+    fn end_unplayable_b(&mut self) {
+        for meter in 0..self.meters.len() {
+            if self.meters[meter].listening_b && self.ab_file(meter).is_none() {
+                let slot = &mut self.meters[meter];
+                slot.listening_b = false;
+                slot.meter.set_listening_b(false);
+            }
+        }
     }
 
     fn show_note(&mut self, note: Note, now: Duration) {
@@ -1261,6 +1315,7 @@ impl AppCore {
                 showing: None,
                 overlay: m.overlay.clone(),
                 overlay_showing: None,
+                listening_b: false,
                 activity: activity::Activity::default(),
             })
             .collect();
@@ -1925,6 +1980,18 @@ impl AppCore {
                     return;
                 }
             }
+            Event::ListenB { meter, b } => {
+                let playable = self.ab_file(meter).is_some();
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let b = b && playable;
+                if slot.listening_b == b {
+                    return;
+                }
+                slot.listening_b = b;
+                slot.meter.set_listening_b(b);
+            }
             Event::FreezeTonalBalance { meter } => {
                 if !self
                     .meters
@@ -2051,6 +2118,7 @@ impl AppCore {
                 self.clamp_frame_rate_cap();
             }
         }
+        self.end_unplayable_b();
         self.changed = true;
     }
 
@@ -2274,6 +2342,7 @@ impl AppCore {
             showing: None,
             overlay: self.meters[like].overlay.clone(),
             overlay_showing: None,
+            listening_b: false,
             activity: activity::Activity::default(),
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {

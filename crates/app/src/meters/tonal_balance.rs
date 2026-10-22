@@ -5,7 +5,7 @@
 //! it is and its crest against the Target's.
 
 use dasmeter_analysis::tonal_balance::{Band, FINE_BELOW_HZ, Region, Summary, tonal_grid};
-use dasmeter_core::{Colour, Role, TargetScene, TonalBalanceMeterSettings, TonalView};
+use dasmeter_core::{AbScene, Colour, Role, TargetScene, TonalBalanceMeterSettings, TonalView};
 
 use super::labels::Align;
 use super::shapes::{Area, smooth};
@@ -21,6 +21,8 @@ pub struct Drawn<'a> {
     pub target: Option<&'a TargetScene>,
     /// Where the pointer is, in the same pixels as the Meter, if it's over it.
     pub pointer: Option<[f32; 2]>,
+    /// A/B listening, when the picked song can be played.
+    pub ab: Option<&'a AbScene>,
 }
 
 /// How far the Fine view's top or bottom may sit from what's drawn before
@@ -101,25 +103,40 @@ const CONTROLS_MIN_WIDTH: f32 = 260.0;
 /// The on-Meter controls' sizes, in logical px.
 const TARGET_PICKER_WIDTH: f32 = 150.0;
 const LOW_END_WIDTH: f32 = 64.0;
+const AB_WIDTH: f32 = 56.0;
 const CONTROLS_HEIGHT: f32 = 18.0;
 const CONTROLS_GAP: f32 = 8.0;
 
 /// Where the controls over a Tonal Balance Meter go (egui draws them on
-/// the title line): the Target picker at its left, Low end zoom at its
-/// right while the curves are shown.
+/// the title line): the Target picker at its left; at its right A/B when
+/// the picked song can be played, and Low end zoom while the curves show.
 #[derive(Clone, Copy, Debug)]
 pub struct Controls {
     pub target: Area,
     pub low_end: Option<Area>,
+    pub ab: Option<Area>,
+}
+
+impl Controls {
+    /// Where the title line's text on the right has to end.
+    fn right_text_end(&self, fallback: f32, gap: f32) -> f32 {
+        [self.ab, self.low_end]
+            .into_iter()
+            .flatten()
+            .map(|a| a.x - gap)
+            .fold(fallback, f32::min)
+    }
 }
 
 /// The controls for a Meter drawn in `inner` (its area inside the padding),
 /// whose units are `scale` per logical px; `None` when there's no room.
+/// `ab`: the picked song can be listened to.
 pub fn controls(
     inner: Area,
     scale: f32,
     settings: &TonalBalanceMeterSettings,
     bar: bool,
+    ab: bool,
 ) -> Option<Controls> {
     if inner.height <= ROOMY_HEIGHT * scale || inner.width < CONTROLS_MIN_WIDTH * scale {
         return None;
@@ -138,7 +155,20 @@ pub fn controls(
         width: LOW_END_WIDTH * scale,
         height,
     });
-    Some(Controls { target, low_end })
+    let ab = ab.then(|| {
+        let right = low_end.map_or(inner.right(), |l| l.x - CONTROLS_GAP * scale);
+        Area {
+            x: right - AB_WIDTH * scale,
+            y,
+            width: AB_WIDTH * scale,
+            height,
+        }
+    });
+    Some(Controls {
+        target,
+        low_end,
+        ab,
+    })
 }
 
 fn is_broad(settings: &TonalBalanceMeterSettings, bar: bool) -> bool {
@@ -196,7 +226,8 @@ pub fn draw(
 ) {
     let line = c.px(14.0) * c.styling.text_scale;
     let roomy = area.height > c.px(ROOMY_HEIGHT);
-    let controls = controls(area, c.scale, settings, bar);
+    let ab = drawn.target.is_some_and(|t| t.song_file.is_some());
+    let controls = controls(area, c.scale, settings, bar, ab);
     let (title, rest) = area.split_top(line.max(c.px(CONTROLS_HEIGHT)) + c.px(4.0));
     title_line(c, title, &drawn, controls);
     let (plot, readouts) = if roomy {
@@ -274,9 +305,15 @@ fn title_line(c: &mut Canvas, area: Area, drawn: &Drawn, controls: Option<Contro
     let y = area.y + (c.px(CONTROLS_HEIGHT) - c.px(14.0) * c.styling.text_scale).max(0.0) / 2.0;
     let x = controls.map_or(area.x, |k| k.target.right() + c.px(CONTROLS_GAP));
     c.text(&left, x, y, 11.0, colour, Align::Left);
-    let right_x = controls
-        .and_then(|k| k.low_end)
-        .map_or(area.right(), |l| l.x - c.px(CONTROLS_GAP));
+    let right_x = controls.map_or(area.right(), |k| {
+        k.right_text_end(area.right(), c.px(CONTROLS_GAP))
+    });
+    // B: what's heard is the song, at the gain that matches the mix.
+    if let Some(ab) = drawn.ab.filter(|ab| ab.b) {
+        let right = format!("Hearing B  {:+.1} dB", ab.gain_db);
+        c.text(&right, right_x, y, 10.0, accent, Align::Right);
+        return;
+    }
     if let Some(key) = drawn.target.and_then(|t| t.suggest_shift) {
         let right = format!("Shift Target to {}?", key.name());
         c.text(&right, right_x, y, 10.0, accent, Align::Right);

@@ -41,6 +41,29 @@ impl AudioSend {
             writer.push(left, right);
         }
     }
+
+    /// Whether the app asks for silence while it plays a reference (A/B).
+    pub fn muted(&self) -> bool {
+        self.writer.as_ref().is_some_and(AudioWriter::muted)
+    }
+}
+
+/// How much the A/B mute's gain moves per sample: about 10 ms from on to off.
+pub const MUTE_STEP: f32 = 1.0 / 480.0;
+
+/// Scales `buffer` by a gain going from `from` toward `to` by [`MUTE_STEP`]
+/// a sample; returns where it got to.
+pub fn ramp(buffer: &mut [f32], from: f32, to: f32) -> f32 {
+    let mut gain = from;
+    for sample in buffer {
+        gain = if gain < to {
+            (gain + MUTE_STEP).min(to)
+        } else {
+            (gain - MUTE_STEP).max(to)
+        };
+        *sample *= gain;
+    }
+    gain
 }
 
 /// Copies `input` to `output`, as far as both go. Stereo passes through unchanged.
@@ -70,4 +93,27 @@ pub fn timing(
         signature: signature.unwrap_or((4, 4)),
         playing,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mute_fades_out_and_back_without_a_click() {
+        let mut block = vec![1.0f32; 240];
+        let half = ramp(&mut block, 1.0, 0.0);
+        assert!((half - 0.5).abs() < 1e-3, "{half}");
+        assert!(
+            block
+                .windows(2)
+                .all(|w| (w[0] - w[1]).abs() <= MUTE_STEP * 1.01),
+            "no step bigger than one sample's"
+        );
+        let mut rest = vec![1.0f32; 480];
+        assert_eq!(ramp(&mut rest, half, 0.0), 0.0);
+        assert_eq!(*rest.last().unwrap(), 0.0, "silent once there");
+        let mut back = vec![1.0f32; 480];
+        assert_eq!(ramp(&mut back, 0.0, 1.0), 1.0);
+    }
 }

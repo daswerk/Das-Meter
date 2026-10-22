@@ -405,6 +405,7 @@ impl MeterRenderer {
                         target: meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref()),
                         pointer: pointer
                             .map(|[x, y]| [area.x + x * area.width, area.y + y * area.height]),
+                        ab: meter.tonal_balance.as_ref().and_then(|t| t.ab.as_ref()),
                     },
                     look.bar,
                     &mut tonal,

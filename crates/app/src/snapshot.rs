@@ -347,6 +347,25 @@ fn tonal_balance(core: &mut AppCore, variant: &str, now: Duration) -> Result<Dur
     );
     core.handle(Event::ResetLongTerm { meter: 0 }, now);
     now = play(core, &music(10.0), now);
+    // A song from a file as well, picked, and heard (B).
+    if variant == "-ab" {
+        use dasmeter_analysis::tonal_balance::{FrameAnalyser, Parts, summarise};
+        let mut frames = FrameAnalyser::new(RATE, 120.0);
+        frames.process(&darker);
+        let summary = summarise(&frames.take_frames(), Parts::Loud).ok_or("no summary")?;
+        let song = dasmeter_core::TargetSong::new("Reference master", Parts::Loud, &summary)
+            .with_file("/music/reference-master.wav");
+        core.handle(
+            Event::AddTargetSongs {
+                meter: 0,
+                target: "My references",
+                songs: &[song],
+            },
+            now,
+        );
+        core.handle(Event::ListenB { meter: 0, b: true }, now);
+        now = play(core, &music(1.0), now);
+    }
     // The pointer over the Fine view, on the low end.
     if variant == "-cursor" {
         core.handle(Event::Pointer(Some((WindowKey::Main, [0.18, 0.5]))), now);

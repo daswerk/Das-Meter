@@ -170,6 +170,7 @@ fn song(name: &str, key: Key, peak_hz: f32) -> TargetSong {
         low_end_mono: Some(0.98),
         regions: [-12.0, -10.0, -14.0, -18.0, -24.0],
         curve,
+        file: None,
     }
 }
 
@@ -392,7 +393,7 @@ fn the_average_is_never_off_and_the_cutoff_stays_in_range() {
 #[test]
 fn an_exported_preset_carries_its_target_to_another_install() {
     let mut app = App::launch();
-    let songs = [song("One", A_MINOR, 55.0)];
+    let songs = [song("One", A_MINOR, 55.0).with_file("/Users/me/Music/One.wav")];
     app.core.handle(
         Event::AddTargetSongs {
             meter: METER,
@@ -405,6 +406,10 @@ fn an_exported_preset_carries_its_target_to_another_install() {
     let (_, file) = app.core.export().expect("a Preset is open");
     assert!(file.contains("[[targets]]"));
     assert!(!file.contains("[[curves]]"));
+    assert!(
+        !file.contains("/Users/me"),
+        "no file paths leave the machine"
+    );
 
     let mut other = App::launch();
     other.core.handle(Event::ImportPreset(&file), other.now);
@@ -590,4 +595,91 @@ fn it_compares_with_one_song_unless_the_average_is_picked() {
         app.now,
     );
     assert_eq!(app.target().unwrap().label(), "Third");
+}
+
+#[test]
+fn listening_to_b_pauses_the_average_and_matches_the_mixs_loudness() {
+    let mut app = App::launch();
+    let mut with_file = song("Ref", A_MINOR, 55.0).with_file("/music/ref.wav");
+    with_file.loudness = -8.0;
+    let taught = song("Taught", A_MINOR, 55.0);
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &[with_file, taught],
+        },
+        app.now,
+    );
+    app.play(3.0, 110.0);
+    let ab = |app: &mut App| app.meter().tonal_balance.unwrap().ab;
+    let a = ab(&mut app).expect("the song has a file to play");
+    assert!(!a.b);
+    assert_eq!(a.file, "/music/ref.wav");
+    let mix = app.mix_loudness();
+    assert!(
+        (a.gain_db - (mix - -8.0)).abs() < 0.11,
+        "{} vs {mix}",
+        a.gain_db
+    );
+
+    // B: the song plays, and what comes in isn't added to the average.
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: true,
+        },
+        app.now,
+    );
+    assert!(ab(&mut app).unwrap().b);
+    // Once the drawn curve has caught up with the average:
+    app.play(1.0, 440.0);
+    let before = app.curve();
+    app.play(2.0, 440.0);
+    assert_eq!(app.curve(), before, "paused while B plays");
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: false,
+        },
+        app.now,
+    );
+    app.play(2.0, 440.0);
+    assert_ne!(app.curve(), before, "A: it averages again");
+
+    // A song without a file (taught by playing) has no B; picking it ends B.
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: true,
+        },
+        app.now,
+    );
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(1),
+        ..app.settings()
+    });
+    assert_eq!(ab(&mut app), None);
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(0),
+        ..app.settings()
+    });
+    assert!(!ab(&mut app).unwrap().b, "B ended with the pick");
+}
+
+impl App {
+    /// The mix's average curve as the Meter shows it.
+    fn curve(&mut self) -> Vec<f32> {
+        match self.meter().state {
+            MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) => mix.curve.clone(),
+            other => panic!("no mix: {other:?}"),
+        }
+    }
+
+    fn mix_loudness(&mut self) -> f32 {
+        match self.meter().state {
+            MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) => mix.loudness,
+            other => panic!("no mix: {other:?}"),
+        }
+    }
 }

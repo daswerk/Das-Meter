@@ -1001,6 +1001,30 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
     }
     // Comparing: the mix against itself before, or a bounce in its place.
     widgets::section(ui, "Compare");
+    if let Some(ab) = &state.ab {
+        let mut b = ab.b;
+        if choice(
+            ui,
+            "Listen",
+            &mut b,
+            &[(false, "A: mix"), (true, "B: song")],
+        ) {
+            actions.push(Event::ListenB { meter: index, b });
+        }
+        let note = if scene.listen_to == ListenTo::SendPlugins {
+            format!(
+                "B plays the song {:+.1} dB to match the mix; the Send Plugin goes quiet meanwhile.",
+                ab.gain_db
+            )
+        } else {
+            format!(
+                "B plays the song {:+.1} dB to match the mix. Stop the DAW to hear it alone \
+                 (a Send Plugin goes quiet by itself).",
+                ab.gain_db
+            )
+        };
+        ui.label(RichText::new(note).small().weak());
+    }
     ui.horizontal_wrapped(|ui| {
         if ui
             .selectable_label(frozen, "Freeze")
@@ -2221,7 +2245,9 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
             crate::painter::meter_area(meter.frame, (size.x, size.y), scene.theme.styling.gap);
         let inner = area.inset(METER_PADDING);
         let bar = key == WindowKey::Bar;
-        let Some(controls) = crate::meters::tonal_balance_controls(inner, 1.0, &settings, bar)
+        let ab = meter.tonal_balance.as_ref().and_then(|t| t.ab.as_ref());
+        let Some(controls) =
+            crate::meters::tonal_balance_controls(inner, 1.0, &settings, bar, ab.is_some())
         else {
             continue;
         };
@@ -2294,6 +2320,19 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
                     .response
                     .on_hover_text("What to compare with: a song of the Target, or all of them averaged; add songs in the menu");
             });
+        if let (Some(area), Some(ab)) = (controls.ab, ab) {
+            egui::Area::new(egui::Id::new(("tonal balance a/b", meter.meter)))
+                .fixed_pos(egui::pos2(area.x + area.width, area.y))
+                .pivot(egui::Align2::RIGHT_TOP)
+                .order(egui::Order::Middle)
+                .show(ctx, |ui| {
+                    small(ui);
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.horizontal(|ui| {
+                        ab_buttons(ui, scene, meter.meter, ab, actions);
+                    });
+                });
+        }
         let Some(low_end) = controls.low_end else {
             continue;
         };
@@ -2317,6 +2356,42 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
                     });
                 }
             });
+    }
+}
+
+/// A/B: the mix (A) or the picked song (B), at the gain that matches them.
+fn ab_buttons(
+    ui: &mut egui::Ui,
+    scene: &Scene,
+    meter: usize,
+    ab: &dasmeter_core::AbScene,
+    actions: &mut Actions,
+) {
+    let hint = if scene.listen_to == ListenTo::SendPlugins {
+        "the Send Plugin goes quiet meanwhile"
+    } else {
+        "Das-Meter can't quiet other apps: stop the DAW to hear the song alone, \
+         or listen to a Send Plugin, which goes quiet by itself"
+    };
+    for (b, label, tip) in [
+        (false, "A", "Hear your mix".to_owned()),
+        (
+            true,
+            "B",
+            format!(
+                "Hear the song, {:+.1} dB to match the mix's loudness; {hint}",
+                ab.gain_db
+            ),
+        ),
+    ] {
+        if ui
+            .add(egui::Button::new(label).selected(ab.b == b))
+            .on_hover_text(tip)
+            .clicked()
+            && ab.b != b
+        {
+            actions.push(Event::ListenB { meter, b });
+        }
     }
 }
 
