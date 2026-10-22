@@ -15,7 +15,7 @@ mod gpu;
 mod macos;
 #[cfg(target_os = "macos")]
 mod main_menu;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod maintenance;
 mod meters;
 mod painter;
@@ -29,7 +29,7 @@ mod shell;
 mod snapshot;
 mod theme_files;
 mod ui;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod updates;
 mod widgets;
 

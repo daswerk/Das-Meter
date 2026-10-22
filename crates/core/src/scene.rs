@@ -263,6 +263,9 @@ impl Note {
             Note::OutputChanged => "Output changed: reset",
             Note::ImportFailed => "That file isn't a Das-Meter Preset: nothing was imported",
             Note::SendPluginUpdated => "Send Plugin updated: restart your DAW to use it",
+            Note::UpdateAvailable if cfg!(windows) => {
+                "A new Das-Meter is out: Update in the settings (App)"
+            }
             Note::UpdateAvailable => "A new Das-Meter is out: Das-Meter ▸ Update",
             Note::UpdateFailed => "The update didn't work: Das-Meter is unchanged",
         }

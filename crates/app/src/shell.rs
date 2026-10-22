@@ -44,6 +44,20 @@ const PRIVACY_SETTINGS: &str =
 /// one-time "is sending" note: rarely, as it wakes an otherwise idle app.
 const LIST_ON_CAPTURE_EVERY: Duration = Duration::from_secs(2);
 
+/// The `.dasmeter-preset` files on the command line: Explorer starts the app
+/// with the one double-clicked.
+#[cfg(not(target_os = "macos"))]
+fn launch_files() -> std::sync::mpsc::Receiver<std::path::PathBuf> {
+    let (sender, files) = std::sync::mpsc::channel();
+    for arg in std::env::args_os().skip(1) {
+        let path = std::path::PathBuf::from(arg);
+        if crate::sharing::is_preset(&path) {
+            let _ = sender.send(path);
+        }
+    }
+    files
+}
+
 pub fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
@@ -58,6 +72,8 @@ pub fn run() {
         audio: None,
         #[cfg(target_os = "macos")]
         opened_files: crate::macos::receive_opened_files(wake.clone()),
+        #[cfg(not(target_os = "macos"))]
+        opened_files: launch_files(),
         wake,
         send_plugins: SendPluginInput::new(),
         send_plugins_listed_at: Duration::ZERO,
@@ -81,7 +97,7 @@ pub fn run() {
         overviews: std::sync::mpsc::channel(),
         #[cfg(target_os = "macos")]
         main_menu: None,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         maintenance: None,
         #[cfg(target_os = "macos")]
         login_item: None,
@@ -206,8 +222,8 @@ struct Shell {
     /// System Capture, running only while Listen to is System Capture.
     audio: Option<Audio>,
     wake: Arc<dyn Fn() + Send + Sync>,
-    /// `.dasmeter-preset` files Finder opened with the app, to import.
-    #[cfg(target_os = "macos")]
+    /// `.dasmeter-preset` files Finder opened with the app (elsewhere: the
+    /// ones it was started with, as Explorer does), to import.
     opened_files: std::sync::mpsc::Receiver<std::path::PathBuf>,
     send_plugins: SendPluginInput,
     /// When the Send Plugins were last listed while on System Capture.
@@ -250,8 +266,8 @@ struct Shell {
     ),
     #[cfg(target_os = "macos")]
     main_menu: Option<crate::main_menu::MainMenu>,
-    /// The Send Plugin refresh, updates and uninstall.
-    #[cfg(target_os = "macos")]
+    /// Updates, and on macOS the Send Plugin refresh and uninstall.
+    #[cfg(any(target_os = "macos", windows))]
     maintenance: Option<crate::maintenance::Maintenance>,
     /// Launch at Login as last read from or given to macOS.
     #[cfg(target_os = "macos")]
@@ -831,6 +847,20 @@ impl Shell {
                 }
                 Request::Learn(topic) => self.open_url(&topic.url()),
                 Request::OpenPrivacySettings => self.open_url(PRIVACY_SETTINGS),
+                Request::CheckForUpdates =>
+                {
+                    #[cfg(windows)]
+                    if let Some(maintenance) = &mut self.maintenance {
+                        maintenance.check_now(&mut self.core, now);
+                    }
+                }
+                Request::Update =>
+                {
+                    #[cfg(windows)]
+                    if let Some(maintenance) = &mut self.maintenance {
+                        maintenance.update();
+                    }
+                }
             }
         }
     }
@@ -1296,6 +1326,10 @@ impl ApplicationHandler for Shell {
             maintenance.at_launch(&mut self.core, now);
             self.maintenance = Some(maintenance);
         }
+        #[cfg(windows)]
+        if self.maintenance.is_none() {
+            self.maintenance = Some(crate::maintenance::Maintenance::new(self.wake.clone()));
+        }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -1592,6 +1626,28 @@ impl ApplicationHandler for Shell {
             if let Some(scene) = self.core.scene() {
                 menu.show_presets(&scene.presets, clicked);
                 menu.show_missing_displays(&scene.missing_displays);
+            }
+        }
+        // After the Presets are read at launch, so an opened file isn't overwritten.
+        #[cfg(not(target_os = "macos"))]
+        if self.started {
+            for path in self.opened_files.try_iter() {
+                crate::sharing::import(&mut self.core, &path, now);
+            }
+        }
+        #[cfg(windows)]
+        if let Some(maintenance) = &mut self.maintenance {
+            if maintenance.poll(&mut self.core, now) {
+                event_loop.exit();
+                return;
+            }
+            maintenance.check_if_due(&mut self.core, now);
+            let offer = crate::ui::UpdateOffer {
+                available: maintenance.available().map(|r| r.version.to_string()),
+                busy: maintenance.busy(),
+            };
+            for app in self.windows.values() {
+                crate::ui::set_update_offer(&app.ui.ctx, offer.clone());
             }
         }
         self.pump_audio_files(now);

@@ -1,26 +1,62 @@
-//! Self-update on macOS (ADR 0004): updates bypass Gatekeeper, so the app
-//! checks them itself.
+//! Self-update on macOS (ADR 0004) and Windows (#46).
 //!
-//! Once a day (if the setting is on) it asks GitHub Releases for the latest
-//! release. **Update** downloads `Das-Meter-<version>.app.tar.gz`, verifies its
-//! minisign (Ed25519) signature against the public key built into the app,
-//! unpacks it next to the app, checks that the new app is signed with our
-//! certificate, swaps it in by rename and relaunches. If the app's folder
-//! isn't writable, the release page opens instead.
+//! Once a day (if the setting is on) the app asks GitHub Releases for the
+//! latest release. Every download is checked against the minisign (Ed25519)
+//! public key built into the app before it's used.
 //!
-//! The public key and the certificate's SHA-1 come in at build time
-//! (`DASMETER_MINISIGN_PUBLIC_KEY`, `DASMETER_CERTIFICATE_SHA1`); a build
-//! without them can check for updates but never installs one.
+//! - **macOS**: Update downloads `Das-Meter-<version>.app.tar.gz` (updates
+//!   bypass Gatekeeper, so the app checks them itself), unpacks it next to
+//!   the app, checks that the new app is signed with our certificate, swaps
+//!   it in by rename and relaunches. If the app's folder isn't writable, the
+//!   release page opens instead.
+//! - **Windows**: Update downloads `Das-Meter-<version>-windows-x64-setup.exe`
+//!   and, once the app has quit, runs it silently with administrator rights
+//!   (Windows asks). The installer replaces a Send Plugin a DAW has open at
+//!   the next restart, and starts the app again. If Windows' prompt is
+//!   declined, the old app starts again.
+//!
+//! The public key (and on macOS the certificate's SHA-1) comes in at build
+//! time (`DASMETER_MINISIGN_PUBLIC_KEY`, `DASMETER_CERTIFICATE_SHA1`); a
+//! build without them can check for updates but never installs one.
 
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::plugin_install::Version;
+/// A `major.minor.patch` version, compared numerically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Version(pub u32, pub u32, pub u32);
+
+impl Version {
+    /// Parses `1.2.3`, `v1.2.3`, `1.2` (patch 0) or `1` (minor and patch 0).
+    /// Anything after a `-` or `+` (pre-release, build) is ignored.
+    pub fn parse(text: &str) -> Option<Version> {
+        let text = text.trim();
+        let text = text.strip_prefix('v').unwrap_or(text);
+        let core = text.split(['-', '+']).next()?;
+        let mut parts = core.split('.');
+        let mut next = || -> Option<u32> {
+            match parts.next() {
+                Some(part) => part.parse().ok(),
+                None => Some(0),
+            }
+        };
+        let version = Version(next()?, next()?, next()?);
+        parts.next().is_none().then_some(version)
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
 
 /// The latest published release (drafts and pre-releases are left out).
 pub const LATEST_RELEASE: &str = "https://api.github.com/repos/daswerk/Das-Meter/releases/latest";
@@ -29,11 +65,44 @@ pub const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The release signing key, as `minisign -G` prints it (the base64 line).
 pub const PUBLIC_KEY: Option<&str> = option_env!("DASMETER_MINISIGN_PUBLIC_KEY");
 /// The SHA-1 of the self-made code-signing certificate every release is signed with.
+#[cfg(target_os = "macos")]
 pub const CERTIFICATE_SHA1: Option<&str> = option_env!("DASMETER_CERTIFICATE_SHA1");
 
 /// This app's version.
 pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("a major.minor.patch package version")
+}
+
+/// Which release file a platform installs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Platform {
+    /// The app as a tarball.
+    #[cfg_attr(
+        all(windows, not(test)),
+        expect(dead_code, reason = "Windows installs the installer")
+    )]
+    MacOs,
+    /// The installer.
+    #[cfg_attr(
+        all(target_os = "macos", not(test)),
+        expect(dead_code, reason = "macOS installs the tarball")
+    )]
+    Windows,
+}
+
+impl Platform {
+    #[cfg(target_os = "macos")]
+    pub const THIS: Platform = Platform::MacOs;
+    #[cfg(windows)]
+    pub const THIS: Platform = Platform::Windows;
+
+    /// The release file this platform installs, for `version`.
+    pub fn asset(self, version: &Version) -> String {
+        match self {
+            Platform::MacOs => format!("Das-Meter-{version}.app.tar.gz"),
+            Platform::Windows => format!("Das-Meter-{version}-windows-x64-setup.exe"),
+        }
+    }
 }
 
 /// A release that can be installed.
@@ -42,7 +111,8 @@ pub struct Release {
     pub version: Version,
     /// The release's page, opened when the app can't update itself.
     pub page: String,
-    pub tarball: String,
+    /// The tarball (macOS) or installer (Windows), and its minisign signature.
+    pub download: String,
     pub signature: String,
 }
 
@@ -65,15 +135,15 @@ struct GitHubAsset {
 }
 
 /// Reads GitHub's answer for the latest release. `None` for a draft, a
-/// pre-release, an odd tag, or one without the tarball and its signature.
-pub fn parse_release(json: &str) -> Option<Release> {
+/// pre-release, an odd tag, or one without `platform`'s file and its signature.
+pub fn parse_release(json: &str, platform: Platform) -> Option<Release> {
     let release: GitHubRelease = serde_json::from_str(json).ok()?;
     if release.draft || release.prerelease {
         return None;
     }
     let version = Version::parse(&release.tag_name)?;
-    let tarball_name = format!("Das-Meter-{version}.app.tar.gz");
-    let signature_name = format!("{tarball_name}.minisig");
+    let asset_name = platform.asset(&version);
+    let signature_name = format!("{asset_name}.minisig");
     let url = |name: &str| {
         release
             .assets
@@ -84,7 +154,7 @@ pub fn parse_release(json: &str) -> Option<Release> {
     Some(Release {
         version,
         page: release.html_url.clone(),
-        tarball: url(&tarball_name)?,
+        download: url(&asset_name)?,
         signature: url(&signature_name)?,
     })
 }
@@ -97,9 +167,13 @@ pub enum UpdateError {
     Download(String),
     /// The signature is missing, malformed, from another key, or doesn't match.
     BadSignature,
+    #[cfg(target_os = "macos")]
     Unpack(String),
     /// The unpacked app isn't signed with our certificate.
+    #[cfg(target_os = "macos")]
     NotOurCertificate,
+    /// The new app couldn't be put in place (macOS), or the installer
+    /// couldn't be saved or started (Windows).
     Swap(String),
 }
 
@@ -109,7 +183,9 @@ impl fmt::Display for UpdateError {
             UpdateError::NotConfigured => write!(f, "this build can't install updates"),
             UpdateError::Download(e) => write!(f, "the download failed: {e}"),
             UpdateError::BadSignature => write!(f, "the download's signature didn't check out"),
+            #[cfg(target_os = "macos")]
             UpdateError::Unpack(e) => write!(f, "the download couldn't be unpacked: {e}"),
+            #[cfg(target_os = "macos")]
             UpdateError::NotOurCertificate => {
                 write!(f, "the new app isn't signed with Das-Meter's certificate")
             }
@@ -134,6 +210,7 @@ pub fn verify_signature(
 }
 
 /// The code requirement a new app must meet: signed by our certificate.
+#[cfg(target_os = "macos")]
 pub fn signer_requirement(certificate_sha1: Option<&str>) -> Result<String, UpdateError> {
     let sha1 = certificate_sha1.ok_or(UpdateError::NotConfigured)?.trim();
     if sha1.len() != 40 || !sha1.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -146,6 +223,7 @@ pub fn signer_requirement(certificate_sha1: Option<&str>) -> Result<String, Upda
 }
 
 /// Whether `app` is validly signed and meets `requirement`.
+#[cfg(target_os = "macos")]
 pub fn check_signer(app: &Path, requirement: &str) -> Result<(), UpdateError> {
     let status = Command::new("/usr/bin/codesign")
         .args(["--verify", "--deep", "--strict"])
@@ -160,9 +238,25 @@ pub fn check_signer(app: &Path, requirement: &str) -> Result<(), UpdateError> {
     }
 }
 
+/// The system's curl: part of macOS, and of Windows since Windows 10 1803.
+fn curl() -> std::path::PathBuf {
+    if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        Path::new(&root).join("System32").join("curl.exe")
+    } else {
+        "/usr/bin/curl".into()
+    }
+}
+
 /// Downloads `url` with the system's curl.
 pub fn download(url: &str) -> Result<Vec<u8>, UpdateError> {
-    let output = Command::new("/usr/bin/curl")
+    let mut command = Command::new(curl());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
         .args(["--fail", "--silent", "--show-error", "--location"])
         .args(["--max-time", "300", "--proto", "=https"])
         .args(["--header", "Accept: application/vnd.github+json"])
@@ -185,11 +279,12 @@ pub fn download(url: &str) -> Result<Vec<u8>, UpdateError> {
 /// The newer release, if there is one.
 pub fn check() -> Result<Option<Release>, UpdateError> {
     let json = download(LATEST_RELEASE)?;
-    let release = parse_release(&String::from_utf8_lossy(&json));
+    let release = parse_release(&String::from_utf8_lossy(&json), Platform::THIS);
     Ok(release.filter(|r| r.version > current_version()))
 }
 
 /// Whether the app can replace itself: its folder is writable.
+#[cfg(target_os = "macos")]
 pub fn can_replace(app: &Path) -> bool {
     let Some(folder) = app.parent() else {
         return false;
@@ -201,6 +296,7 @@ pub fn can_replace(app: &Path) -> bool {
 }
 
 /// The running app's bundle, if it runs from one.
+#[cfg(target_os = "macos")]
 pub fn this_app() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     // Das-Meter.app/Contents/MacOS/das-meter
@@ -210,12 +306,13 @@ pub fn this_app() -> Option<PathBuf> {
 
 /// Downloads, verifies and swaps in `release` over `app`. Returns the app to
 /// relaunch.
+#[cfg(target_os = "macos")]
 pub fn install(release: &Release, app: &Path) -> Result<PathBuf, UpdateError> {
     let requirement = signer_requirement(CERTIFICATE_SHA1)?;
     if PUBLIC_KEY.is_none() {
         return Err(UpdateError::NotConfigured);
     }
-    let tarball = download(&release.tarball)?;
+    let tarball = download(&release.download)?;
     let signature = download(&release.signature)?;
     verify_signature(&tarball, &String::from_utf8_lossy(&signature), PUBLIC_KEY)?;
     let folder = app.parent().ok_or(UpdateError::Swap("no folder".into()))?;
@@ -229,6 +326,7 @@ pub fn install(release: &Release, app: &Path) -> Result<PathBuf, UpdateError> {
 }
 
 /// Unpacks the tarball into `staging` and returns the one `.app` in it.
+#[cfg(target_os = "macos")]
 fn unpack(tarball: &[u8], staging: &Path) -> Result<PathBuf, UpdateError> {
     let unpack = |e: std::io::Error| UpdateError::Unpack(e.to_string());
     let _ = fs::remove_dir_all(staging);
@@ -260,6 +358,7 @@ fn unpack(tarball: &[u8], staging: &Path) -> Result<PathBuf, UpdateError> {
 
 /// Puts `new_app` where `app` is, by renames: the old app is moved aside
 /// first and put back if the new one can't move in.
+#[cfg(target_os = "macos")]
 pub fn swap(new_app: &Path, app: &Path) -> Result<(), UpdateError> {
     let swap = |e: std::io::Error| UpdateError::Swap(e.to_string());
     let folder = app.parent().ok_or(UpdateError::Swap("no folder".into()))?;
@@ -275,6 +374,7 @@ pub fn swap(new_app: &Path, app: &Path) -> Result<(), UpdateError> {
 }
 
 /// Opens a new instance of `app` once this one has quit.
+#[cfg(target_os = "macos")]
 pub fn relaunch(app: &Path) {
     // `open -n` would start it while this one still runs; wait for our pid.
     let script = format!(
@@ -286,6 +386,67 @@ pub fn relaunch(app: &Path) {
         .arg(script)
         .arg(app)
         .spawn();
+}
+
+/// Keeps a console window from flashing up for curl or PowerShell.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// What the app's Update gives the installer: no questions, no restart (a
+/// Send Plugin a DAW has open is replaced at the next one), DAWs left open,
+/// and the app started again afterwards (see `installer/windows/das-meter.iss`).
+#[cfg(any(windows, test))]
+pub const INSTALLER_ARGUMENTS: &str =
+    "/SILENT /SUPPRESSMSGBOXES /NORESTART /NOCLOSEAPPLICATIONS /RELAUNCH=1";
+
+/// The PowerShell that runs the installer once this app (`pid`) has quit,
+/// with administrator rights (Windows asks); if that's declined or fails,
+/// it starts `app` again so the user isn't left without it.
+#[cfg(any(windows, test))]
+pub fn installer_script(pid: u32, installer: &Path, app: &Path) -> String {
+    let quoted = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "''"));
+    format!(
+        "Wait-Process -Id {pid} -ErrorAction SilentlyContinue; \
+         try {{ Start-Process -FilePath {} -ArgumentList '{INSTALLER_ARGUMENTS}' -Verb RunAs -ErrorAction Stop }} \
+         catch {{ Start-Process -FilePath {} }}",
+        quoted(installer),
+        quoted(app),
+    )
+}
+
+/// Downloads and verifies `release`'s installer, and sets it to run once
+/// this app has quit. The caller quits next.
+#[cfg(windows)]
+pub fn install(release: &Release) -> Result<(), UpdateError> {
+    if PUBLIC_KEY.is_none() {
+        return Err(UpdateError::NotConfigured);
+    }
+    let app = std::env::current_exe().map_err(|e| UpdateError::Swap(e.to_string()))?;
+    let installer = download(&release.download)?;
+    let signature = download(&release.signature)?;
+    verify_signature(&installer, &String::from_utf8_lossy(&signature), PUBLIC_KEY)?;
+    let save = |e: std::io::Error| UpdateError::Swap(e.to_string());
+    let folder = std::env::temp_dir().join("Das-Meter-update");
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).map_err(save)?;
+    let path = folder.join(Platform::Windows.asset(&release.version));
+    fs::write(&path, &installer).map_err(save)?;
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let powershell = Path::new(&root).join("System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    use std::os::windows::process::CommandExt;
+    Command::new(powershell)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+        ])
+        .arg(installer_script(std::process::id(), &path, &app))
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(save)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -308,6 +469,19 @@ mod tests {
     }
 
     #[test]
+    fn versions_compare_numerically() {
+        assert_eq!(Version::parse("1.2.3"), Some(Version(1, 2, 3)));
+        assert_eq!(Version::parse("v0.10.0"), Some(Version(0, 10, 0)));
+        assert_eq!(Version::parse("1.2"), Some(Version(1, 2, 0)));
+        assert_eq!(Version::parse("2.0.0-beta.1"), Some(Version(2, 0, 0)));
+        assert_eq!(Version::parse("1.2.3.4"), None);
+        assert_eq!(Version::parse("one"), None);
+        assert_eq!(Version::parse(""), None);
+        assert!(Version(0, 10, 0) > Version(0, 9, 9));
+        assert!(Version(1, 0, 0) > Version(0, 99, 99));
+    }
+
+    #[test]
     fn a_release_with_its_tarball_and_signature_is_read() {
         let json = release_json(
             "v1.2.0",
@@ -318,11 +492,52 @@ mod tests {
                 "Das-Meter-1.2.0.app.tar.gz.minisig",
             ],
         );
-        let release = parse_release(&json).unwrap();
+        let release = parse_release(&json, Platform::MacOs).unwrap();
         assert_eq!(release.version, Version(1, 2, 0));
-        assert!(release.tarball.ends_with("Das-Meter-1.2.0.app.tar.gz"));
-        assert!(release.signature.ends_with(".minisig"));
+        assert!(release.download.ends_with("Das-Meter-1.2.0.app.tar.gz"));
+        assert!(release.signature.ends_with(".app.tar.gz.minisig"));
         assert!(release.page.ends_with("/tag/v1.2.0"));
+    }
+
+    #[test]
+    fn windows_takes_the_installer_and_its_signature() {
+        let all = [
+            "Das-Meter-1.2.0.app.tar.gz",
+            "Das-Meter-1.2.0.app.tar.gz.minisig",
+            "Das-Meter-1.2.0-windows-x64-setup.exe",
+            "Das-Meter-1.2.0-windows-x64-setup.exe.minisig",
+        ];
+        let release =
+            parse_release(&release_json("v1.2.0", false, &all), Platform::Windows).unwrap();
+        assert!(
+            release
+                .download
+                .ends_with("Das-Meter-1.2.0-windows-x64-setup.exe")
+        );
+        assert!(release.signature.ends_with("-setup.exe.minisig"));
+        // A release without the installer's signature isn't offered.
+        assert_eq!(
+            parse_release(&release_json("v1.2.0", false, &all[..3]), Platform::Windows),
+            None
+        );
+    }
+
+    #[test]
+    fn the_installer_runs_elevated_after_the_app_quits_or_the_app_comes_back() {
+        let script = installer_script(
+            4242,
+            Path::new("C:\\Temp\\Das-Meter-update\\setup.exe"),
+            Path::new("C:\\Program Files\\Das-Meter\\it's.exe"),
+        );
+        assert!(script.starts_with("Wait-Process -Id 4242 "), "{script}");
+        assert!(script.contains("-FilePath 'C:\\Temp\\Das-Meter-update\\setup.exe'"));
+        assert!(script.contains(&format!(
+            "-ArgumentList '{INSTALLER_ARGUMENTS}' -Verb RunAs"
+        )));
+        // A quote in a path is doubled, as PowerShell's single quotes want.
+        assert!(script.contains(
+            "catch { Start-Process -FilePath 'C:\\Program Files\\Das-Meter\\it''s.exe' }"
+        ));
     }
 
     #[test]
@@ -331,14 +546,15 @@ mod tests {
             "Das-Meter-1.2.0.app.tar.gz",
             "Das-Meter-1.2.0.app.tar.gz.minisig",
         ];
-        assert_eq!(parse_release(&release_json("v1.2.0", true, &full)), None);
+        let parse = |json: &str| parse_release(json, Platform::MacOs);
+        assert_eq!(parse(&release_json("v1.2.0", true, &full)), None);
         assert_eq!(
-            parse_release(&release_json("v1.2.0", false, &full[..1])),
+            parse(&release_json("v1.2.0", false, &full[..1])),
             None,
             "no signature"
         );
-        assert_eq!(parse_release(&release_json("nightly", false, &full)), None);
-        assert_eq!(parse_release("not json"), None);
+        assert_eq!(parse(&release_json("nightly", false, &full)), None);
+        assert_eq!(parse("not json"), None);
     }
 
     struct Keys {
@@ -404,6 +620,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_signer_requirement_needs_a_certificate_hash() {
         assert_eq!(signer_requirement(None), Err(UpdateError::NotConfigured));
@@ -433,6 +650,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn swapping_replaces_the_app_by_rename() {
         let dir = std::env::temp_dir().join(format!("dasmeter-swap-{}", std::process::id()));
