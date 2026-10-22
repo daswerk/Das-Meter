@@ -19,6 +19,63 @@ pub struct Drawn<'a> {
     /// The file compared in place of the live Source.
     pub comparing: Option<&'a str>,
     pub target: Option<&'a TargetScene>,
+    /// Where the pointer is, in the same pixels as the Meter, if it's over it.
+    pub pointer: Option<[f32; 2]>,
+}
+
+/// How far the Fine view's top or bottom may sit from what's drawn before
+/// it moves in (dB): it moves out at once, in only when this much is spare.
+const RANGE_SLACK_DB: f32 = 12.0;
+/// How much of the way to its new range the view moves each frame.
+const RANGE_EASE: f32 = 0.15;
+
+/// The Fine view's dB range, held between frames so the curves don't jump
+/// as the levels move: it widens when something would leave it, narrows
+/// only when plenty is spare, and glides to the new range.
+#[derive(Default)]
+pub struct Steady {
+    /// (bottom, top) as last drawn, and where it's heading.
+    shown: Option<(f32, f32)>,
+    goal: Option<(f32, f32)>,
+    /// The frequency range it was for: a new one starts afresh.
+    range: Option<(f32, f32)>,
+}
+
+impl Steady {
+    /// The range to draw, given the one that fits what's drawn now.
+    fn next(&mut self, fit: (f32, f32), range: (f32, f32)) -> (f32, f32) {
+        let (Some(shown), Some(goal)) = (self.shown, self.goal) else {
+            return self.start(fit, range);
+        };
+        if self.range != Some(range) {
+            return self.start(fit, range);
+        }
+        let (mut bottom, mut top) = goal;
+        if fit.1 > top || fit.1 < top - RANGE_SLACK_DB {
+            top = fit.1;
+        }
+        if fit.0 < bottom || fit.0 > bottom + RANGE_SLACK_DB {
+            bottom = fit.0;
+        }
+        bottom = bottom.clamp(top - FINE_SPAN_DB.1, top - FINE_SPAN_DB.0);
+        let goal = (bottom, top);
+        let step = |from: f32, to: f32| {
+            let next = from + (to - from) * RANGE_EASE;
+            if (to - next).abs() < 0.05 { to } else { next }
+        };
+        let next = (step(shown.0, goal.0), step(shown.1, goal.1));
+        self.shown = Some(next);
+        self.goal = Some(goal);
+        next
+    }
+
+    /// Starts afresh at `fit`: the first frame, or a new frequency range.
+    fn start(&mut self, fit: (f32, f32), range: (f32, f32)) -> (f32, f32) {
+        self.range = Some(range);
+        self.shown = Some(fit);
+        self.goal = Some(fit);
+        fit
+    }
 }
 
 /// The low end zoom's range.
@@ -135,6 +192,7 @@ pub fn draw(
     settings: &TonalBalanceMeterSettings,
     drawn: Drawn,
     bar: bool,
+    steady: &mut Steady,
 ) {
     let line = c.px(14.0) * c.styling.text_scale;
     let roomy = area.height > c.px(ROOMY_HEIGHT);
@@ -166,7 +224,7 @@ pub fn draw(
     if broad {
         draw_broad(c, plot, &drawn);
     } else {
-        draw_fine(c, plot, settings, &drawn);
+        draw_fine(c, plot, settings, &drawn, steady);
     }
     if roomy {
         readout_line(c, readouts, &drawn);
@@ -235,7 +293,13 @@ fn title_line(c: &mut Canvas, area: Area, drawn: &Drawn, controls: Option<Contro
 }
 
 /// The curves across the frequency range.
-fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, drawn: &Drawn) {
+fn draw_fine(
+    c: &mut Canvas,
+    area: Area,
+    settings: &TonalBalanceMeterSettings,
+    drawn: &Drawn,
+    steady: &mut Steady,
+) {
     let range = if settings.low_end_zoom { LOW_END } else { FULL };
     let grid_frequencies = tonal_grid();
     let shown: Vec<usize> = (0..grid_frequencies.len())
@@ -267,7 +331,7 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
         }
         _ => (0.0, -FINE_SPAN_DB.0),
     };
-    let db = (bottom, top);
+    let db = steady.next((bottom, top), range);
     let (low, high) = (range.0.ln(), range.1.ln());
     let x_of = |f: f32| map(f.ln(), (low, high), area.x, area.right());
     let y_of = |level: f32| map(level, db, area.bottom(), area.y);
@@ -295,6 +359,10 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
         let colour = c.colour(Role::Text).faded(0.35);
         let line = smooth(&ghost, c.px(2.0));
         c.shapes.polyline(&line, c.stroke(1.5), colour);
+    }
+
+    if let Some(pointer) = drawn.pointer {
+        pointer_readout(c, area, range, drawn, &grid_frequencies, pointer, &x_of);
     }
 
     let Some(mix) = drawn
@@ -367,6 +435,73 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
     for (colour, run) in &runs {
         c.shapes.polyline(run, width, *colour);
     }
+}
+
+/// A line under the pointer with the frequency and note there, and how far
+/// the mix sits from the Target's average at that point.
+fn pointer_readout(
+    c: &mut Canvas,
+    area: Area,
+    range: (f32, f32),
+    drawn: &Drawn,
+    frequencies: &[f32],
+    [x, y]: [f32; 2],
+    x_of: &dyn Fn(f32) -> f32,
+) {
+    if x < area.x || x > area.right() || y < area.y || y > area.bottom() {
+        return;
+    }
+    let (low, high) = (range.0.ln(), range.1.ln());
+    let frequency = (low + (x - area.x) / area.width * (high - low)).exp();
+    let thin = c.px(1.0).max(1.0);
+    let line = c.colour(Role::Text).faded(0.45);
+    c.shapes.rect(
+        Area {
+            x: x - thin / 2.0,
+            width: thin,
+            ..area
+        },
+        line,
+    );
+    let mut readout = if frequency < 1_000.0 {
+        format!("{frequency:.0} Hz")
+    } else {
+        format!("{:.2} kHz", frequency / 1_000.0)
+    };
+    if let Some(note) = dasmeter_analysis::spectrum::note_name(frequency) {
+        readout += &format!("  {note} {:+.0}¢", note.cents);
+    }
+    // The grid point nearest the pointer, for the mix against the Target.
+    let nearest = (0..frequencies.len()).min_by(|&a, &b| {
+        (x_of(frequencies[a]) - x)
+            .abs()
+            .total_cmp(&(x_of(frequencies[b]) - x).abs())
+    });
+    let mix = nearest.and_then(|i| drawn.mix.and_then(|m| m.curve.get(i).copied()));
+    let target = nearest.and_then(|i| drawn.target.and_then(|t| t.curve.get(i).copied()));
+    if let (Some(mix), Some(band)) = (mix, target)
+        && mix.is_finite()
+    {
+        readout += &format!("  mix {:+.1} dB", mix - band.average);
+    }
+    let size = 11.0;
+    let width = c.px(size * 0.6) * c.styling.text_scale * readout.chars().count() as f32;
+    let right = x + c.px(4.0);
+    let start = if right + width <= area.right() {
+        right
+    } else {
+        (x - c.px(4.0) - width).max(area.x)
+    };
+    let top = area.y + c.px(4.0);
+    let pad = c.px(3.0);
+    c.backdrop(Area {
+        x: start - pad,
+        y: top - pad,
+        width: width + 2.0 * pad,
+        height: c.px(size) * c.styling.text_scale + 2.0 * pad,
+    });
+    let text = c.colour(Role::Text);
+    c.text(&readout, start, top, size, text, Align::Left);
 }
 
 /// The Target's range as a soft band, strongest along its average and

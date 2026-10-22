@@ -34,7 +34,12 @@ pub const MIN_FRAME_RATE_CAP: u32 = 30;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
-    /// Most frames drawn per second. Default 60, at most the display's refresh rate.
+    /// Draw at the display's own refresh rate, each frame on its next
+    /// refresh, so scrolling Meters move evenly. Default on. Off: at most
+    /// `frame_rate_cap` frames a second.
+    pub match_display: bool,
+    /// Most frames drawn per second when not matching the display. Default
+    /// 60, at most the display's refresh rate.
     pub frame_rate_cap: u32,
     /// Look for a new version once a day. Default on.
     pub check_for_updates: bool,
@@ -43,6 +48,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
+            match_display: true,
             frame_rate_cap: DEFAULT_FRAME_RATE_CAP,
             check_for_updates: true,
         }
@@ -50,8 +56,15 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// The shortest time between two draws.
-    pub fn frame_interval(&self) -> Duration {
+    /// The shortest time between two draws on a display refreshing
+    /// `refresh` times a second (if known). Matching the display, it's a
+    /// little under one refresh: the frame then waits for the refresh
+    /// (vsync), which keeps drawing in step with the display.
+    pub fn frame_interval(&self, refresh: Option<u32>) -> Duration {
+        if self.match_display {
+            let rate = refresh.unwrap_or(DEFAULT_FRAME_RATE_CAP).max(1);
+            return Duration::from_nanos(1_000_000_000 / u64::from(rate)).mul_f64(0.8);
+        }
         Duration::from_nanos(1_000_000_000 / u64::from(self.frame_rate_cap.max(1)))
     }
 }

@@ -39,6 +39,21 @@ pub enum KeyChoice {
     Fixed(Key),
 }
 
+/// What a Tonal Balance Meter compares with in its Target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TargetPick {
+    /// One of its songs, by its place in the list. The default (the first).
+    Song(usize),
+    /// All its songs averaged, with their spread as the range.
+    Average,
+}
+
+impl Default for TargetPick {
+    fn default() -> Self {
+        TargetPick::Song(0)
+    }
+}
+
 /// The Tonal Balance Meter: a Source's long-term spectrum, shape only,
 /// against a Target (named in the Meter's slot, like a Spectrum's Reference curve).
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -52,9 +67,12 @@ pub struct TonalBalanceMeterSettings {
     /// Which parts of a song count when teaching a Target. Default Loud.
     pub parts: Parts,
     pub key: KeyChoice,
-    /// Draw the Target's low end in the mix's key. Default off: the
-    /// Meter suggests it when the keys differ.
-    pub shift_to_key: bool,
+    /// The key the Target's low end is drawn in, once the user shifted it
+    /// there; it stays until undone, whatever the detection says next.
+    /// Default none: the Meter suggests a shift when the keys differ.
+    pub shift_to: Option<Key>,
+    /// One song of the Target, or all of them averaged. Default its first song.
+    pub pick: TargetPick,
     /// Below this the low end's mono-ness is measured, in Hz. Default 120.
     pub mono_cutoff: f32,
 }
@@ -70,7 +88,8 @@ impl Default for TonalBalanceMeterSettings {
             averaging: DEFAULT_AVERAGING,
             parts: Parts::Loud,
             key: KeyChoice::Auto,
-            shift_to_key: false,
+            shift_to: None,
+            pick: TargetPick::default(),
             mono_cutoff: 120.0,
         }
     }
@@ -98,6 +117,9 @@ impl TonalBalanceMeterSettings {
             120.0
         };
         if let KeyChoice::Fixed(key) = &mut self.key {
+            key.tonic %= 12;
+        }
+        if let Some(key) = &mut self.shift_to {
             key.tonic %= 12;
         }
         self
@@ -339,6 +361,8 @@ pub struct TargetSongInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TargetScene {
     pub name: String,
+    /// What's compared: one song (its place, clamped to the list) or the average.
+    pub pick: TargetPick,
     /// Its file is gone; it's kept and used again when it returns.
     pub missing: bool,
     pub songs: Vec<TargetSongInfo>,
@@ -355,6 +379,25 @@ pub struct TargetScene {
     pub home_key: Option<Key>,
     /// The mix is in another key: suggest shifting the Target to it.
     pub suggest_shift: Option<Key>,
+    /// The key it was shifted to, which stays until undone.
+    pub shifted_to: Option<Key>,
+}
+
+impl TargetScene {
+    /// What it compares with, as the picker names it: the song's name, or
+    /// the Target's for its average.
+    pub fn label(&self) -> String {
+        match self.pick {
+            TargetPick::Song(i) => self
+                .songs
+                .get(i)
+                .map_or_else(|| self.name.clone(), |s| s.name.clone()),
+            TargetPick::Average if self.songs.len() > 1 => {
+                format!("{} (average of {})", self.name, self.songs.len())
+            }
+            TargetPick::Average => self.name.clone(),
+        }
+    }
 }
 
 /// To 0.1 dB: finer would only redraw for nothing.
@@ -376,6 +419,7 @@ impl TargetScene {
         let Some(target) = target else {
             return TargetScene {
                 name,
+                pick: settings.pick,
                 missing: true,
                 songs: Vec::new(),
                 curve: Vec::new(),
@@ -385,25 +429,39 @@ impl TargetScene {
                 key: None,
                 home_key: None,
                 suggest_shift: None,
+                shifted_to: settings.shift_to,
             };
         };
-        let home_key = target.home_key();
+        // One song (clamped to the list), or all of them.
+        let pick = match settings.pick {
+            TargetPick::Song(i) => TargetPick::Song(i.min(target.songs.len().saturating_sub(1))),
+            TargetPick::Average => TargetPick::Average,
+        };
+        let picked = match pick {
+            TargetPick::Song(i) => target.only(i),
+            TargetPick::Average => target.clone(),
+        };
+        let home_key = picked.home_key();
         let mix_key = settings.mix_key(mix);
-        let mut combined = target.combined();
+        let mut combined = picked.combined();
         let mut key = home_key;
         let mut suggest_shift = None;
-        if let (Some(home), Some(mix_key)) = (home_key, mix_key)
-            && home.tonic != mix_key.tonic
-        {
-            if settings.shift_to_key {
-                combined = combined.map(|c| c.in_key(mix_key));
-                key = Some(mix_key);
-            } else {
+        match (settings.shift_to, home_key, mix_key) {
+            // Shifted: it stays in that key until undone.
+            (Some(to), Some(home), _) => {
+                if home.tonic != to.tonic {
+                    combined = combined.map(|c| c.in_key(to));
+                }
+                key = Some(to);
+            }
+            (None, Some(home), Some(mix_key)) if home.tonic != mix_key.tonic => {
                 suggest_shift = Some(mix_key);
             }
+            _ => {}
         }
         TargetScene {
             name,
+            pick,
             missing: false,
             songs: target
                 .songs
@@ -426,6 +484,7 @@ impl TargetScene {
             key,
             home_key,
             suggest_shift,
+            shifted_to: settings.shift_to.filter(|_| home_key.is_some()),
         }
     }
 }

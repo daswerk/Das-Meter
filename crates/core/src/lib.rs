@@ -61,8 +61,8 @@ pub use targets::{Target, TargetSong, Targets};
 pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 pub use tonal_balance::{
-    KeyChoice, TargetScene, TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene,
-    TonalView, UploadScene,
+    KeyChoice, TargetPick, TargetScene, TargetSongInfo, TonalBalanceMeterSettings,
+    TonalBalanceScene, TonalView, UploadScene,
 };
 
 use meters::Meter;
@@ -869,6 +869,12 @@ impl AppCore {
     /// When the update check last ran (seconds since the Unix epoch; 0 for never).
     pub fn last_update_check(&self) -> u64 {
         self.presets.settings.last_update_check
+    }
+
+    /// The shortest time between two draws, as the app settings and the
+    /// display's refresh rate say.
+    pub fn frame_interval(&self) -> Duration {
+        self.app.frame_interval(self.refresh_rate)
     }
 
     /// The highest frame-rate cap the settings offer: the display's refresh
@@ -1837,7 +1843,15 @@ impl AppCore {
                     name => name.to_owned(),
                 };
                 let song = TargetSong::new(&song, settings.parts, &summary);
-                slot.reference = Some(self.targets.add_song(&target, song));
+                let target = self.targets.add_song(&target, song);
+                // The song just taught is what the Meter compares with.
+                let added = self.targets.get(&target).map_or(0, |t| t.songs.len() - 1);
+                slot.meter
+                    .set_settings(MeterSettings::TonalBalance(TonalBalanceMeterSettings {
+                        pick: TargetPick::Song(added),
+                        ..settings
+                    }));
+                slot.reference = Some(target);
             }
             Event::AddTargetSongs {
                 meter,
@@ -1848,6 +1862,7 @@ impl AppCore {
                     return;
                 }
                 let mut name = target.to_owned();
+                let before = self.targets.get(target).map_or(0, |t| t.songs.len());
                 for song in songs {
                     name = self.targets.add_song(&name, song.clone());
                 }
@@ -1856,12 +1871,38 @@ impl AppCore {
                     .get_mut(meter)
                     .filter(|s| s.meter.is_tonal_balance())
                 {
+                    // The first song added is what the Meter compares with.
+                    if let MeterSettings::TonalBalance(settings) = slot.meter.settings() {
+                        slot.meter.set_settings(MeterSettings::TonalBalance(
+                            TonalBalanceMeterSettings {
+                                pick: TargetPick::Song(before),
+                                ..settings
+                            },
+                        ));
+                    }
                     slot.reference = Some(name);
                 }
             }
             Event::RemoveTargetSong { target, song } => {
                 if !self.targets.remove_song(target, song) {
                     return;
+                }
+                // Meters on a later song of it keep that song.
+                for slot in &mut self.meters {
+                    if slot.reference.as_deref() != Some(target) {
+                        continue;
+                    }
+                    if let MeterSettings::TonalBalance(settings) = slot.meter.settings()
+                        && let TargetPick::Song(i) = settings.pick
+                        && i > song
+                    {
+                        slot.meter.set_settings(MeterSettings::TonalBalance(
+                            TonalBalanceMeterSettings {
+                                pick: TargetPick::Song(i - 1),
+                                ..settings
+                            },
+                        ));
+                    }
                 }
             }
             Event::UploadProgress { meter, progress } => {
@@ -2405,7 +2446,7 @@ impl AppCore {
         }
         // Wait for the next frame before building a scene at all.
         if let Some(drawn_at) = self.drawn_at {
-            let next_frame = drawn_at + self.app.frame_interval();
+            let next_frame = drawn_at + self.frame_interval();
             if now < next_frame {
                 return Decision::Sleep {
                     until: Some(next_frame),

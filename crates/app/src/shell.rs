@@ -357,7 +357,7 @@ impl Shell {
                 self.send_plugins
                     .pump(&mut self.core, now, self.start + now);
                 let every = if self.send_plugins.listening() {
-                    self.core.app_settings().frame_interval()
+                    self.core.frame_interval()
                 } else {
                     LIST_EVERY
                 };
@@ -929,7 +929,7 @@ impl Shell {
         }
     }
 
-    /// The display the Bar lives on, and its refresh rate for the frame-rate cap.
+    /// The display the Bar lives on, and the refresh rate the frames follow.
     fn report_display(&mut self) {
         let now = self.now();
         #[cfg(target_os = "macos")]
@@ -939,9 +939,11 @@ impl Shell {
                 self.core.handle(Event::Screens(&screens), now);
             }
         }
-        let rate = self
-            .find(Role::Meters(WindowKey::Bar))
-            .and_then(|id| self.windows[&id].window.current_monitor())
+        // The Bar's display, else the main window's: the frame pacing follows it.
+        let rate = [WindowKey::Bar, WindowKey::Main]
+            .into_iter()
+            .filter_map(|key| self.find(Role::Meters(key)))
+            .find_map(|id| self.windows[&id].window.current_monitor())
             .and_then(|monitor| monitor.refresh_rate_millihertz());
         if let Some(millihertz) = rate {
             self.core

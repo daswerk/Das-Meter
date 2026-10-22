@@ -133,6 +133,8 @@ pub struct MeterRenderer {
     heatmap: Heatmap,
     overlay: Shapes,
     labels: Labels,
+    /// A Tonal Balance Meter's view range, held between frames.
+    tonal: tonal_balance::Steady,
 }
 
 impl MeterRenderer {
@@ -142,6 +144,7 @@ impl MeterRenderer {
             heatmap: Heatmap::new(gpu),
             overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
+            tonal: tonal_balance::Steady::default(),
         }
     }
 
@@ -186,6 +189,8 @@ impl MeterRenderer {
         let (scale, styling) = (look.scale, look.styling);
         // The Meter's own colour overrides go over the Theme's.
         let palette = look.palette.with(&meter.overrides);
+        // Held across frames, lent to the drawing while the canvas borrows the rest.
+        let mut tonal = std::mem::take(&mut self.tonal);
         let mut c = self.canvas(&palette, scale, styling);
         c.hovered = meter.hovered;
         let radius = c.px(styling.corner_radius);
@@ -384,6 +389,7 @@ impl MeterRenderer {
                     settings,
                     mix,
                     frozen,
+                    pointer,
                 } => tonal_balance::draw(
                     &mut c,
                     inner,
@@ -397,8 +403,11 @@ impl MeterRenderer {
                             .as_ref()
                             .and_then(|t| t.comparing.as_deref()),
                         target: meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref()),
+                        pointer: pointer
+                            .map(|[x, y]| [area.x + x * area.width, area.y + y * area.height]),
                     },
                     look.bar,
+                    &mut tonal,
                 ),
             },
         }
@@ -434,6 +443,7 @@ impl MeterRenderer {
             };
             c.overlay.rounded_rect(area, radius, veil);
         }
+        self.tonal = tonal;
         self.finish(gpu, text, area);
     }
 

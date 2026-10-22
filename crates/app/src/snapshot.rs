@@ -347,6 +347,10 @@ fn tonal_balance(core: &mut AppCore, variant: &str, now: Duration) -> Result<Dur
     );
     core.handle(Event::ResetLongTerm { meter: 0 }, now);
     now = play(core, &music(10.0), now);
+    // The pointer over the Fine view, on the low end.
+    if variant == "-cursor" {
+        core.handle(Event::Pointer(Some((WindowKey::Main, [0.18, 0.5]))), now);
+    }
     // Its menu, learning another song.
     if variant == "-menu" {
         core.handle(Event::LearnSong { meter: 0 }, now);

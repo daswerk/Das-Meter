@@ -237,6 +237,11 @@ fn draws_stop_once_the_meter_settles_in_silence() {
 #[test]
 fn draws_are_capped_at_60_fps() {
     let mut app = Harness::new();
+    // The cap, rather than the display's own rate.
+    app.send(Event::SetApp(dasmeter_core::AppSettings {
+        match_display: false,
+        ..dasmeter_core::AppSettings::default()
+    }));
     app.send(Event::CaptureStarted { sample_rate: RATE });
     let decisions = app.play(RATE, &tone(RATE, -12.0, 1.0));
     let draws = decisions.iter().filter(|d| **d == Decision::Draw).count();

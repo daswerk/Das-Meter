@@ -9,7 +9,7 @@ use dasmeter_analysis::signals::{both, silence, sine};
 use dasmeter_analysis::tonal_balance::{Key, Parts, tonal_grid};
 use dasmeter_core::{
     AppCore, Event, KeyChoice, MeterScene, MeterSettings, MeterState, MeterView, Scene, Target,
-    TargetScene, TargetSong, ThemeFile, TonalBalanceMeterSettings,
+    TargetPick, TargetScene, TargetSong, ThemeFile, TonalBalanceMeterSettings,
 };
 
 const RATE: u32 = 48_000;
@@ -20,6 +20,10 @@ const A_MINOR: Key = Key {
 };
 const F_MINOR: Key = Key {
     tonic: 5,
+    minor: true,
+};
+const D_MINOR: Key = Key {
+    tonic: 2,
     minor: true,
 };
 
@@ -257,12 +261,31 @@ fn the_target_is_drawn_in_its_songs_key_and_shifting_moves_it_to_the_mix() {
     assert_eq!(suggesting.curve, at_home.curve, "not moved until asked");
 
     app.set(TonalBalanceMeterSettings {
-        shift_to_key: true,
+        shift_to: Some(F_MINOR),
         ..fixed
     });
     let shifted = app.target().unwrap();
     assert_eq!(shifted.key, Some(F_MINOR));
+    assert_eq!(shifted.shifted_to, Some(F_MINOR));
     assert_eq!(shifted.suggest_shift, None);
+
+    // The mix's key moves on: the shift stays where it was put.
+    app.set(TonalBalanceMeterSettings {
+        key: KeyChoice::Fixed(D_MINOR),
+        ..app.settings()
+    });
+    let still = app.target().unwrap();
+    assert_eq!(still.key, Some(F_MINOR), "a shift stays until undone");
+    assert_eq!(still.curve, shifted.curve);
+    // Undone: back in the songs' key, and a shift suggested again.
+    app.set(TonalBalanceMeterSettings {
+        shift_to: None,
+        ..app.settings()
+    });
+    let undone = app.target().unwrap();
+    assert_eq!(undone.key, Some(A_MINOR));
+    assert_eq!(undone.curve, at_home.curve);
+    assert_eq!(undone.suggest_shift, Some(D_MINOR));
     let loudest = |t: &TargetScene| {
         let grid = tonal_grid();
         let (i, _) = t
@@ -292,6 +315,10 @@ fn removing_a_song_recomputes_the_target() {
         },
         app.now,
     );
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Average,
+        ..app.settings()
+    });
     app.play(0.6, 110.0);
     assert_eq!(app.target().unwrap().regions.unwrap()[0].average, -16.0);
     app.core.handle(
@@ -502,4 +529,65 @@ fn the_drawn_curve_glides_to_a_new_frame_instead_of_jumping() {
         curve(&mut app)
     };
     assert_eq!(later, settled, "settled curves stop moving");
+}
+
+#[test]
+fn it_compares_with_one_song_unless_the_average_is_picked() {
+    let mut app = App::launch();
+    let mut loud = song("Loud", A_MINOR, 55.0);
+    loud.regions = [-6.0; 5];
+    let mut quiet = song("Quiet", A_MINOR, 55.0);
+    quiet.regions = [-18.0; 5];
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &[loud, quiet],
+        },
+        app.now,
+    );
+    // The first song added, alone: its own levels, named after it.
+    let first = app.target().unwrap();
+    assert_eq!(first.pick, TargetPick::Song(0));
+    assert_eq!(first.label(), "Loud");
+    assert_eq!(first.regions.unwrap()[0].average, -6.0);
+
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(1),
+        ..app.settings()
+    });
+    assert_eq!(app.target().unwrap().regions.unwrap()[0].average, -18.0);
+
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Average,
+        ..app.settings()
+    });
+    let average = app.target().unwrap();
+    assert_eq!(average.regions.unwrap()[0].average, -12.0);
+    assert_eq!(average.label(), "Club (average of 2)");
+
+    // Songs added later are what it compares with next.
+    let mut third = song("Third", A_MINOR, 55.0);
+    third.regions = [-9.0; 5];
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &[third],
+        },
+        app.now,
+    );
+    let added = app.target().unwrap();
+    assert_eq!(added.pick, TargetPick::Song(2));
+    assert_eq!(added.label(), "Third");
+
+    // Removing an earlier song keeps the one picked.
+    app.core.handle(
+        Event::RemoveTargetSong {
+            target: "Club",
+            song: 0,
+        },
+        app.now,
+    );
+    assert_eq!(app.target().unwrap().label(), "Third");
 }

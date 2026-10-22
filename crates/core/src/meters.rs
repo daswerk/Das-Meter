@@ -726,6 +726,9 @@ pub enum MeterView {
         mix: Option<Box<Summary>>,
         /// The mix's curve when frozen: a ghost to compare before and after.
         frozen: Option<Vec<f32>>,
+        /// Where the pointer is over the Meter (0–1 each way across its
+        /// frame), if it is: the curves show the frequency and note under it.
+        pointer: Option<[f32; 2]>,
     },
     Tuner {
         settings: TunerMeterSettings,
@@ -1373,12 +1376,14 @@ impl Meter {
         }
     }
 
-    /// The cursor moved over this Meter (or left it): only the Spectrum and
-    /// the Cepstrum show it.
+    /// The cursor moved over this Meter (or left it): only the Spectrum,
+    /// the Cepstrum and Tonal Balance show it.
     pub fn pointer_changed(&mut self) {
         if matches!(
             self.settings,
-            MeterSettings::Spectrum(_) | MeterSettings::Cepstrum(_)
+            MeterSettings::Spectrum(_)
+                | MeterSettings::Cepstrum(_)
+                | MeterSettings::TonalBalance(_)
         ) {
             self.view = None;
         }
@@ -1766,6 +1771,7 @@ fn build_view(
                 frozen: a
                     .frozen()
                     .map(|curve| curve.iter().map(|&l| round_to(l, 0.1)).collect()),
+                pointer,
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),

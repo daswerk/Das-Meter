@@ -143,6 +143,15 @@ impl Target {
         })
     }
 
+    /// The Target with only its song at `index` (the last if there's none there).
+    pub fn only(&self, index: usize) -> Target {
+        let song = self.songs.get(index).or(self.songs.last()).cloned();
+        Target {
+            songs: song.into_iter().collect(),
+            ..self.clone()
+        }
+    }
+
     /// The key most of its songs are in, of those whose key is sure; the
     /// first song's on a tie. `None` when no song's key is sure.
     pub fn home_key(&self) -> Option<Key> {

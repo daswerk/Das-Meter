@@ -131,6 +131,7 @@ fn every_default_matches_the_spec() {
     assert_eq!(
         scene.app,
         AppSettings {
+            match_display: true,
             frame_rate_cap: 60,
             check_for_updates: true
         }
@@ -409,11 +410,33 @@ fn reset_from_the_menu_does_the_same() {
 }
 
 #[test]
+fn matching_the_display_draws_once_per_refresh() {
+    let mut app = App::playing();
+    app.draw();
+    assert!(app.core.app_settings().match_display, "the default");
+    app.send(Event::DisplayRefreshRate(120));
+    app.draw();
+    // A frame may be drawn a little before each 8.3 ms refresh, to wait for it.
+    let drawn = app.now;
+    let audio = both(&sine(RATE, 1_000.0, -6.0, 0.0, 480));
+    app.core.handle(Event::Audio(&audio), drawn);
+    assert!(matches!(
+        app.core.decide(drawn + Duration::from_millis(6)),
+        Decision::Sleep { .. }
+    ));
+    assert_eq!(
+        app.core.decide(drawn + Duration::from_millis(7)),
+        Decision::Draw
+    );
+}
+
+#[test]
 fn the_frame_rate_cap_goes_up_to_the_displays_refresh_rate() {
     let mut app = App::playing();
     app.draw();
     // Before the display is known, 60 is the most.
     app.send(Event::SetApp(AppSettings {
+        match_display: false,
         frame_rate_cap: 120,
         check_for_updates: false,
     }));
@@ -424,6 +447,7 @@ fn the_frame_rate_cap_goes_up_to_the_displays_refresh_rate() {
 
     app.send(Event::DisplayRefreshRate(120));
     app.send(Event::SetApp(AppSettings {
+        match_display: false,
         frame_rate_cap: 120,
         check_for_updates: false,
     }));
