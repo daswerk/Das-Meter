@@ -1638,7 +1638,19 @@ impl ApplicationHandler for Shell {
                 self.sync_ab();
                 None
             }
-            Decision::Sleep { until } => until,
+            Decision::Sleep { until } => {
+                // In step with the display: the last frame again on this
+                // refresh (cheap: unchanged Meters keep their shapes), so the
+                // next new one lands on its own refresh.
+                if self.core.keeps_presenting(now) {
+                    for app in self.windows.values() {
+                        if matches!(app.role, Role::Meters(_)) {
+                            app.window.request_redraw();
+                        }
+                    }
+                }
+                until
+            }
         };
         if self.ui_wake.is_some_and(|at| at <= now) {
             self.ui_wake = None;

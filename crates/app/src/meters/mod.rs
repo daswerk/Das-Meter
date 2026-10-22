@@ -135,6 +135,23 @@ pub struct MeterRenderer {
     labels: Labels,
     /// A Tonal Balance Meter's view range, held between frames.
     tonal: tonal_balance::Steady,
+    /// What the shapes were last laid out from: a frame that would lay out
+    /// the same again keeps them (most Meters change less often than a
+    /// 120 Hz display draws).
+    last: Option<Drawn>,
+    /// Whether the shapes changed since the last upload.
+    changed: bool,
+}
+
+/// What a Meter's shapes depend on.
+#[derive(PartialEq)]
+struct Drawn {
+    meter: MeterScene,
+    area: Area,
+    palette: Palette,
+    styling: Styling,
+    scale: f32,
+    bar: bool,
 }
 
 impl MeterRenderer {
@@ -145,6 +162,8 @@ impl MeterRenderer {
             overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
             tonal: tonal_balance::Steady::default(),
+            last: None,
+            changed: true,
         }
     }
 
@@ -169,7 +188,21 @@ impl MeterRenderer {
         self.labels.clear();
     }
 
+    /// Sends the shapes [`MeterRenderer::prepare`] laid out to the GPU, if
+    /// they changed.
+    pub fn upload(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        belt: &mut wgpu::util::StagingBelt,
+    ) {
+        if std::mem::take(&mut self.changed) {
+            self.shapes.upload(encoder, belt);
+            self.overlay.upload(encoder, belt);
+        }
+    }
+
     fn finish(&mut self, gpu: &Gpu, text: &mut Text, area: Area) {
+        self.changed = true;
         self.shapes.prepare(gpu);
         self.heatmap.prepare(gpu);
         self.overlay.prepare(gpu);
@@ -185,6 +218,26 @@ impl MeterRenderer {
         look: Look,
         meter: &MeterScene,
     ) {
+        let drawn = Drawn {
+            meter: meter.clone(),
+            area,
+            palette: look.palette.clone(),
+            styling: look.styling,
+            scale: look.scale,
+            bar: look.bar,
+        };
+        // The same as last frame: the shapes stay. (Tonal Balance glides its
+        // range between frames, so it's always laid out.) The text is
+        // prepared again all the same, so its glyphs stay in the atlas.
+        let glides = matches!(
+            meter.settings,
+            dasmeter_core::MeterSettings::TonalBalance(_)
+        );
+        if !glides && self.last.as_ref() == Some(&drawn) {
+            self.labels.prepare(gpu, text, area);
+            return;
+        }
+        self.last = Some(drawn);
         self.begin(gpu, area);
         let (scale, styling) = (look.scale, look.styling);
         // The Meter's own colour overrides go over the Theme's.

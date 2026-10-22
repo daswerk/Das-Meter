@@ -3575,26 +3575,24 @@ fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
     let mut changed = ui
         .add(Toggle::new(
             &mut app.match_display,
-            "Match the display's refresh rate",
+            "In step with the display",
         ))
         .on_hover_text(
-            "Draw a frame for every refresh of the display, so scrolling Meters move \
-             evenly. Off: at most the frame-rate cap (lower CPU use; on a 120 Hz \
-             display, 60 or 120 move most evenly).",
+            "New frames come on exactly every first, second, … refresh of the display \
+             (the nearest to the frame-rate cap), so scrolling Meters move evenly",
         )
         .changed();
-    if !app.match_display {
-        changed |= ui
-            .add(
-                Slider::new(
-                    &mut app.frame_rate_cap,
-                    limits::MIN_FRAME_RATE_CAP..=scene.max_frame_rate_cap,
-                )
-                .text("Frame-rate cap")
-                .suffix(" fps"),
+    changed |= ui
+        .add(
+            Slider::new(
+                &mut app.frame_rate_cap,
+                limits::MIN_FRAME_RATE_CAP..=scene.max_frame_rate_cap,
             )
-            .changed();
-    }
+            .text("Frame-rate cap")
+            .suffix(" fps"),
+        )
+        .on_hover_text("Fewer frames use less CPU; in step with a 120 Hz display, 60 is smooth too")
+        .changed();
     changed |= ui
         .add(Toggle::new(
             &mut app.check_for_updates,

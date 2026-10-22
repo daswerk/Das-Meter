@@ -431,13 +431,13 @@ impl ApplicationHandler for Bench {
             // Nothing changed on screen: a gap until the next frame isn't late.
             run.last_present = None;
         }
+        // As the app does: presented on every refresh while frames come.
+        let present = decision == Decision::Draw || run.core.keeps_presenting(now);
+        if present && let Some((window, ..)) = &self.window {
+            window.request_redraw();
+        }
         let wake = match decision {
-            Decision::Draw => {
-                if let Some((window, ..)) = &self.window {
-                    window.request_redraw();
-                }
-                next_block
-            }
+            Decision::Draw => next_block,
             // Settled, like capture: wake for the next audible block, and for
             // silence only when its ring would be half full.
             Decision::Sleep { until: None } if settled => {

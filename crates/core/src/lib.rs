@@ -912,10 +912,23 @@ impl AppCore {
         self.presets.settings.last_update_check
     }
 
-    /// The shortest time between two draws, as the app settings and the
-    /// display's refresh rate say.
+    /// The shortest time between two new frames, as the app settings and
+    /// the display's refresh rate say.
     pub fn frame_interval(&self) -> Duration {
         self.app.frame_interval(self.refresh_rate)
+    }
+
+    /// Whether the shell should present the last frame again on the coming
+    /// refresh: matching the display while frames are coming, so the next
+    /// new one lands on its refresh.
+    pub fn keeps_presenting(&self, now: Duration) -> bool {
+        let Some(within) = self.app.present_for(self.refresh_rate) else {
+            return false;
+        };
+        self.visible
+            && self
+                .drawn_at
+                .is_some_and(|at| now.saturating_sub(at) < within)
     }
 
     /// The highest frame-rate cap the settings offer: the display's refresh

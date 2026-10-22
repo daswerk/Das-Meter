@@ -410,24 +410,27 @@ fn reset_from_the_menu_does_the_same() {
 }
 
 #[test]
-fn matching_the_display_draws_once_per_refresh() {
+fn in_step_with_the_display_new_frames_come_on_every_kth_refresh() {
     let mut app = App::playing();
     app.draw();
     assert!(app.core.app_settings().match_display, "the default");
     app.send(Event::DisplayRefreshRate(120));
     app.draw();
-    // A frame may be drawn a little before each 8.3 ms refresh, to wait for it.
+    // Cap 60 on a 120 Hz display: a new frame on every second refresh. It
+    // may come from a quarter refresh before that (14.6 ms) on.
     let drawn = app.now;
     let audio = both(&sine(RATE, 1_000.0, -6.0, 0.0, 480));
     app.core.handle(Event::Audio(&audio), drawn);
-    assert!(matches!(
-        app.core.decide(drawn + Duration::from_millis(6)),
-        Decision::Sleep { .. }
-    ));
-    assert_eq!(
-        app.core.decide(drawn + Duration::from_millis(7)),
-        Decision::Draw
+    let at = |ms: f64| drawn + Duration::from_secs_f64(ms / 1_000.0);
+    assert!(matches!(app.core.decide(at(8.4)), Decision::Sleep { .. }));
+    assert!(
+        app.core.keeps_presenting(at(8.4)),
+        "the last frame again on the refresh between"
     );
+    assert!(matches!(app.core.decide(at(12.6)), Decision::Sleep { .. }));
+    assert_eq!(app.core.decide(at(16.7)), Decision::Draw);
+    // Silent and settled long after: nothing to present.
+    assert!(!app.core.keeps_presenting(at(1_000.0)));
 }
 
 #[test]
