@@ -1,4 +1,4 @@
-//! Hidden `--render-snapshot PATH [solo-KIND|spectrum-reference|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
+//! Hidden `--render-snapshot PATH [solo-KIND|preset-N|spectrum-reference|showcase|showcase-bar|showcase-light|showcase-contrast|theme-settings|menu|settings|bar|window|zoom|dragging|light|contrast|glass|cepstrum|spectrogram|harmonics|phase-scope|phase-scope-bar|phase-scope-filled|phase-scope-lr|phase-scope-overlay|oscilloscope|oscilloscope-lr|WxH]`
 //! (a PATH ending in .pam keeps the alpha channel): runs the app core on a
 //! generated signal and draws its scene offscreen into a PPM image, optionally
 //! with the Loudness Meter's menu or the settings panel open, or at the
@@ -347,6 +347,64 @@ fn tonal_balance(core: &mut AppCore, variant: &str, now: Duration) -> Result<Dur
     );
     core.handle(Event::ResetLongTerm { meter: 0 }, now);
     now = play(core, &music(10.0), now);
+    // A song from a file as well, picked, and heard (B).
+    if variant == "-ab" {
+        use dasmeter_analysis::tonal_balance::{FrameAnalyser, Parts, summarise};
+        let mut frames = FrameAnalyser::new(RATE, 120.0);
+        frames.process(&darker);
+        let summary = summarise(&frames.take_frames(), Parts::Loud).ok_or("no summary")?;
+        let song = dasmeter_core::TargetSong::new("Reference master", Parts::Loud, &summary)
+            .with_file("/music/reference-master.wav");
+        core.handle(
+            Event::AddTargetSongs {
+                meter: 0,
+                target: "My references",
+                songs: &[song],
+            },
+            now,
+        );
+        // Its waveform, a part of it chosen, and B playing in it.
+        let song: Vec<f32> = (0..dasmeter_core::OVERVIEW_POINTS)
+            .map(|k| {
+                let stretch = darker.len() / dasmeter_core::OVERVIEW_POINTS;
+                darker[k * stretch..(k + 1) * stretch]
+                    .iter()
+                    .fold(0.0f32, |m, x| m.max(x.abs()))
+                    .min(1.0)
+            })
+            .collect();
+        let overview = dasmeter_core::SongOverview {
+            seconds: 214.0,
+            peaks: song,
+        };
+        core.handle(
+            Event::AbOverview {
+                file: "/music/reference-master.wav",
+                overview: &overview,
+            },
+            now,
+        );
+        core.handle(
+            Event::AbRegion {
+                meter: 0,
+                region: Some((96.0, 128.0)),
+            },
+            now,
+        );
+        core.handle(Event::ListenB { meter: 0, b: true }, now);
+        core.handle(
+            Event::AbPosition {
+                meter: 0,
+                seconds: Some(109.5),
+            },
+            now,
+        );
+        now = play(core, &music(1.0), now);
+    }
+    // The pointer over the Fine view, on the low end.
+    if variant == "-cursor" {
+        core.handle(Event::Pointer(Some((WindowKey::Main, [0.18, 0.5]))), now);
+    }
     // Its menu, learning another song.
     if variant == "-menu" {
         core.handle(Event::LearnSong { meter: 0 }, now);
@@ -462,8 +520,10 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
                 || option.starts_with("loudness-")
+                || option.starts_with("preset-")
                 || option == "spectrum-collisions"
-                || option == "spectrum-reference" =>
+                || option == "spectrum-reference"
+                || option == "spectrum-b" =>
         {
             0
         }
@@ -498,8 +558,21 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         let (w, h) = o.split_once('x')?;
         Some((w.parse::<u32>().ok()? * 2, h.parse::<u32>().ok()? * 2))
     });
+    // "preset-N": the Nth built-in Preset, at its own window or Bar size.
+    let built_in = open
+        .and_then(|o| o.strip_prefix("preset-"))
+        .and_then(|n| n.parse::<usize>().ok())
+        .and_then(|n| dasmeter_core::BuiltIn::ALL.get(n).copied());
     let (width, height) = match (open, custom) {
         (_, Some(size)) => size,
+        _ if built_in.is_some() => {
+            let data = dasmeter_core::PresetData::built_in(built_in.expect("checked"));
+            match (data.mode, data.window.frame) {
+                (LayoutMode::Bar, _) => (3024, (data.bar.thickness * 2.0) as u32),
+                (_, Some(frame)) => ((frame.width * 2.0) as u32, (frame.height * 2.0) as u32),
+                (_, None) => (2400, 1440),
+            }
+        }
         (Some("bar" | "showcase-bar"), _) => BAR,
         (
             Some(
@@ -508,13 +581,14 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             ),
             _,
         ) => (2400, 1440),
-        (Some("theme-settings"), _) => (2400, 1800),
+        (Some("theme-settings" | "spectrum-settings"), _) => (2400, 1800),
         (Some(option), _)
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
                 || option.starts_with("loudness-")
                 || option == "spectrum-collisions"
-                || option == "spectrum-reference" =>
+                || option == "spectrum-reference"
+                || option == "spectrum-b" =>
         {
             (1440, 900)
         }
@@ -522,6 +596,27 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     };
     match open {
         None | Some("bar") => {}
+        Some(option) if option.starts_with("preset-") => {
+            let index = dasmeter_core::BuiltIn::ALL
+                .iter()
+                .position(|&b| Some(b) == built_in)
+                .ok_or("no such built-in Preset")?;
+            core.handle(
+                Event::PresetFiles {
+                    files: &[],
+                    settings: None,
+                },
+                now,
+            );
+            core.handle(Event::SwitchPreset { index }, now);
+            core.handle(Event::StartListening, now);
+            core.handle(Event::Pointer(None), now);
+            for block in music(10.0).chunks(1024) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(block), now);
+                core.decide(now);
+            }
+        }
         // For the README: Window mode with six Meters on music, or the
         // settings open on the Theme page.
         Some("showcase-bar") => {
@@ -665,7 +760,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             },
             now,
         ),
-        Some("settings") => core.handle(Event::ShowSettings(true), now),
+        Some("settings" | "spectrum-settings") => core.handle(Event::ShowSettings(true), now),
         // The Spectrogram in the Spectrum's place, on a sweep from 60 Hz to
         // 12 kHz over pink noise, with a 1 kHz tone joining halfway; or, in a
         // window, zoomed into the box around the tone.
@@ -854,6 +949,51 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         }
         // A Spectrum alone with its long-term average (10 s) and a Reference
         // curve saved from other, darker audio.
+        // A Spectrum showing B: the music as the mix, a darker take on it as B.
+        Some("spectrum-b") => {
+            now = solo(&mut core, "spectrum", now)?;
+            let Some(dasmeter_core::MeterSettings::Spectrum(settings)) = core.meter_settings(0)
+            else {
+                return Err("no Spectrum".into());
+            };
+            core.handle(
+                Event::SetMeter {
+                    meter: 0,
+                    settings: dasmeter_core::MeterSettings::Spectrum(
+                        dasmeter_core::SpectrumMeterSettings {
+                            show_b: true,
+                            ..settings
+                        },
+                    ),
+                },
+                now,
+            );
+            let mix = music(4.0);
+            let mut low = [0.0f32; 2];
+            let b: Vec<f32> = mix
+                .chunks(2)
+                .flat_map(|frame| {
+                    let mut out = [0.0f32; 2];
+                    for ((s, &x), o) in low.iter_mut().zip(frame).zip(&mut out) {
+                        *s += 0.02 * (x - *s);
+                        *o = 0.5 * x + 2.5 * *s;
+                    }
+                    out
+                })
+                .collect();
+            for (a, b) in mix.chunks(1024).zip(b.chunks(1024)) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(a), now);
+                core.handle(
+                    Event::BAudio {
+                        frames: b,
+                        sample_rate: RATE,
+                    },
+                    now,
+                );
+                core.decide(now);
+            }
+        }
         Some("spectrum-reference") => {
             now = solo(&mut core, "spectrum", now)?;
             let Some(dasmeter_core::MeterSettings::Spectrum(mut settings)) = core.meter_settings(0)
@@ -1004,6 +1144,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // egui lays windows out over a few frames; the last one is drawn.
     let mut ui = Ui::new();
     ui.use_fonts(painter.text.font_system.db());
+    if open == Some("spectrum-settings") {
+        ui.show_meter_page(1);
+    }
     if open == Some("theme-settings") {
         ui.show_theme_page();
     }

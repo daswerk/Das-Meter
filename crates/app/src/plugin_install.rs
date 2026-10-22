@@ -10,10 +10,11 @@
 //!
 //! Everything here works on paths it is given, so tests run in a temp dir.
 
-use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+pub use crate::updates::Version;
 
 /// The Send Plugin's bundle name, without its extension.
 pub const PLUGIN_NAME: &str = "Das-Meter Send";
@@ -57,35 +58,6 @@ impl Format {
             Format::Vst3 => "VST3",
             Format::Au => "AU",
         }
-    }
-}
-
-/// A `major.minor.patch` version, compared numerically.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Version(pub u32, pub u32, pub u32);
-
-impl Version {
-    /// Parses `1.2.3`, `v1.2.3`, `1.2` (patch 0) or `1` (minor and patch 0).
-    /// Anything after a `-` or `+` (pre-release, build) is ignored.
-    pub fn parse(text: &str) -> Option<Version> {
-        let text = text.trim();
-        let text = text.strip_prefix('v').unwrap_or(text);
-        let core = text.split(['-', '+']).next()?;
-        let mut parts = core.split('.');
-        let mut next = || -> Option<u32> {
-            match parts.next() {
-                Some(part) => part.parse().ok(),
-                None => Some(0),
-            }
-        };
-        let version = Version(next()?, next()?, next()?);
-        parts.next().is_none().then_some(version)
-    }
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.0, self.1, self.2)
     }
 }
 
@@ -330,19 +302,6 @@ mod tests {
             write_bundle(&places.bundled(format), bundled_version, "new");
         }
         places
-    }
-
-    #[test]
-    fn versions_compare_numerically() {
-        assert_eq!(Version::parse("1.2.3"), Some(Version(1, 2, 3)));
-        assert_eq!(Version::parse("v0.10.0"), Some(Version(0, 10, 0)));
-        assert_eq!(Version::parse("1.2"), Some(Version(1, 2, 0)));
-        assert_eq!(Version::parse("2.0.0-beta.1"), Some(Version(2, 0, 0)));
-        assert_eq!(Version::parse("1.2.3.4"), None);
-        assert_eq!(Version::parse("one"), None);
-        assert_eq!(Version::parse(""), None);
-        assert!(Version(0, 10, 0) > Version(0, 9, 9));
-        assert!(Version(1, 0, 0) > Version(0, 99, 99));
     }
 
     #[test]

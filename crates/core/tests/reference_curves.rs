@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use dasmeter_analysis::LongTerm;
 use dasmeter_analysis::signals::{both, sine};
-use dasmeter_core::{AppCore, Event, MeterSettings, ReferenceCurve, Scene, ThemeFile};
+use dasmeter_core::{AppCore, Event, MeterKind, MeterSettings, ReferenceCurve, Scene, ThemeFile};
 
 const RATE: u32 = 48_000;
 /// The default Bar: Waveform, Spectrum, Stereometer, Loudness Meter.
@@ -34,6 +34,14 @@ impl App {
         app.core.handle(Event::StartListening, app.now);
         app.core
             .handle(Event::CaptureStarted { sample_rate: RATE }, app.now);
+        // A plain Spectrum, whichever built-in opens first.
+        app.core.handle(
+            Event::AssignMeter {
+                meter: SPECTRUM,
+                kind: MeterKind::Spectrum,
+            },
+            app.now,
+        );
         app
     }
 

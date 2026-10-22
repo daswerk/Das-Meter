@@ -44,6 +44,20 @@ const PRIVACY_SETTINGS: &str =
 /// one-time "is sending" note: rarely, as it wakes an otherwise idle app.
 const LIST_ON_CAPTURE_EVERY: Duration = Duration::from_secs(2);
 
+/// The `.dasmeter-preset` files on the command line: Explorer starts the app
+/// with the one double-clicked.
+#[cfg(not(target_os = "macos"))]
+fn launch_files() -> std::sync::mpsc::Receiver<std::path::PathBuf> {
+    let (sender, files) = std::sync::mpsc::channel();
+    for arg in std::env::args_os().skip(1) {
+        let path = std::path::PathBuf::from(arg);
+        if crate::sharing::is_preset(&path) {
+            let _ = sender.send(path);
+        }
+    }
+    files
+}
+
 pub fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
@@ -58,6 +72,8 @@ pub fn run() {
         audio: None,
         #[cfg(target_os = "macos")]
         opened_files: crate::macos::receive_opened_files(wake.clone()),
+        #[cfg(not(target_os = "macos"))]
+        opened_files: launch_files(),
         wake,
         send_plugins: SendPluginInput::new(),
         send_plugins_listed_at: Duration::ZERO,
@@ -74,9 +90,14 @@ pub fn run() {
         modifiers: ModifiersState::empty(),
         ui_view: None,
         ui_wake: None,
+        players: HashMap::new(),
+        quieted: Vec::new(),
+        overviews_asked: std::collections::HashSet::new(),
+        b_frames: Vec::new(),
+        overviews: std::sync::mpsc::channel(),
         #[cfg(target_os = "macos")]
         main_menu: None,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         maintenance: None,
         #[cfg(target_os = "macos")]
         login_item: None,
@@ -192,14 +213,25 @@ impl AppWindow {
     }
 }
 
+/// The app icon for a window's title bar and the taskbar: 64×64 RGBA, made
+/// by scripts/make-icons.sh.
+#[cfg(not(target_os = "macos"))]
+fn window_icon() -> Option<winit::window::Icon> {
+    const RGBA: &[u8] = include_bytes!("../assets/icon/das-meter-64.rgba");
+    winit::window::Icon::from_rgba(RGBA.to_vec(), 64, 64).ok()
+}
+
+/// An A/B song's waveform, read in the background: its file and the waveform.
+type ReadOverview = (String, dasmeter_core::SongOverview);
+
 struct Shell {
     start: Instant,
     core: AppCore,
     /// System Capture, running only while Listen to is System Capture.
     audio: Option<Audio>,
     wake: Arc<dyn Fn() + Send + Sync>,
-    /// `.dasmeter-preset` files Finder opened with the app, to import.
-    #[cfg(target_os = "macos")]
+    /// `.dasmeter-preset` files Finder opened with the app (elsewhere: the
+    /// ones it was started with, as Explorer does), to import.
     opened_files: std::sync::mpsc::Receiver<std::path::PathBuf>,
     send_plugins: SendPluginInput,
     /// When the Send Plugins were last listed while on System Capture.
@@ -226,10 +258,24 @@ struct Shell {
     ui_view: Option<Scene>,
     /// When an egui layer asked to be drawn again (an animation, a tooltip).
     ui_wake: Option<Duration>,
+    /// A/B: each Tonal Balance Meter's song, playing since B was first
+    /// chosen (silent while A is heard), and the Send Plugins asked to be
+    /// quiet while B plays.
+    players: HashMap<usize, crate::playback::Player>,
+    quieted: Vec<u64>,
+    /// A/B songs whose waveform is being (or was) read, and where the
+    /// background reads report back.
+    overviews_asked: std::collections::HashSet<String>,
+    /// B's song as last taken from its player, for the Spectrum's B layer.
+    b_frames: Vec<f32>,
+    overviews: (
+        std::sync::mpsc::Sender<ReadOverview>,
+        std::sync::mpsc::Receiver<ReadOverview>,
+    ),
     #[cfg(target_os = "macos")]
     main_menu: Option<crate::main_menu::MainMenu>,
-    /// The Send Plugin refresh, updates and uninstall.
-    #[cfg(target_os = "macos")]
+    /// Updates, and on macOS the Send Plugin refresh and uninstall.
+    #[cfg(any(target_os = "macos", windows))]
     maintenance: Option<crate::maintenance::Maintenance>,
     /// Launch at Login as last read from or given to macOS.
     #[cfg(target_os = "macos")]
@@ -283,6 +329,7 @@ fn ui_view(scene: &Scene) -> Scene {
         windows,
         reference_curves: scene.reference_curves.clone(),
         targets: scene.targets.clone(),
+        target_songs: scene.target_songs.clone(),
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
@@ -328,6 +375,11 @@ impl Shell {
         match self.core.listen_to() {
             ListenTo::SystemCapture => {
                 self.send_plugins.stop();
+                // B playing: the Send Plugins it quiets need the app's heartbeat.
+                let keep_alive = !self.quieted.is_empty();
+                if keep_alive {
+                    self.send_plugins.keep_alive(self.start + now);
+                }
                 // Before Start listening (first launch), nothing is captured,
                 // so the macOS prompt only follows the welcome card.
                 if self.core.may_capture() {
@@ -342,14 +394,19 @@ impl Shell {
                 // Look for a sending Send Plugin now and then, for the
                 // one-time note.
                 if !self.core.wants_send_plugins_listed() {
-                    return None;
+                    return keep_alive.then_some(now + LIST_EVERY);
                 }
                 if now >= self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY {
                     self.send_plugins_listed_at = now;
                     self.send_plugins
                         .pump(&mut self.core, now, self.start + now);
                 }
-                Some(self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY)
+                let next = self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY;
+                Some(if keep_alive {
+                    next.min(now + LIST_EVERY)
+                } else {
+                    next
+                })
             }
             ListenTo::SendPlugins => {
                 // System Capture pauses while listening to Send Plugins.
@@ -357,7 +414,7 @@ impl Shell {
                 self.send_plugins
                     .pump(&mut self.core, now, self.start + now);
                 let every = if self.send_plugins.listening() {
-                    self.core.app_settings().frame_interval()
+                    self.core.frame_interval()
                 } else {
                     LIST_EVERY
                 };
@@ -374,6 +431,10 @@ impl Shell {
     }
 
     fn open(&mut self, event_loop: &ActiveEventLoop, role: Role, attributes: WindowAttributes) {
+        // On Windows and Linux the window brings its own icon (title bar,
+        // taskbar); a macOS app takes its icon from the bundle.
+        #[cfg(not(target_os = "macos"))]
+        let attributes = attributes.with_window_icon(window_icon());
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
             Err(error) => {
@@ -687,6 +748,11 @@ impl Shell {
         }
         let requests = std::mem::take(&mut actions.requests);
         for action in actions {
+            // A/B goes to the player and the Send Plugins at once, not at
+            // the next frame.
+            if let Event::ListenB { meter, b } = action {
+                self.switch_ab(meter, b);
+            }
             self.core.handle(action, now);
         }
         for request in requests {
@@ -793,6 +859,20 @@ impl Shell {
                 }
                 Request::Learn(topic) => self.open_url(&topic.url()),
                 Request::OpenPrivacySettings => self.open_url(PRIVACY_SETTINGS),
+                Request::CheckForUpdates =>
+                {
+                    #[cfg(windows)]
+                    if let Some(maintenance) = &mut self.maintenance {
+                        maintenance.check_now(&mut self.core, now);
+                    }
+                }
+                Request::Update =>
+                {
+                    #[cfg(windows)]
+                    if let Some(maintenance) = &mut self.maintenance {
+                        maintenance.update();
+                    }
+                }
             }
         }
     }
@@ -929,7 +1009,7 @@ impl Shell {
         }
     }
 
-    /// The display the Bar lives on, and its refresh rate for the frame-rate cap.
+    /// The display the Bar lives on, and the refresh rate the frames follow.
     fn report_display(&mut self) {
         let now = self.now();
         #[cfg(target_os = "macos")]
@@ -939,14 +1019,156 @@ impl Shell {
                 self.core.handle(Event::Screens(&screens), now);
             }
         }
-        let rate = self
-            .find(Role::Meters(WindowKey::Bar))
-            .and_then(|id| self.windows[&id].window.current_monitor())
+        // The Bar's display, else the main window's: the frame pacing follows it.
+        let rate = [WindowKey::Bar, WindowKey::Main]
+            .into_iter()
+            .filter_map(|key| self.find(Role::Meters(key)))
+            .find_map(|id| self.windows[&id].window.current_monitor())
             .and_then(|monitor| monitor.refresh_rate_millihertz());
         if let Some(millihertz) = rate {
             self.core
                 .handle(Event::DisplayRefreshRate((millihertz + 500) / 1000), now);
         }
+    }
+
+    /// A/B: plays each Tonal Balance Meter's song while it's on B (at the
+    /// gain that matches the mix), silent but running on while on A, and
+    /// asks the Send Plugin it listens to for silence while B plays.
+    fn sync_ab(&mut self) {
+        let Some(scene) = self.core.scene() else {
+            return;
+        };
+        let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let any_b = scene.windows.iter().flat_map(|w| &w.meters).any(|m| {
+            m.tonal_balance
+                .as_ref()
+                .and_then(|t| t.ab.as_ref())
+                .is_some_and(|ab| ab.b)
+        });
+        // On System Capture the whole DAW is heard: B quiets every Send
+        // Plugin (put one on the master to hear the song alone). Listed now
+        // so the first B finds them.
+        if any_b && !on_send_plugins {
+            self.send_plugins.keep_alive(self.start + self.now());
+        }
+        let everyone = self.send_plugins.ids();
+        let wanted: Vec<(usize, dasmeter_core::AbScene, Option<u64>)> = scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .filter_map(|m| {
+                let ab = m.tonal_balance.as_ref()?.ab.clone()?;
+                Some((m.meter, ab, m.picked.filter(|_| on_send_plugins)))
+            })
+            .collect();
+        // Waveforms still to read, in the background.
+        for (_, ab, _) in &wanted {
+            if ab.overview.is_none() && self.overviews_asked.insert(ab.file.clone()) {
+                let (file, report, wake) =
+                    (ab.file.clone(), self.overviews.0.clone(), self.wake.clone());
+                let _ = std::thread::Builder::new()
+                    .name("A/B waveform".into())
+                    .spawn(move || {
+                        let path = std::path::PathBuf::from(&file);
+                        if let Ok(overview) = crate::audio_files::overview(&path) {
+                            let _ = report.send((file, overview));
+                            wake();
+                        }
+                    });
+            }
+        }
+        // A song (or a region of it) that's no longer picked stops.
+        self.players.retain(|meter, player| {
+            wanted.iter().any(|(m, ab, _)| {
+                m == meter && ab.file == player.file() && ab.region == player.region()
+            })
+        });
+        // The song runs, silent on A, as soon as there's one: switching is
+        // then only a fade, never the wait for a stream to open.
+        for (meter, ab, _) in &wanted {
+            if !self.players.contains_key(meter) {
+                match crate::playback::Player::start(&ab.file, ab.region) {
+                    Ok(player) => {
+                        self.players.insert(*meter, player);
+                    }
+                    Err(reason) => eprintln!("A/B: {reason}"),
+                }
+            }
+            if let Some(player) = self.players.get(meter) {
+                player.set_gain(10f32.powf(ab.gain_db / 20.0), ab.b);
+            }
+            // Where B is, for the playhead on the waveform.
+            let position = self
+                .players
+                .get(meter)
+                .filter(|_| ab.b)
+                .and_then(|p| p.position(ab.overview.as_ref().map(|o| o.seconds)));
+            if position != ab.position {
+                let now = self.now();
+                self.core.handle(
+                    Event::AbPosition {
+                        meter: *meter,
+                        seconds: position,
+                    },
+                    now,
+                );
+            }
+        }
+        let quiet: Vec<u64> = if on_send_plugins {
+            wanted
+                .iter()
+                .filter(|(_, ab, _)| ab.b)
+                .filter_map(|(_, _, picked)| *picked)
+                .collect()
+        } else if any_b {
+            everyone
+        } else {
+            Vec::new()
+        };
+        for id in self.quieted.iter().filter(|id| !quiet.contains(id)) {
+            self.send_plugins.set_muted(*id, false);
+        }
+        for id in &quiet {
+            self.send_plugins.set_muted(*id, true);
+        }
+        self.quieted = quiet;
+    }
+
+    /// A/B switched on `meter`: the song fades in or out and the Send
+    /// Plugins go quiet or play again right away, before the next frame
+    /// brings the rest ([`Shell::sync_ab`]).
+    fn switch_ab(&mut self, meter: usize, b: bool) {
+        let Some(scene) = self.core.scene() else {
+            return;
+        };
+        let Some(m) = scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .find(|m| m.meter == meter)
+        else {
+            return;
+        };
+        let Some(ab) = m.tonal_balance.as_ref().and_then(|t| t.ab.as_ref()) else {
+            return;
+        };
+        let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let (picked, gain) = (m.picked, 10f32.powf(ab.gain_db / 20.0));
+        let quiet = if on_send_plugins {
+            picked.into_iter().collect()
+        } else {
+            // Listed now if they weren't yet, so the first B finds them.
+            let now = self.now();
+            self.send_plugins.keep_alive(self.start + now);
+            self.send_plugins.ids()
+        };
+        if let Some(player) = self.players.get(&meter) {
+            player.set_gain(gain, b);
+        }
+        for id in &quiet {
+            self.send_plugins.set_muted(*id, b);
+        }
+        self.quieted = if b { quiet } else { Vec::new() };
     }
 
     /// Whether any window with Meters can be seen.
@@ -1115,6 +1337,10 @@ impl ApplicationHandler for Shell {
             let mut maintenance = crate::maintenance::Maintenance::new(self.wake.clone());
             maintenance.at_launch(&mut self.core, now);
             self.maintenance = Some(maintenance);
+        }
+        #[cfg(windows)]
+        if self.maintenance.is_none() {
+            self.maintenance = Some(crate::maintenance::Maintenance::new(self.wake.clone()));
         }
     }
 
@@ -1414,6 +1640,28 @@ impl ApplicationHandler for Shell {
                 menu.show_missing_displays(&scene.missing_displays);
             }
         }
+        // After the Presets are read at launch, so an opened file isn't overwritten.
+        #[cfg(not(target_os = "macos"))]
+        if self.started {
+            for path in self.opened_files.try_iter() {
+                crate::sharing::import(&mut self.core, &path, now);
+            }
+        }
+        #[cfg(windows)]
+        if let Some(maintenance) = &mut self.maintenance {
+            if maintenance.poll(&mut self.core, now) {
+                event_loop.exit();
+                return;
+            }
+            maintenance.check_if_due(&mut self.core, now);
+            let offer = crate::ui::UpdateOffer {
+                available: maintenance.available().map(|r| r.version.to_string()),
+                busy: maintenance.busy(),
+            };
+            for app in self.windows.values() {
+                crate::ui::set_update_offer(&app.ui.ctx, offer.clone());
+            }
+        }
         self.pump_audio_files(now);
         self.save_themes();
         self.save_presets();
@@ -1423,6 +1671,24 @@ impl ApplicationHandler for Shell {
             self.report_display();
         }
         let pump_at = self.pump(now);
+        // A/B waveforms read in the background.
+        let read: Vec<_> = self.overviews.1.try_iter().collect();
+        for (file, overview) in &read {
+            self.core.handle(Event::AbOverview { file, overview }, now);
+        }
+        // B's song as played, for Spectrums showing it (the first B playing).
+        if let Some(player) = self.players.values_mut().next() {
+            player.take_monitor(&mut self.b_frames);
+            if !self.b_frames.is_empty() {
+                self.core.handle(
+                    Event::BAudio {
+                        frames: &self.b_frames,
+                        sample_rate: player.rate(),
+                    },
+                    now,
+                );
+            }
+        }
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {
             let pace = if !self.core.visible() {
@@ -1437,9 +1703,22 @@ impl ApplicationHandler for Shell {
         let wake_at = match decision {
             Decision::Draw => {
                 self.sync_windows(event_loop);
+                self.sync_ab();
                 None
             }
-            Decision::Sleep { until } => until,
+            Decision::Sleep { until } => {
+                // In step with the display: the last frame again on this
+                // refresh (cheap: unchanged Meters keep their shapes), so the
+                // next new one lands on its own refresh.
+                if self.core.keeps_presenting(now) {
+                    for app in self.windows.values() {
+                        if matches!(app.role, Role::Meters(_)) {
+                            app.window.request_redraw();
+                        }
+                    }
+                }
+                until
+            }
         };
         if self.ui_wake.is_some_and(|at| at <= now) {
             self.ui_wake = None;
@@ -1567,11 +1846,13 @@ impl Shell {
                     purpose,
                     parts,
                     name,
+                    path,
                     result,
                 } => {
                     match (purpose, result) {
                         (Purpose::Target(target), Ok(summary)) => {
-                            let song = dasmeter_core::TargetSong::new(&name, parts, &summary);
+                            let song = dasmeter_core::TargetSong::new(&name, parts, &summary)
+                                .with_file(&path.to_string_lossy());
                             self.core.handle(
                                 Event::AddTargetSongs {
                                     meter,

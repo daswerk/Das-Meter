@@ -39,6 +39,10 @@ pub struct TargetSong {
     pub regions: [f32; 5],
     /// Level per point of the Tonal Balance grid, relative to the loudness.
     pub curve: Vec<f32>,
+    /// Where its audio file is on this machine, for listening to it (A/B).
+    /// None for a song taught by playing, or in a shared Preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 fn tenth(value: f32) -> f32 {
@@ -61,6 +65,15 @@ impl TargetSong {
             low_end_mono: summary.low_end_mono.map(|m| (m * 100.0).round() / 100.0),
             regions: summary.regions.map(tenth),
             curve: summary.curve.iter().copied().map(tenth).collect(),
+            file: None,
+        }
+    }
+
+    /// The same song, with where its audio file is.
+    pub fn with_file(self, file: &str) -> TargetSong {
+        TargetSong {
+            file: Some(file.to_owned()),
+            ..self
         }
     }
 
@@ -143,6 +156,15 @@ impl Target {
         })
     }
 
+    /// The Target with only its song at `index` (the last if there's none there).
+    pub fn only(&self, index: usize) -> Target {
+        let song = self.songs.get(index).or(self.songs.last()).cloned();
+        Target {
+            songs: song.into_iter().collect(),
+            ..self.clone()
+        }
+    }
+
     /// The key most of its songs are in, of those whose key is sure; the
     /// first song's on a tie. `None` when no song's key is sure.
     pub fn home_key(&self) -> Option<Key> {
@@ -182,14 +204,31 @@ pub type Targets = Library<Target>;
 
 impl Targets {
     /// Adds a song to the Target called `target`, made if there's none.
+    /// The same file added again replaces its earlier copy, in its place.
     /// Returns the name the Target has.
     pub fn add_song(&mut self, target: &str, song: TargetSong) -> String {
         let mut item = self
             .get(target.trim())
             .cloned()
             .unwrap_or_else(|| Target::new(target));
-        item.songs.push(song);
+        let again = song.file.as_ref().and_then(|file| {
+            item.songs
+                .iter()
+                .position(|s| s.file.as_ref() == Some(file))
+        });
+        match again {
+            Some(i) => item.songs[i] = song,
+            None => item.songs.push(song),
+        }
         self.save(item)
+    }
+
+    /// Where the song from `file` is in the Target called `target`, if it's there.
+    pub fn song_from(&self, target: &str, file: &str) -> Option<usize> {
+        self.get(target)?
+            .songs
+            .iter()
+            .position(|s| s.file.as_deref() == Some(file))
     }
 
     /// Removes a Target's song by its place in the list; returns whether it did.
@@ -222,6 +261,7 @@ mod tests {
             low_end_mono: Some(0.95),
             regions: [level; 5],
             curve: vec![level; points],
+            file: None,
         }
     }
 
@@ -265,6 +305,23 @@ mod tests {
         assert_eq!(combined.key.tonic, 5);
         assert_eq!(combined.songs, 4);
         assert_eq!(combined.aligned, 3);
+    }
+
+    #[test]
+    fn the_same_file_added_again_replaces_its_song() {
+        let mut targets = Targets::default();
+        let first = song("Komit", -20.0, None).with_file("/music/komit.wav");
+        targets.add_song("Club", song("Other", -18.0, None));
+        targets.add_song("Club", first);
+        let again = song("Komit", -22.0, None).with_file("/music/komit.wav");
+        targets.add_song("Club", again);
+        let club = targets.get("Club").unwrap();
+        assert_eq!(club.songs.len(), 2, "once, not twice");
+        assert_eq!(
+            club.songs[1].regions[0], -22.0,
+            "the new analysis, in its place"
+        );
+        assert_eq!(targets.song_from("Club", "/music/komit.wav"), Some(1));
     }
 
     #[test]

@@ -27,6 +27,7 @@ use heatmap::Heatmap;
 use labels::{Align, Labels, Style};
 pub use shapes::Area;
 use shapes::Shapes;
+pub use tonal_balance::controls as tonal_balance_controls;
 
 /// What a Meter's drawing code draws with: shapes, labels, colours and the scale factor.
 pub struct Canvas<'a> {
@@ -132,6 +133,25 @@ pub struct MeterRenderer {
     heatmap: Heatmap,
     overlay: Shapes,
     labels: Labels,
+    /// A Tonal Balance Meter's view range, held between frames.
+    tonal: tonal_balance::Steady,
+    /// What the shapes were last laid out from: a frame that would lay out
+    /// the same again keeps them (most Meters change less often than a
+    /// 120 Hz display draws).
+    last: Option<Drawn>,
+    /// Whether the shapes changed since the last upload.
+    changed: bool,
+}
+
+/// What a Meter's shapes depend on.
+#[derive(PartialEq)]
+struct Drawn {
+    meter: MeterScene,
+    area: Area,
+    palette: Palette,
+    styling: Styling,
+    scale: f32,
+    bar: bool,
 }
 
 impl MeterRenderer {
@@ -141,6 +161,9 @@ impl MeterRenderer {
             heatmap: Heatmap::new(gpu),
             overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
+            tonal: tonal_balance::Steady::default(),
+            last: None,
+            changed: true,
         }
     }
 
@@ -165,7 +188,21 @@ impl MeterRenderer {
         self.labels.clear();
     }
 
+    /// Sends the shapes [`MeterRenderer::prepare`] laid out to the GPU, if
+    /// they changed.
+    pub fn upload(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        belt: &mut wgpu::util::StagingBelt,
+    ) {
+        if std::mem::take(&mut self.changed) {
+            self.shapes.upload(encoder, belt);
+            self.overlay.upload(encoder, belt);
+        }
+    }
+
     fn finish(&mut self, gpu: &Gpu, text: &mut Text, area: Area) {
+        self.changed = true;
         self.shapes.prepare(gpu);
         self.heatmap.prepare(gpu);
         self.overlay.prepare(gpu);
@@ -181,10 +218,32 @@ impl MeterRenderer {
         look: Look,
         meter: &MeterScene,
     ) {
+        let drawn = Drawn {
+            meter: meter.clone(),
+            area,
+            palette: look.palette.clone(),
+            styling: look.styling,
+            scale: look.scale,
+            bar: look.bar,
+        };
+        // The same as last frame: the shapes stay. (Tonal Balance glides its
+        // range between frames, so it's always laid out.) The text is
+        // prepared again all the same, so its glyphs stay in the atlas.
+        let glides = matches!(
+            meter.settings,
+            dasmeter_core::MeterSettings::TonalBalance(_)
+        );
+        if !glides && self.last.as_ref() == Some(&drawn) {
+            self.labels.prepare(gpu, text, area);
+            return;
+        }
+        self.last = Some(drawn);
         self.begin(gpu, area);
         let (scale, styling) = (look.scale, look.styling);
         // The Meter's own colour overrides go over the Theme's.
         let palette = look.palette.with(&meter.overrides);
+        // Held across frames, lent to the drawing while the canvas borrows the rest.
+        let mut tonal = std::mem::take(&mut self.tonal);
         let mut c = self.canvas(&palette, scale, styling);
         c.hovered = meter.hovered;
         let radius = c.px(styling.corner_radius);
@@ -305,6 +364,7 @@ impl MeterRenderer {
                     pointer,
                     held_peaks,
                     overlay,
+                    b_layer,
                 } => spectrum::draw(
                     &mut c,
                     area,
@@ -322,6 +382,7 @@ impl MeterRenderer {
                     zoom.as_deref(),
                     meter.reference.as_ref(),
                     overlay.as_deref(),
+                    b_layer.as_deref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)
@@ -383,6 +444,7 @@ impl MeterRenderer {
                     settings,
                     mix,
                     frozen,
+                    pointer,
                 } => tonal_balance::draw(
                     &mut c,
                     inner,
@@ -396,8 +458,12 @@ impl MeterRenderer {
                             .as_ref()
                             .and_then(|t| t.comparing.as_deref()),
                         target: meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref()),
+                        pointer: pointer
+                            .map(|[x, y]| [area.x + x * area.width, area.y + y * area.height]),
+                        ab: meter.tonal_balance.as_ref().and_then(|t| t.ab.as_ref()),
                     },
                     look.bar,
+                    &mut tonal,
                 ),
             },
         }
@@ -433,6 +499,7 @@ impl MeterRenderer {
             };
             c.overlay.rounded_rect(area, radius, veil);
         }
+        self.tonal = tonal;
         self.finish(gpu, text, area);
     }
 

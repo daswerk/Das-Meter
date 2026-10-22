@@ -183,9 +183,13 @@ struct Run {
 }
 
 impl Run {
-    fn new(kind: Kind) -> Run {
+    /// `refresh`: the window's display rate in Hz, which the frames follow.
+    fn new(kind: Kind, refresh: Option<u32>) -> Run {
         let mut core = AppCore::new();
         core.handle(Event::SetMode(LayoutMode::Window), Duration::ZERO);
+        if let Some(rate) = refresh {
+            core.handle(Event::DisplayRefreshRate(rate), Duration::ZERO);
+        }
         core.handle(Event::CaptureStarted { sample_rate: RATE }, Duration::ZERO);
         Run {
             kind,
@@ -347,11 +351,18 @@ impl Bench {
         self.results.push((run.kind, run.result));
         match self.queue.pop() {
             Some(kind) => {
-                self.run = Some(Run::new(kind));
+                self.run = Some(Run::new(kind, self.refresh()));
                 true
             }
             None => false,
         }
+    }
+
+    /// The refresh rate of the window's display, in Hz.
+    fn refresh(&self) -> Option<u32> {
+        let (window, ..) = self.window.as_ref()?;
+        let millihertz = window.current_monitor()?.refresh_rate_millihertz()?;
+        Some((millihertz + 500) / 1000)
     }
 
     fn print(&self) {
@@ -388,7 +399,7 @@ impl ApplicationHandler for Bench {
         let painter = Painter::new(gpu);
         self.window = Some((window, surface, painter));
         let first = self.queue.pop().expect("a scene to run");
-        self.run = Some(Run::new(first));
+        self.run = Some(Run::new(first, self.refresh()));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -420,13 +431,13 @@ impl ApplicationHandler for Bench {
             // Nothing changed on screen: a gap until the next frame isn't late.
             run.last_present = None;
         }
+        // As the app does: presented on every refresh while frames come.
+        let present = decision == Decision::Draw || run.core.keeps_presenting(now);
+        if present && let Some((window, ..)) = &self.window {
+            window.request_redraw();
+        }
         let wake = match decision {
-            Decision::Draw => {
-                if let Some((window, ..)) = &self.window {
-                    window.request_redraw();
-                }
-                next_block
-            }
+            Decision::Draw => next_block,
             // Settled, like capture: wake for the next audible block, and for
             // silence only when its ring would be half full.
             Decision::Sleep { until: None } if settled => {

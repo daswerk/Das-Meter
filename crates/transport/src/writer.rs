@@ -189,6 +189,17 @@ impl Writer {
             .is_some_and(|at| now.saturating_duration_since(at) < GONE_AFTER)
     }
 
+    /// Plays again if the app asked for silence: for when the app is gone,
+    /// so a crash never leaves a track muted.
+    pub fn clear_muted(&self) {
+        let _ = self.table.slot(self.index).muted.compare_exchange(
+            self.generation,
+            0,
+            Relaxed,
+            Relaxed,
+        );
+    }
+
     /// A handle for the audio thread. Create it on the main thread (it clones an `Arc`),
     /// and make only one per claim.
     pub fn audio(&self) -> AudioWriter {
@@ -267,6 +278,12 @@ impl AudioWriter {
         if let Some(block) = self.table.timing(self.index) {
             block.write(self.position, timing);
         }
+    }
+
+    /// Whether the app asks for silence (A/B listening). Like `push`, it takes
+    /// no locks and makes no syscalls.
+    pub fn muted(&self) -> bool {
+        self.table.slot(self.index).muted.load(Relaxed) == self.generation
     }
 
     /// Pushes one block of stereo audio. For a mono track pass the same slice twice.

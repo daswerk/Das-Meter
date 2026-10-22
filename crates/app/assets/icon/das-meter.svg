@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Das-Meter's app icon: the dark tile with a dithered purple glow, under
+       a fine grid like the Spectrum's (verticals spaced as its frequency
+       lines, 50 Hz to 10 kHz on a log scale, 1 kHz a little brighter; even
+       horizontals), fading out toward the edges as the Smooth Look's grids
+       do. Drawn for the macOS grid: an 824 px tile on 1024. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25222d"/>
+      <stop offset="1" stop-color="#121117"/>
+    </linearGradient>
+    <!-- The dither: checkerboards of 4 px (and 2 px) dots. -->
+    <pattern id="dots-purple" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="4" height="4" fill="#8b5cf6"/>
+      <rect x="4" y="4" width="4" height="4" fill="#8b5cf6"/>
+    </pattern>
+    <pattern id="dots-light" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="2" height="2" fill="#e2d6ff"/>
+      <rect x="2" y="2" width="2" height="2" fill="#e2d6ff"/>
+    </pattern>
+    <radialGradient id="fade" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="glow-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <circle cx="512" cy="512" r="300" fill="url(#fade)"/>
+    </mask>
+    <mask id="glow-core" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <circle cx="512" cy="512" r="110" fill="url(#fade)"/>
+    </mask>
+    <!-- The grid fades toward the tile's edges. -->
+    <radialGradient id="grid-fade" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff"/>
+      <stop offset="0.6" stop-color="#fff" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="grid-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect x="100" y="100" width="824" height="824" fill="url(#grid-fade)"/>
+    </mask>
+    <clipPath id="tile-clip">
+      <rect x="100" y="100" width="824" height="824" rx="186"/>
+    </clipPath>
+    <filter id="drop" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- The tile. -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)" filter="url(#drop)"/>
+
+  <g clip-path="url(#tile-clip)">
+    <!-- The glow, dithered: a wide purple and a brighter core. -->
+    <rect x="100" y="100" width="824" height="824" fill="url(#dots-purple)" mask="url(#glow-mask)" opacity="0.9"/>
+    <rect x="380" y="380" width="264" height="264" fill="url(#dots-light)" mask="url(#glow-core)" opacity="0.8"/>
+
+    <!-- The grid. x = 150 + 724 · log(f/20 Hz) / log(1000). -->
+    <g mask="url(#grid-mask)" stroke="#ffffff" stroke-width="2" fill="none">
+      <g stroke-opacity="0.16">
+        <line x1="246" y1="100" x2="246" y2="924"/>
+        <line x1="368" y1="100" x2="368" y2="924"/>
+        <line x1="440" y1="100" x2="440" y2="924"/>
+        <line x1="633" y1="100" x2="633" y2="924"/>
+        <line x1="706" y1="100" x2="706" y2="924"/>
+        <line x1="802" y1="100" x2="802" y2="924"/>
+        <line x1="875" y1="100" x2="875" y2="924"/>
+        <line x1="100" y1="244" x2="924" y2="244"/>
+        <line x1="100" y1="378" x2="924" y2="378"/>
+        <line x1="100" y1="646" x2="924" y2="646"/>
+        <line x1="100" y1="780" x2="924" y2="780"/>
+      </g>
+      <!-- 1 kHz and the middle level, as the Spectrum's reference lines. -->
+      <g stroke-opacity="0.3">
+        <line x1="537" y1="100" x2="537" y2="924"/>
+        <line x1="100" y1="512" x2="924" y2="512"/>
+      </g>
+    </g>
+  </g>
+  <rect x="101" y="101" width="822" height="822" rx="185" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
+</svg>
