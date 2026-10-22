@@ -20,7 +20,9 @@ How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Style** (a line, or bars at 3, 6 or 12 per octave), attack and release,
 **Peak hold**, **Peak line**, and the shown frequency and level ranges. With
 **Peak line** on, the loudest peak's level, frequency and note stay at the top
-right, and a thin line runs from the peak to them.
+right, and a thin line runs from the peak to them. The peak is the music's
+loudest as it is, usually the kick or the bass, not as the slope tilts it:
+changing the slope moves the curve, never which peak the line follows.
 Turn on **Mouse readout** to read any frequency and its note under the mouse.
 Drag a box over the Spectrum to zoom into it: a zoom window opens in the
 other half of the Meter, showing the box's frequencies and levels larger, with

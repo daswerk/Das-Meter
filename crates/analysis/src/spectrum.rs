@@ -644,6 +644,12 @@ impl SpectrumAnalyser {
         }
     }
 
+    /// A bin's averaged level without the slope: what the music really
+    /// has there, so the slope (a view of it) never changes which peak wins.
+    fn unsloped_db(&self, trace: usize, bin: usize) -> f32 {
+        self.average_db(trace, bin) - self.tilt[bin]
+    }
+
     /// Moves the readout's peak only when another stands clearly louder,
     /// following its own peak a bin or two as the pitch drifts.
     fn follow_steady_peak(&mut self) {
@@ -658,14 +664,19 @@ impl SpectrumAnalyser {
             self.steady_peak = None;
             return;
         }
+        // Loudest as the music has it, not as the slope tilts it.
         let loudest_in = |this: &Self, trace: usize, from: usize, to: usize| {
-            let powers = &this.average_power[trace];
-            (from..=to).max_by(|&a, &b| powers[a].total_cmp(&powers[b]))
+            (from..=to).max_by(|&a, &b| {
+                this.unsloped_db(trace, a)
+                    .total_cmp(&this.unsloped_db(trace, b))
+            })
         };
         let traces = self.spectrum.traces.len();
         let best = (0..traces)
             .filter_map(|trace| loudest_in(self, trace, first, last).map(|bin| (trace, bin)))
-            .max_by(|&(ta, a), &(tb, b)| self.average_db(ta, a).total_cmp(&self.average_db(tb, b)));
+            .max_by(|&(ta, a), &(tb, b)| {
+                self.unsloped_db(ta, a).total_cmp(&self.unsloped_db(tb, b))
+            });
         let held = self.held_peak.and_then(|(trace, bin)| {
             let from = bin.saturating_sub(PEAK_TRACK_BINS).max(first);
             let to = (bin + PEAK_TRACK_BINS).min(last);
@@ -674,8 +685,8 @@ impl SpectrumAnalyser {
         let chosen = match (held, best) {
             (Some(held), Some(best))
                 if self.average_db(held.0, held.1) > floor
-                    && self.average_db(best.0, best.1)
-                        < self.average_db(held.0, held.1) + PEAK_SWITCH_DB =>
+                    && self.unsloped_db(best.0, best.1)
+                        < self.unsloped_db(held.0, held.1) + PEAK_SWITCH_DB =>
             {
                 Some(held)
             }
