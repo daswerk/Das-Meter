@@ -346,9 +346,11 @@ your mix's loudness so the louder one doesn't sound better just for being
 louder. The song keeps running while you hear A, so switching back picks up
 where it is; it loops at its end. While B plays, the mix's average pauses.
 
-Listening to a Send Plugin, that Send Plugin goes quiet while B plays (and
-plays again if Das-Meter quits). On System Capture Das-Meter can't quiet
-other apps: stop your DAW's playback to hear the song alone.
+While B plays, Das-Meter Send goes quiet: the one the Meter listens to, or
+on System Capture every Das-Meter Send, so put one on your DAW's master bus
+to hear the song alone. They play again when you switch to A, and if
+Das-Meter quits. Other apps can't be quieted; without a Das-Meter Send,
+stop your DAW's playback to hear the song alone.
 
 ### Targets
 

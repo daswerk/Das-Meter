@@ -149,6 +149,34 @@ impl SendPluginInput {
         }
     }
 
+    /// While B plays on System Capture: keeps the Send Plugins listed and the
+    /// app's heartbeat going (they lift their silence once it stops), without
+    /// listening to any of them.
+    pub fn keep_alive(&mut self, instant: Instant) {
+        if self.reader.is_none() {
+            self.reader = match &self.v1_table {
+                Some(v1) => Reader::open_named_with_v1(&self.table, v1).ok(),
+                None => Reader::open_named(&self.table).ok(),
+            };
+        }
+        let Some(reader) = &mut self.reader else {
+            return;
+        };
+        if self
+            .listed_at
+            .is_none_or(|at| instant.duration_since(at) >= LIST_EVERY)
+        {
+            self.listed_at = Some(instant);
+            reader.heartbeat();
+            self.slots = reader.slots(instant);
+        }
+    }
+
+    /// The IDs of the Send Plugins as last listed.
+    pub fn ids(&self) -> Vec<u64> {
+        self.slots.iter().map(|s| s.id).collect()
+    }
+
     /// A/B: asks the Send Plugin with `id` for silence, or its audio again.
     pub fn set_muted(&self, id: u64, muted: bool) {
         let Some(reader) = &self.reader else {
@@ -165,10 +193,6 @@ impl SendPluginInput {
             for listening in self.listened.values() {
                 reader.set_listened(listening.slot, false);
             }
-            // A/B: nothing stays quiet once the app stops listening.
-            for info in &self.slots {
-                reader.set_muted(info.slot, false);
-            }
         }
         self.listened.clear();
     }
@@ -177,6 +201,12 @@ impl SendPluginInput {
 impl Drop for SendPluginInput {
     fn drop(&mut self) {
         self.stop();
+        // A/B: nothing stays quiet once the app quits.
+        if let Some(reader) = &self.reader {
+            for info in &self.slots {
+                reader.set_muted(info.slot, false);
+            }
+        }
     }
 }
 
@@ -215,6 +245,40 @@ mod tests {
         Level, ListenTo, LoudnessMeterSettings, MeterKind, MeterSettings, MeterState, MeterView,
     };
     use dasmeter_transport::{Details, Writer, remove_table};
+
+    /// A/B on System Capture: the app lists the Send Plugins without
+    /// listening, asks one for silence, keeps its heartbeat going so the
+    /// silence holds, and lifts it when it quits.
+    #[test]
+    fn b_on_system_capture_quiets_a_send_plugin_while_the_app_runs() {
+        let table = format!("dmapp-ab-{}", std::process::id());
+        let details = Details {
+            name: "Master".into(),
+            colour: 0x00_ff_00,
+            mono: false,
+            sample_rate: 48_000,
+        };
+        let claimed = Writer::claim_named(&table, None, &details).expect("claim a slot");
+        let mut writer = claimed.writer;
+        let audio = writer.audio();
+        let mut input = SendPluginInput::with_table(&table);
+        let start = Instant::now();
+        input.keep_alive(start);
+        let ids = input.ids();
+        assert_eq!(ids.len(), 1, "listed without listening");
+        input.set_muted(ids[0], true);
+        assert!(audio.muted());
+        // Listening stops (as on System Capture every pump): still quiet.
+        input.stop();
+        assert!(audio.muted(), "stopping listening doesn't lift it");
+        // The app is alive: the Send Plugin keeps the silence.
+        input.keep_alive(start + LIST_EVERY);
+        assert!(writer.app_running(Instant::now()));
+        drop(input);
+        assert!(!audio.muted(), "lifted when the app quits");
+        drop(writer);
+        remove_table(&table);
+    }
 
     /// A transport writer in this process feeds a Loudness Meter end to end:
     /// claim, listen, read, analyse, scene.

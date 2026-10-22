@@ -335,6 +335,11 @@ impl Shell {
         match self.core.listen_to() {
             ListenTo::SystemCapture => {
                 self.send_plugins.stop();
+                // B playing: the Send Plugins it quiets need the app's heartbeat.
+                let keep_alive = !self.quieted.is_empty();
+                if keep_alive {
+                    self.send_plugins.keep_alive(self.start + now);
+                }
                 // Before Start listening (first launch), nothing is captured,
                 // so the macOS prompt only follows the welcome card.
                 if self.core.may_capture() {
@@ -349,14 +354,19 @@ impl Shell {
                 // Look for a sending Send Plugin now and then, for the
                 // one-time note.
                 if !self.core.wants_send_plugins_listed() {
-                    return None;
+                    return keep_alive.then_some(now + LIST_EVERY);
                 }
                 if now >= self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY {
                     self.send_plugins_listed_at = now;
                     self.send_plugins
                         .pump(&mut self.core, now, self.start + now);
                 }
-                Some(self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY)
+                let next = self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY;
+                Some(if keep_alive {
+                    next.min(now + LIST_EVERY)
+                } else {
+                    next
+                })
             }
             ListenTo::SendPlugins => {
                 // System Capture pauses while listening to Send Plugins.
@@ -966,6 +976,19 @@ impl Shell {
             return;
         };
         let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let any_b = scene.windows.iter().flat_map(|w| &w.meters).any(|m| {
+            m.tonal_balance
+                .as_ref()
+                .and_then(|t| t.ab.as_ref())
+                .is_some_and(|ab| ab.b)
+        });
+        // On System Capture the whole DAW is heard: B quiets every Send
+        // Plugin (put one on the master to hear the song alone). Listed now
+        // so the first B finds them.
+        if any_b && !on_send_plugins {
+            self.send_plugins.keep_alive(self.start + self.now());
+        }
+        let everyone = self.send_plugins.ids();
         let wanted: Vec<(usize, dasmeter_core::AbScene, Option<u64>)> = scene
             .windows
             .iter()
@@ -999,11 +1022,17 @@ impl Shell {
                 player.set_gain(gain);
             }
         }
-        let quiet: Vec<u64> = wanted
-            .iter()
-            .filter(|(_, ab, _)| ab.b)
-            .filter_map(|(_, _, picked)| *picked)
-            .collect();
+        let quiet: Vec<u64> = if on_send_plugins {
+            wanted
+                .iter()
+                .filter(|(_, ab, _)| ab.b)
+                .filter_map(|(_, _, picked)| *picked)
+                .collect()
+        } else if any_b {
+            everyone
+        } else {
+            Vec::new()
+        };
         for id in self.quieted.iter().filter(|id| !quiet.contains(id)) {
             self.send_plugins.set_muted(*id, false);
         }

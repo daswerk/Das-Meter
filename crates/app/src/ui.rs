@@ -1018,8 +1018,8 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
             )
         } else {
             format!(
-                "B plays the song {:+.1} dB to match the mix. Stop the DAW to hear it alone \
-                 (a Send Plugin goes quiet by itself).",
+                "B plays the song {:+.1} dB to match the mix; every Das-Meter Send goes quiet \
+                 meanwhile (put one on the DAW's master to hear the song alone).",
                 ab.gain_db
             )
         };
@@ -2370,8 +2370,8 @@ fn ab_buttons(
     let hint = if scene.listen_to == ListenTo::SendPlugins {
         "the Send Plugin goes quiet meanwhile"
     } else {
-        "Das-Meter can't quiet other apps: stop the DAW to hear the song alone, \
-         or listen to a Send Plugin, which goes quiet by itself"
+        "every Das-Meter Send goes quiet meanwhile: put one on the DAW's master \
+         to hear the song alone"
     };
     for (b, label, tip) in [
         (false, "A", "Hear your mix".to_owned()),
