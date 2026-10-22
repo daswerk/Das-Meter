@@ -5,7 +5,8 @@
 //! up where the song is, as a reference plugin does. A thread decodes the
 //! file and resamples it to the output's rate into a ring; the output
 //! callback only reads the ring and fades between gains, so switching never
-//! clicks.
+//! clicks. A region of the song is decoded once and looped from memory, with
+//! a short fade at the loop point.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,14 +24,18 @@ const RING_SECONDS: f64 = 0.5;
 const FADE_SECONDS: f32 = 0.01;
 /// How long the decoder waits for room in the ring.
 const WAIT: Duration = Duration::from_millis(5);
+/// The fade at each end of a looped region, in seconds.
+const LOOP_FADE_SECONDS: f32 = 0.005;
 
 /// One song playing for A/B.
 pub struct Player {
     file: String,
+    /// The part of it looped, in seconds; `None` for all of it.
+    region: Option<(f32, f32)>,
+    rate: u32,
     /// The gain the output fades to, as `f32` bits: 0 while A is heard.
     gain: Arc<AtomicU32>,
     /// Frames of the song the output has taken (heard or faded out).
-    #[cfg(test)]
     played: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
     decoder: Option<JoinHandle<()>>,
@@ -38,8 +43,9 @@ pub struct Player {
 }
 
 impl Player {
-    /// Starts `file` on the default output, silent until [`Player::set_gain`].
-    pub fn start(file: &str) -> Result<Player, String> {
+    /// Starts `file` (or the `region` of it, looped) on the default output,
+    /// silent until [`Player::set_gain`].
+    pub fn start(file: &str, region: Option<(f32, f32)>) -> Result<Player, String> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -64,13 +70,17 @@ impl Player {
             let (path, stop) = (PathBuf::from(file), stop.clone());
             thread::Builder::new()
                 .name("A/B playback".into())
-                .spawn(move || decode(&path, rate, producer, &stop))
+                .spawn(move || match region {
+                    None => decode(&path, rate, producer, &stop),
+                    Some(region) => loop_region(&path, region, rate, producer, &stop),
+                })
                 .map_err(|e| e.to_string())?
         };
         Ok(Player {
             file: file.to_owned(),
+            region,
+            rate,
             gain,
-            #[cfg(test)]
             played,
             stop,
             decoder: Some(decoder),
@@ -82,9 +92,27 @@ impl Player {
         &self.file
     }
 
+    pub fn region(&self) -> Option<(f32, f32)> {
+        self.region
+    }
+
+    /// Where the output is in the song, in seconds: in the region, or in
+    /// the whole song when its length (`song_seconds`) is known.
+    pub fn position(&self, song_seconds: Option<f32>) -> Option<f32> {
+        let heard = self.played.load(Relaxed) as f64 / f64::from(self.rate.max(1));
+        match self.region {
+            Some((start, end)) => {
+                Some(start + (heard % f64::from((end - start).max(0.001))) as f32)
+            }
+            None => song_seconds
+                .filter(|&l| l > 0.0)
+                .map(|l| (heard % f64::from(l)) as f32),
+        }
+    }
+
     /// How many frames of the song the output has taken so far.
     #[cfg(test)]
-    pub fn played(&self) -> u64 {
+    fn played(&self) -> u64 {
         self.played.load(Relaxed)
     }
 
@@ -177,6 +205,64 @@ fn decode(path: &std::path::Path, rate: u32, mut ring: Producer<f32>, stop: &Ato
         // A file that can't be read (moved, deleted) stays silent.
         if played.is_err() {
             break;
+        }
+    }
+}
+
+/// Decodes the `region` (seconds) of `path` once at `rate`, then loops it
+/// into `ring` until `stop`.
+fn loop_region(
+    path: &std::path::Path,
+    (start, end): (f32, f32),
+    rate: u32,
+    mut ring: Producer<f32>,
+    stop: &AtomicBool,
+) {
+    let mut region = Vec::new();
+    let mut resampler: Option<Resampler> = None;
+    // Input frames decoded so far, at the file's own rate.
+    let mut at = 0u64;
+    let decoded = crate::audio_files::decode_while(path, |audio, from| {
+        if stop.load(Relaxed) {
+            return false;
+        }
+        let frames = (audio.len() / 2) as u64;
+        let (first, last) = (
+            (f64::from(start) * f64::from(from)) as u64,
+            (f64::from(end) * f64::from(from)) as u64,
+        );
+        let (a, b) = (
+            at.max(first).min(at + frames),
+            (at + frames).min(last).max(at),
+        );
+        if b > a {
+            let resampler = match &mut resampler {
+                Some(r) if r.from == from => r,
+                _ => resampler.insert(Resampler::new(from, rate)),
+            };
+            let slice = &audio[2 * (a - at) as usize..2 * (b - at) as usize];
+            resampler.process(slice, &mut region);
+        }
+        at += frames;
+        at < last
+    });
+    if decoded.is_err() || region.len() < 4 {
+        return;
+    }
+    fade_ends(&mut region, (LOOP_FADE_SECONDS * rate as f32) as usize);
+    while push(&mut ring, &region, stop) {}
+}
+
+/// Fades the first and last `frames` frames of interleaved stereo in and
+/// out, so a loop has no click where it joins.
+fn fade_ends(samples: &mut [f32], frames: usize) {
+    let total = samples.len() / 2;
+    let frames = frames.min(total / 2);
+    for i in 0..frames {
+        let gain = i as f32 / frames as f32;
+        for channel in 0..2 {
+            samples[2 * i + channel] *= gain;
+            samples[2 * (total - 1 - i) + channel] *= gain;
         }
     }
 }
@@ -337,12 +423,52 @@ mod tests {
     fn a_song_plays_on_the_output_and_loops() {
         let path = std::env::temp_dir().join("das-meter-ab-test.wav");
         std::fs::write(&path, wav(44_100, 0.3)).unwrap();
-        let player = Player::start(path.to_str().unwrap()).expect("an output to play on");
+        let player = Player::start(path.to_str().unwrap(), None).expect("an output to play on");
         std::thread::sleep(Duration::from_millis(1_000));
         let played = player.played();
         drop(player);
         let _ = std::fs::remove_file(&path);
         // A second of output from a 0.3 s file: it looped.
         assert!(played > 30_000, "{played} frames played");
+
+        // A region of it, looped from memory.
+        std::fs::write(&path, wav(44_100, 2.0)).unwrap();
+        let player = Player::start(path.to_str().unwrap(), Some((1.0, 1.5))).expect("an output");
+        std::thread::sleep(Duration::from_millis(1_200));
+        let at = player.position(Some(2.0)).unwrap();
+        assert!((1.0..1.5).contains(&at), "{at}");
+        assert!(player.played() > 30_000, "it loops the half second");
+        drop(player);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_songs_waveform_has_its_length_and_peaks() {
+        let path = std::env::temp_dir().join("das-meter-overview-test.wav");
+        std::fs::write(&path, wav(44_100, 3.0)).unwrap();
+        let overview = crate::audio_files::overview(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            (overview.seconds - 3.0).abs() < 0.01,
+            "{}",
+            overview.seconds
+        );
+        assert_eq!(overview.peaks.len(), dasmeter_core::OVERVIEW_POINTS);
+        // A sine at a quarter of full scale, all the way through.
+        assert!(overview.peaks.iter().all(|&p| (p - 0.25).abs() < 0.01));
+    }
+
+    #[test]
+    fn a_region_joins_without_a_click() {
+        let mut samples = vec![1.0f32; 2 * 1_000];
+        fade_ends(&mut samples, 240);
+        assert_eq!(samples[0], 0.0);
+        assert_eq!(*samples.last().unwrap(), 0.0);
+        assert_eq!(samples[1_000], 1.0, "untouched in the middle");
+        assert!(
+            samples
+                .windows(2)
+                .all(|w| (w[0] - w[1]).abs() <= 1.0 / 240.0 + 1e-6)
+        );
     }
 }

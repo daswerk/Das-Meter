@@ -346,6 +346,10 @@ your mix's loudness so the louder one doesn't sound better just for being
 louder. The song keeps running while you hear A, so switching back picks up
 where it is; it loops at its end. While B plays, the mix's average pauses.
 
+Under the curves, the song's waveform shows where B is. Drag across it to
+choose the part B plays, say the drop, and it loops just that part; click
+to play from a point to the end, double-click for the whole song again.
+
 While B plays, Das-Meter Send goes quiet: the one the Meter listens to, or
 on System Capture every Das-Meter Send, so put one on your DAW's master bus
 to hear the song alone. They play again when you switch to A, and if

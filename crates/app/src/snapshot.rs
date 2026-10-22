@@ -363,7 +363,42 @@ fn tonal_balance(core: &mut AppCore, variant: &str, now: Duration) -> Result<Dur
             },
             now,
         );
+        // Its waveform, a part of it chosen, and B playing in it.
+        let song: Vec<f32> = (0..dasmeter_core::OVERVIEW_POINTS)
+            .map(|k| {
+                let stretch = darker.len() / dasmeter_core::OVERVIEW_POINTS;
+                darker[k * stretch..(k + 1) * stretch]
+                    .iter()
+                    .fold(0.0f32, |m, x| m.max(x.abs()))
+                    .min(1.0)
+            })
+            .collect();
+        let overview = dasmeter_core::SongOverview {
+            seconds: 214.0,
+            peaks: song,
+        };
+        core.handle(
+            Event::AbOverview {
+                file: "/music/reference-master.wav",
+                overview: &overview,
+            },
+            now,
+        );
+        core.handle(
+            Event::AbRegion {
+                meter: 0,
+                region: Some((96.0, 128.0)),
+            },
+            now,
+        );
         core.handle(Event::ListenB { meter: 0, b: true }, now);
+        core.handle(
+            Event::AbPosition {
+                meter: 0,
+                seconds: Some(109.5),
+            },
+            now,
+        );
         now = play(core, &music(1.0), now);
     }
     // The pointer over the Fine view, on the low end.

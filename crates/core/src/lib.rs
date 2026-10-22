@@ -61,8 +61,8 @@ pub use targets::{Target, TargetSong, Targets};
 pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 pub use tonal_balance::{
-    AbScene, KeyChoice, TargetPick, TargetScene, TargetSongInfo, TonalBalanceMeterSettings,
-    TonalBalanceScene, TonalView, UploadScene,
+    AB_MIN_REGION, AbScene, KeyChoice, OVERVIEW_POINTS, SongOverview, TargetPick, TargetScene,
+    TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene, TonalView, UploadScene,
 };
 
 use meters::Meter;
@@ -339,6 +339,21 @@ pub enum Event<'a> {
         meter: usize,
         b: bool,
     },
+    /// The part of B's song to loop, in seconds, or (`None`) all of it.
+    AbRegion {
+        meter: usize,
+        region: Option<(f32, f32)>,
+    },
+    /// A song's waveform, read from its file (by the shell).
+    AbOverview {
+        file: &'a str,
+        overview: &'a SongOverview,
+    },
+    /// Where B is in its song, in seconds, while it plays (from the shell).
+    AbPosition {
+        meter: usize,
+        seconds: Option<f32>,
+    },
     /// How the files being analysed for a Tonal Balance Meter are getting
     /// on, or (`None`) that it's over.
     UploadProgress {
@@ -465,6 +480,11 @@ struct MeterSlot {
     overlay_showing: Option<u64>,
     /// A/B on a Tonal Balance Meter: its song plays (B). Not saved.
     listening_b: bool,
+    /// A/B: the song the region and position below are for, the part of it
+    /// B loops (seconds), and where B is in it.
+    ab_song: Option<String>,
+    ab_region: Option<(f32, f32)>,
+    ab_position: Option<f32>,
     /// How lit it is: dims in silence in the Smooth Look.
     activity: activity::Activity,
 }
@@ -516,6 +536,8 @@ pub struct AppCore {
     themes: themes::Themes,
     curves: curves::Curves,
     targets: targets::Targets,
+    /// A/B: each song's waveform read so far, by file.
+    ab_overviews: std::collections::HashMap<String, std::sync::Arc<SongOverview>>,
     /// Files being analysed for Tonal Balance Meters, by Meter.
     uploads: Vec<(usize, UploadScene)>,
     presets: Presets,
@@ -584,6 +606,9 @@ impl AppCore {
                     overlay: None,
                     overlay_showing: None,
                     listening_b: false,
+                    ab_song: None,
+                    ab_region: None,
+                    ab_position: None,
                     activity: activity::Activity::default(),
                 })
                 .collect(),
@@ -601,6 +626,7 @@ impl AppCore {
             themes: themes::Themes::new(),
             curves: curves::Curves::default(),
             targets: targets::Targets::default(),
+            ab_overviews: std::collections::HashMap::new(),
             uploads: Vec::new(),
             presets: Presets::default(),
             capture_rate: None,
@@ -969,6 +995,10 @@ impl AppCore {
             | CaptureStarted { .. }
             | CaptureFailed(_)
             | DisplayRefreshRate(_)
+            | ListenB { .. }
+            | AbRegion { .. }
+            | AbOverview { .. }
+            | AbPosition { .. }
             | Display(_)
             | ThemeFiles(_)
             | CurveFiles(_)
@@ -1186,6 +1216,11 @@ impl AppCore {
             .and_then(|t| t.song_file.clone())
             .map(|(file, loudness)| AbScene {
                 b: slot.listening_b,
+                region: slot
+                    .ab_region
+                    .filter(|_| slot.ab_song.as_ref() == Some(&file)),
+                overview: self.ab_overviews.get(&file).cloned(),
+                position: slot.ab_position.filter(|_| slot.listening_b),
                 file,
                 gain_db: slot.meter.tonal_summary().map_or(0.0, |mix| {
                     let gain = (mix.loudness - loudness).clamp(
@@ -1226,13 +1261,22 @@ impl AppCore {
         .map(|(file, _)| file)
     }
 
-    /// A/B ends on a Meter whose pick no longer has a file to play.
+    /// A/B ends on a Meter whose pick no longer has a file to play, and a
+    /// region is forgotten once another song is picked.
     fn end_unplayable_b(&mut self) {
         for meter in 0..self.meters.len() {
-            if self.meters[meter].listening_b && self.ab_file(meter).is_none() {
-                let slot = &mut self.meters[meter];
+            let file = self.ab_file(meter);
+            let slot = &mut self.meters[meter];
+            if slot.listening_b && file.is_none() {
                 slot.listening_b = false;
                 slot.meter.set_listening_b(false);
+            }
+            if slot.ab_song.is_some() && slot.ab_song != file {
+                slot.ab_song = None;
+                slot.ab_region = None;
+            }
+            if !slot.listening_b {
+                slot.ab_position = None;
             }
         }
     }
@@ -1316,6 +1360,9 @@ impl AppCore {
                 overlay: m.overlay.clone(),
                 overlay_showing: None,
                 listening_b: false,
+                ab_song: None,
+                ab_region: None,
+                ab_position: None,
                 activity: activity::Activity::default(),
             })
             .collect();
@@ -1992,6 +2039,44 @@ impl AppCore {
                 slot.listening_b = b;
                 slot.meter.set_listening_b(b);
             }
+            Event::AbRegion { meter, region } => {
+                let Some(file) = self.ab_file(meter) else {
+                    return;
+                };
+                let length = self.ab_overviews.get(&file).map(|o| o.seconds);
+                let region = region.and_then(|(a, b)| {
+                    let (start, end) = (a.min(b).max(0.0), a.max(b));
+                    let end = length.map_or(end, |l| end.min(l));
+                    (end - start >= tonal_balance::AB_MIN_REGION).then_some((start, end))
+                });
+                let slot = &mut self.meters[meter];
+                if slot.ab_region == region && slot.ab_song.as_ref() == Some(&file) {
+                    return;
+                }
+                slot.ab_song = Some(file);
+                slot.ab_region = region;
+            }
+            Event::AbOverview { file, overview } => {
+                if self
+                    .ab_overviews
+                    .get(file)
+                    .is_some_and(|o| **o == *overview)
+                {
+                    return;
+                }
+                self.ab_overviews
+                    .insert(file.to_owned(), std::sync::Arc::new(overview.clone()));
+            }
+            Event::AbPosition { meter, seconds } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let seconds = seconds.map(|s| (s * 100.0).round() / 100.0);
+                if slot.ab_position == seconds {
+                    return;
+                }
+                slot.ab_position = seconds;
+            }
             Event::FreezeTonalBalance { meter } => {
                 if !self
                     .meters
@@ -2343,6 +2428,9 @@ impl AppCore {
             overlay: self.meters[like].overlay.clone(),
             overlay_showing: None,
             listening_b: false,
+            ab_song: None,
+            ab_region: None,
+            ab_position: None,
             activity: activity::Activity::default(),
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {

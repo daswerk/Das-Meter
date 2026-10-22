@@ -164,6 +164,48 @@ pub fn analyse(path: &Path, mono_cutoff: f32, parts: Parts) -> Result<Summary, S
     summarise(&frames, parts).ok_or_else(|| "only silence".to_owned())
 }
 
+/// A song's waveform for A/B: its length and the peak level in each of
+/// [`dasmeter_core::OVERVIEW_POINTS`] equal stretches.
+pub fn overview(path: &Path) -> Result<dasmeter_core::SongOverview, String> {
+    // Peaks of short stretches first: the length isn't known until the end.
+    const STRETCH: usize = 256;
+    let (mut peaks, mut current, mut in_stretch) = (Vec::new(), 0.0f32, 0usize);
+    let (mut frames, mut rate) = (0u64, 0u32);
+    decode(path, |audio, from| {
+        rate = from;
+        for frame in audio.as_chunks::<2>().0 {
+            current = current.max(frame[0].abs()).max(frame[1].abs());
+            in_stretch += 1;
+            if in_stretch == STRETCH {
+                peaks.push(current);
+                (current, in_stretch) = (0.0, 0);
+            }
+        }
+        frames += (audio.len() / 2) as u64;
+    })?;
+    if in_stretch > 0 {
+        peaks.push(current);
+    }
+    let points = dasmeter_core::OVERVIEW_POINTS;
+    let overview = (0..points)
+        .map(|k| {
+            let (a, b) = (
+                k * peaks.len() / points,
+                ((k + 1) * peaks.len() / points).max(k * peaks.len() / points + 1),
+            );
+            peaks[a.min(peaks.len().saturating_sub(1))..b.min(peaks.len())]
+                .iter()
+                .copied()
+                .fold(0.0f32, f32::max)
+                .min(1.0)
+        })
+        .collect();
+    Ok(dasmeter_core::SongOverview {
+        seconds: frames as f32 / rate.max(1) as f32,
+        peaks: overview,
+    })
+}
+
 /// What a batch of files is for.
 #[derive(Clone, Debug)]
 pub enum Purpose {

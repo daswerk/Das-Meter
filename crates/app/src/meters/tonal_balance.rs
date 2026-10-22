@@ -106,6 +106,10 @@ const LOW_END_WIDTH: f32 = 64.0;
 const AB_WIDTH: f32 = 56.0;
 const CONTROLS_HEIGHT: f32 = 18.0;
 const CONTROLS_GAP: f32 = 8.0;
+/// B's waveform strip under the curves (logical px), shown from this tall a Meter.
+const STRIP_HEIGHT: f32 = 34.0;
+const STRIP_GAP: f32 = 6.0;
+const STRIP_MIN_HEIGHT: f32 = 190.0;
 
 /// Where the controls over a Tonal Balance Meter go (egui draws them on
 /// the title line): the Target picker at its left; at its right A/B when
@@ -115,6 +119,8 @@ pub struct Controls {
     pub target: Area,
     pub low_end: Option<Area>,
     pub ab: Option<Area>,
+    /// B's waveform, to choose the part it plays: under the curves.
+    pub strip: Option<Area>,
 }
 
 impl Controls {
@@ -129,11 +135,11 @@ impl Controls {
 }
 
 /// The controls for a Meter drawn in `inner` (its area inside the padding),
-/// whose units are `scale` per logical px; `None` when there's no room.
-/// `ab`: the picked song can be listened to.
+/// whose units are `scale` per logical px, with the Theme's `text_scale`;
+/// `None` when there's no room. `ab`: the picked song can be listened to.
 pub fn controls(
     inner: Area,
-    scale: f32,
+    (scale, text_scale): (f32, f32),
     settings: &TonalBalanceMeterSettings,
     bar: bool,
     ab: bool,
@@ -155,7 +161,7 @@ pub fn controls(
         width: LOW_END_WIDTH * scale,
         height,
     });
-    let ab = ab.then(|| {
+    let ab_area = ab.then(|| {
         let right = low_end.map_or(inner.right(), |l| l.x - CONTROLS_GAP * scale);
         Area {
             x: right - AB_WIDTH * scale,
@@ -164,10 +170,22 @@ pub fn controls(
             height,
         }
     });
+    // Above the readouts' line, at the bottom of the curves.
+    let readouts = 14.0 * scale * text_scale + 4.0 * scale;
+    let strip = ab
+        .then_some(())
+        .filter(|_| inner.height > STRIP_MIN_HEIGHT * scale)
+        .map(|_| Area {
+            x: inner.x,
+            y: inner.bottom() - readouts - STRIP_HEIGHT * scale,
+            width: inner.width,
+            height: STRIP_HEIGHT * scale,
+        });
     Some(Controls {
         target,
         low_end,
-        ab,
+        ab: ab_area,
+        strip,
     })
 }
 
@@ -227,7 +245,7 @@ pub fn draw(
     let line = c.px(14.0) * c.styling.text_scale;
     let roomy = area.height > c.px(ROOMY_HEIGHT);
     let ab = drawn.target.is_some_and(|t| t.song_file.is_some());
-    let controls = controls(area, c.scale, settings, bar, ab);
+    let controls = controls(area, (c.scale, c.styling.text_scale), settings, bar, ab);
     let (title, rest) = area.split_top(line.max(c.px(CONTROLS_HEIGHT)) + c.px(4.0));
     title_line(c, title, &drawn, controls);
     let (plot, readouts) = if roomy {
@@ -240,6 +258,11 @@ pub fn draw(
                 ..rest
             },
         )
+    };
+    // Room for B's waveform strip, which the egui layer draws.
+    let plot = match controls.and_then(|k| k.strip) {
+        Some(strip) => plot.split_bottom(strip.height + c.px(STRIP_GAP)).0,
+        None => plot,
     };
     let broad = is_broad(settings, bar);
     if drawn.mix.is_none() && drawn.target.is_none_or(|t| t.curve.is_empty()) {

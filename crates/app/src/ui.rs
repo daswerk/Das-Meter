@@ -2246,9 +2246,13 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
         let inner = area.inset(METER_PADDING);
         let bar = key == WindowKey::Bar;
         let ab = meter.tonal_balance.as_ref().and_then(|t| t.ab.as_ref());
-        let Some(controls) =
-            crate::meters::tonal_balance_controls(inner, 1.0, &settings, bar, ab.is_some())
-        else {
+        let Some(controls) = crate::meters::tonal_balance_controls(
+            inner,
+            (1.0, scene.theme.styling.text_scale),
+            &settings,
+            bar,
+            ab.is_some(),
+        ) else {
             continue;
         };
         let small = |ui: &mut egui::Ui| {
@@ -2320,6 +2324,20 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
                     .response
                     .on_hover_text("What to compare with: a song of the Target, or all of them averaged; add songs in the menu");
             });
+        if let (Some(area), Some(ab)) = (controls.strip, ab) {
+            egui::Area::new(egui::Id::new(("tonal balance b waveform", meter.meter)))
+                .fixed_pos(egui::pos2(area.x, area.y))
+                .order(egui::Order::Middle)
+                .show(ctx, |ui| {
+                    b_waveform(
+                        ui,
+                        meter.meter,
+                        ab,
+                        egui::vec2(area.width, area.height),
+                        actions,
+                    );
+                });
+        }
         if let (Some(area), Some(ab)) = (controls.ab, ab) {
             egui::Area::new(egui::Id::new(("tonal balance a/b", meter.meter)))
                 .fixed_pos(egui::pos2(area.x + area.width, area.y))
@@ -2357,6 +2375,120 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
                 }
             });
     }
+}
+
+/// "1:05" or "0:07.5": a time in the song.
+fn song_time(seconds: f32) -> String {
+    let whole = seconds.max(0.0);
+    format!("{}:{:04.1}", (whole / 60.0) as u32, whole % 60.0)
+}
+
+/// B's song as a waveform: drag across it to choose the part B loops, click
+/// to play from there, double-click for the whole song. The chosen part is
+/// lit, and a line follows B while it plays.
+fn b_waveform(
+    ui: &mut egui::Ui,
+    meter: usize,
+    ab: &dasmeter_core::AbScene,
+    size: egui::Vec2,
+    actions: &mut Actions,
+) {
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    let (text, chosen) = (visuals.text_color(), visuals.selection.bg_fill);
+    painter.rect_filled(rect, 4.0, visuals.extreme_bg_color.gamma_multiply(0.7));
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    let Some(overview) = ab.overview.as_ref().filter(|o| o.seconds > 0.0) else {
+        painter.text(
+            rect.left_center() + egui::vec2(6.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            "Reading the song's waveform…",
+            font,
+            text.gamma_multiply(0.5),
+        );
+        return;
+    };
+    let length = overview.seconds;
+    let x_of = |t: f32| rect.left() + (t / length).clamp(0.0, 1.0) * rect.width();
+    let t_of = |x: f32| ((x - rect.left()) / rect.width()).clamp(0.0, 1.0) * length;
+    // While dragging: the part being chosen, kept in egui's memory.
+    let id = egui::Id::new(("b region drag", meter));
+    let pointer = response.interact_pointer_pos().map(|p| t_of(p.x));
+    if response.drag_started()
+        && let Some(t) = pointer
+    {
+        ui.data_mut(|d| d.insert_temp(id, t));
+    }
+    let dragging = ui
+        .data(|d| d.get_temp::<f32>(id))
+        .zip(pointer)
+        .filter(|_| response.dragged() || response.drag_stopped());
+    let shown = dragging.map(|(a, b)| (a.min(b), a.max(b))).or(ab.region);
+    if let Some((a, b)) = shown {
+        let lit = egui::Rect::from_x_y_ranges(x_of(a)..=x_of(b), rect.y_range());
+        painter.rect_filled(lit, 3.0, chosen);
+    }
+    // The waveform: each pixel column its stretch's peak, up and down from the middle.
+    let mid = rect.center().y;
+    let half = rect.height() / 2.0 - 2.0;
+    let columns = rect.width().max(1.0) as usize;
+    let points = overview.peaks.len().max(1);
+    for x in 0..columns {
+        let k = x * points / columns;
+        let peak = overview.peaks.get(k).copied().unwrap_or(0.0);
+        let t = (x as f32 + 0.5) / columns as f32 * length;
+        let inside = shown.is_none_or(|(a, b)| (a..=b).contains(&t));
+        let colour = text.gamma_multiply(if inside { 0.75 } else { 0.3 });
+        let px = rect.left() + x as f32 + 0.5;
+        let h = (peak * half).max(0.5);
+        painter.line_segment(
+            [egui::pos2(px, mid - h), egui::pos2(px, mid + h)],
+            (1.0, colour),
+        );
+    }
+    if let Some(at) = ab.position {
+        let x = x_of(at);
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            (1.5, visuals.hyperlink_color),
+        );
+    }
+    let label = match shown {
+        Some((a, b)) => format!("{} – {}", song_time(a), song_time(b)),
+        None => format!("whole song · {}", song_time(length)),
+    };
+    painter.text(
+        rect.left_top() + egui::vec2(4.0, 2.0),
+        egui::Align2::LEFT_TOP,
+        label,
+        font,
+        text.gamma_multiply(0.8),
+    );
+    let mut region = None;
+    if response.drag_stopped()
+        && let Some((a, b)) = dragging
+    {
+        ui.data_mut(|d| d.remove::<f32>(id));
+        region = Some(if (b - a).abs() >= dasmeter_core::AB_MIN_REGION {
+            Some((a.min(b), a.max(b)))
+        } else {
+            Some((a, length))
+        });
+    } else if response.double_clicked() {
+        region = Some(None);
+    } else if response.clicked()
+        && let Some(t) = pointer
+    {
+        region = Some(Some((t, length)));
+    }
+    if let Some(region) = region {
+        actions.push(Event::AbRegion { meter, region });
+    }
+    response.on_hover_text(
+        "B's song: drag to choose the part B loops, click to play from there, \
+         double-click for the whole song",
+    );
 }
 
 /// A/B: the mix (A) or the picked song (B), at the gain that matches them.

@@ -76,6 +76,8 @@ pub fn run() {
         ui_wake: None,
         players: HashMap::new(),
         quieted: Vec::new(),
+        overviews_asked: std::collections::HashSet::new(),
+        overviews: std::sync::mpsc::channel(),
         #[cfg(target_os = "macos")]
         main_menu: None,
         #[cfg(target_os = "macos")]
@@ -194,6 +196,9 @@ impl AppWindow {
     }
 }
 
+/// An A/B song's waveform, read in the background: its file and the waveform.
+type ReadOverview = (String, dasmeter_core::SongOverview);
+
 struct Shell {
     start: Instant,
     core: AppCore,
@@ -233,6 +238,13 @@ struct Shell {
     /// quiet while B plays.
     players: HashMap<usize, crate::playback::Player>,
     quieted: Vec<u64>,
+    /// A/B songs whose waveform is being (or was) read, and where the
+    /// background reads report back.
+    overviews_asked: std::collections::HashSet<String>,
+    overviews: (
+        std::sync::mpsc::Sender<ReadOverview>,
+        std::sync::mpsc::Receiver<ReadOverview>,
+    ),
     #[cfg(target_os = "macos")]
     main_menu: Option<crate::main_menu::MainMenu>,
     /// The Send Plugin refresh, updates and uninstall.
@@ -998,15 +1010,31 @@ impl Shell {
                 Some((m.meter, ab, m.picked.filter(|_| on_send_plugins)))
             })
             .collect();
-        // A song that's no longer picked stops.
+        // Waveforms still to read, in the background.
+        for (_, ab, _) in &wanted {
+            if ab.overview.is_none() && self.overviews_asked.insert(ab.file.clone()) {
+                let (file, report, wake) =
+                    (ab.file.clone(), self.overviews.0.clone(), self.wake.clone());
+                let _ = std::thread::Builder::new()
+                    .name("A/B waveform".into())
+                    .spawn(move || {
+                        let path = std::path::PathBuf::from(&file);
+                        if let Ok(overview) = crate::audio_files::overview(&path) {
+                            let _ = report.send((file, overview));
+                            wake();
+                        }
+                    });
+            }
+        }
+        // A song (or a region of it) that's no longer picked stops.
         self.players.retain(|meter, player| {
-            wanted
-                .iter()
-                .any(|(m, ab, _)| m == meter && ab.file == player.file())
+            wanted.iter().any(|(m, ab, _)| {
+                m == meter && ab.file == player.file() && ab.region == player.region()
+            })
         });
         for (meter, ab, _) in &wanted {
             if ab.b && !self.players.contains_key(meter) {
-                match crate::playback::Player::start(&ab.file) {
+                match crate::playback::Player::start(&ab.file, ab.region) {
                     Ok(player) => {
                         self.players.insert(*meter, player);
                     }
@@ -1020,6 +1048,22 @@ impl Shell {
                     0.0
                 };
                 player.set_gain(gain);
+            }
+            // Where B is, for the playhead on the waveform.
+            let position = self
+                .players
+                .get(meter)
+                .filter(|_| ab.b)
+                .and_then(|p| p.position(ab.overview.as_ref().map(|o| o.seconds)));
+            if position != ab.position {
+                let now = self.now();
+                self.core.handle(
+                    Event::AbPosition {
+                        meter: *meter,
+                        seconds: position,
+                    },
+                    now,
+                );
             }
         }
         let quiet: Vec<u64> = if on_send_plugins {
@@ -1516,6 +1560,11 @@ impl ApplicationHandler for Shell {
             self.report_display();
         }
         let pump_at = self.pump(now);
+        // A/B waveforms read in the background.
+        let read: Vec<_> = self.overviews.1.try_iter().collect();
+        for (file, overview) in &read {
+            self.core.handle(Event::AbOverview { file, overview }, now);
+        }
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {
             let pace = if !self.core.visible() {

@@ -364,7 +364,26 @@ pub struct AbScene {
     /// How much to turn the song up (or down) to match the mix's loudness,
     /// in dB, to 0.1; 0 until the mix has been heard.
     pub gain_db: f32,
+    /// The part of the song B loops, in seconds; `None` for all of it.
+    pub region: Option<(f32, f32)>,
+    /// The song's waveform, once read from its file.
+    pub overview: Option<std::sync::Arc<SongOverview>>,
+    /// Where B is in the song, in seconds, while it plays.
+    pub position: Option<f32>,
 }
+
+/// A song's waveform at a glance: its length and its peak level (0–1) in
+/// each of [`OVERVIEW_POINTS`] equal stretches.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SongOverview {
+    pub seconds: f32,
+    pub peaks: Vec<f32>,
+}
+
+/// How many stretches a [`SongOverview`] has.
+pub const OVERVIEW_POINTS: usize = 600;
+/// The shortest region B loops, in seconds.
+pub const AB_MIN_REGION: f32 = 0.5;
 
 /// The most the gain match turns a song up or down, in dB.
 pub const AB_GAIN_RANGE: (f32, f32) = (-30.0, 12.0);

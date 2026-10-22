@@ -683,3 +683,94 @@ impl App {
         }
     }
 }
+
+#[test]
+fn b_loops_the_chosen_part_of_its_song() {
+    let mut app = App::launch();
+    let songs = [
+        song("Ref", A_MINOR, 55.0).with_file("/music/ref.wav"),
+        song("Other", A_MINOR, 55.0).with_file("/music/other.wav"),
+    ];
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &songs,
+        },
+        app.now,
+    );
+    let overview = dasmeter_core::SongOverview {
+        seconds: 200.0,
+        peaks: vec![0.5; dasmeter_core::OVERVIEW_POINTS],
+    };
+    app.core.handle(
+        Event::AbOverview {
+            file: "/music/ref.wav",
+            overview: &overview,
+        },
+        app.now,
+    );
+    let ab = |app: &mut App| app.meter().tonal_balance.unwrap().ab.unwrap();
+    assert_eq!(ab(&mut app).overview.unwrap().seconds, 200.0);
+    assert_eq!(ab(&mut app).region, None, "the whole song at first");
+
+    // Chosen backwards and past the end: put in order, kept inside the song.
+    app.core.handle(
+        Event::AbRegion {
+            meter: METER,
+            region: Some((260.0, 60.0)),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).region, Some((60.0, 200.0)));
+    // Too short to loop: the whole song.
+    app.core.handle(
+        Event::AbRegion {
+            meter: METER,
+            region: Some((10.0, 10.2)),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).region, None);
+
+    // The playhead shows while B plays.
+    app.core.handle(
+        Event::AbRegion {
+            meter: METER,
+            region: Some((30.0, 45.0)),
+        },
+        app.now,
+    );
+    app.core.handle(
+        Event::AbPosition {
+            meter: METER,
+            seconds: Some(31.234),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).position, None, "not while A is heard");
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: true,
+        },
+        app.now,
+    );
+    app.core.handle(
+        Event::AbPosition {
+            meter: METER,
+            seconds: Some(31.234),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).position, Some(31.23));
+
+    // Another song: its own region (none yet).
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(1),
+        ..app.settings()
+    });
+    let other = ab(&mut app);
+    assert_eq!(other.file, "/music/other.wav");
+    assert_eq!(other.region, None);
+}
