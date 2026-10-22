@@ -424,3 +424,27 @@ fn slow_mode_keeps_held_peaks_and_falls_slower() {
     assert!(slow_hold > -16.0, "held: {slow_hold}");
     assert!(normal_hold < -40.0, "let go: {normal_hold}");
 }
+
+#[test]
+fn the_steady_peak_is_the_musics_loudest_whatever_the_slope() {
+    use dasmeter_analysis::signals::frames;
+    let rate = 48_000;
+    // A kick-like 55 Hz under a quieter 8 kHz hi-hat: tilted 6 dB/oct, the
+    // hi-hat draws 43 dB higher relative to the kick, and above it.
+    let n = frames(rate, 2.0);
+    let kick = sine(rate, 55.0, -12.0, 0.0, n);
+    let hat = sine(rate, 8_000.0, -30.0, 0.0, n);
+    let mixed: Vec<f32> = kick.iter().zip(&hat).map(|(a, b)| a + b).collect();
+    for slope in [0.0, 3.0, 4.5, 6.0] {
+        let mut analyser = SpectrumAnalyser::new(
+            rate,
+            SpectrumSettings {
+                slope,
+                ..Default::default()
+            },
+        );
+        play(&mut analyser, &both(&mixed));
+        let (found, _) = analyser.steady_peak().expect("a peak");
+        assert!((found - 55.0).abs() < 1.0, "slope {slope}: {found} Hz");
+    }
+}

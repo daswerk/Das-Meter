@@ -65,6 +65,9 @@ pub struct SpectrumMeterSettings {
     pub collision_floor: f32,
     /// …and within this many dB of each other do. Default 6.
     pub collision_within: f32,
+    /// While a Tonal Balance Meter has a song for A/B: B's spectrum as a
+    /// grey layer, gain-matched to the mix. Default off.
+    pub show_b: bool,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -78,6 +81,7 @@ impl Default for SpectrumMeterSettings {
             colouring: SpectrumColouring::Plain,
             collision_floor: -50.0,
             collision_within: 6.0,
+            show_b: false,
         }
     }
 }
@@ -667,6 +671,9 @@ pub enum MeterView {
         held_peaks: Vec<CursorReadout>,
         /// The Overlay Source on the same graph, with the collisions.
         overlay: Option<Box<SpectrumOverlay>>,
+        /// B's song (A/B), when shown: its levels at the Spectrum's points,
+        /// to 0.1 dB, clamped to the floor.
+        b_layer: Option<Vec<f32>>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
@@ -726,6 +733,9 @@ pub enum MeterView {
         mix: Option<Box<Summary>>,
         /// The mix's curve when frozen: a ghost to compare before and after.
         frozen: Option<Vec<f32>>,
+        /// Where the pointer is over the Meter (0–1 each way across its
+        /// frame), if it is: the curves show the frequency and note under it.
+        pointer: Option<[f32; 2]>,
     },
     Tuner {
         settings: TunerMeterSettings,
@@ -811,7 +821,14 @@ pub(crate) struct Meter {
     marked: MarkedPeaks,
     /// A Spectrum's Overlay Source's analyser, while it takes one.
     overlay_spectrum: Option<Box<SpectrumAnalyser>>,
+    /// A Spectrum's B layer: the analyser for B's song, and when it was
+    /// last fed (it's dropped once B stops coming).
+    b_spectrum: Option<Box<SpectrumAnalyser>>,
+    b_fed_at: Option<Duration>,
 }
+
+/// B's layer goes once B's song hasn't come for this long.
+const B_LAYER_STALE: Duration = Duration::from_millis(500);
 
 /// The analysis an Overlay Source gets: the Spectrum's, on the mono sum,
 /// without a long-term average.
@@ -904,6 +921,8 @@ impl Meter {
             playhead: Playhead::default(),
             marked: MarkedPeaks::default(),
             overlay_spectrum: None,
+            b_spectrum: None,
+            b_fed_at: None,
         }
     }
 
@@ -920,6 +939,7 @@ impl Meter {
         self.analyser = Some(analyser(sample_rate, &self.settings));
         // A fresh analyser takes its Overlay Source afresh (the app core re-routes it).
         self.overlay_spectrum = None;
+        self.b_spectrum = None;
         self.view = None;
         self.start_zoom();
     }
@@ -1088,6 +1108,14 @@ impl Meter {
         }
     }
 
+    /// A Tonal Balance Meter's mix key, once the detection has settled on it.
+    pub fn settled_key(&self) -> Option<dasmeter_analysis::tonal_balance::Key> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.settled_key(),
+            _ => None,
+        }
+    }
+
     /// A Tonal Balance Meter's live average, once it has heard something.
     pub fn tonal_summary(&self) -> Option<&Summary> {
         match &self.analyser {
@@ -1156,6 +1184,12 @@ impl Meter {
         Some(summary)
     }
 
+    /// A/B on a Tonal Balance Meter: B pauses its average. Returns whether
+    /// it changed.
+    pub fn set_listening_b(&mut self, b: bool) -> bool {
+        self.tonal_balance().is_some_and(|a| a.set_paused(b))
+    }
+
     /// Freezes a Tonal Balance Meter's curve as a ghost, or lets it go;
     /// returns whether anything changed.
     pub fn toggle_freeze(&mut self) -> bool {
@@ -1222,6 +1256,13 @@ impl Meter {
                     && *overlay.settings() != overlay_analysis(&s)
                 {
                     overlay.set_settings(overlay_analysis(&s));
+                }
+                if !s.show_b {
+                    self.b_spectrum = None;
+                } else if let Some(b) = &mut self.b_spectrum
+                    && *b.settings() != overlay_analysis(&s)
+                {
+                    b.set_settings(overlay_analysis(&s));
                 }
             }
             (Some(Analyser::Loudness(a)), MeterSettings::Loudness(s)) => a.set_settings(s.analysis),
@@ -1363,6 +1404,27 @@ impl Meter {
         )
     }
 
+    /// B's song as it plays (A/B), gain-matched, at `sample_rate`: a
+    /// Spectrum showing B takes it as its grey layer.
+    pub fn process_b(&mut self, frames: &[f32], sample_rate: u32, now: Duration) {
+        let MeterSettings::Spectrum(settings) = &self.settings else {
+            return;
+        };
+        if !settings.show_b {
+            return;
+        }
+        let b = match &mut self.b_spectrum {
+            Some(b) if b.sample_rate() == sample_rate => b,
+            _ => self.b_spectrum.insert(Box::new(SpectrumAnalyser::new(
+                sample_rate,
+                overlay_analysis(settings),
+            ))),
+        };
+        b.process(frames);
+        self.b_fed_at = Some(now);
+        self.view = None;
+    }
+
     /// The Overlay Source's audio, for a Phase Scope.
     pub fn process_overlay(&mut self, frames: &[f32], timing: Option<Timing>) {
         if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
@@ -1373,12 +1435,14 @@ impl Meter {
         }
     }
 
-    /// The cursor moved over this Meter (or left it): only the Spectrum and
-    /// the Cepstrum show it.
+    /// The cursor moved over this Meter (or left it): only the Spectrum,
+    /// the Cepstrum and Tonal Balance show it.
     pub fn pointer_changed(&mut self) {
         if matches!(
             self.settings,
-            MeterSettings::Spectrum(_) | MeterSettings::Cepstrum(_)
+            MeterSettings::Spectrum(_)
+                | MeterSettings::Cepstrum(_)
+                | MeterSettings::TonalBalance(_)
         ) {
             self.view = None;
         }
@@ -1397,6 +1461,7 @@ impl Meter {
                 held_peaks,
                 spectrum,
                 overlay,
+                b_layer,
                 ..
             } = &mut view
             {
@@ -1404,6 +1469,26 @@ impl Meter {
                     .overlay_spectrum
                     .as_mut()
                     .map(|a| Box::new(overlay_view(a, spectrum, settings)));
+                // B's layer while B's song comes; gone once it stops.
+                if self
+                    .b_fed_at
+                    .is_none_or(|at| now.saturating_sub(at) > B_LAYER_STALE)
+                {
+                    self.b_spectrum = None;
+                }
+                *b_layer = self.b_spectrum.as_mut().map(|b| {
+                    let floor = spectrum.db_range.0;
+                    b.update()
+                        .traces
+                        .first()
+                        .map(|t| {
+                            t.levels
+                                .iter()
+                                .map(|l| round_to(l.max(floor), 0.1))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                });
                 *selecting = self.selecting;
                 let slow = pointer.is_some() && settings.slow_on_hover;
                 *held_peaks = self.marked.update(slow.then(|| std::mem::take(held_peaks)));
@@ -1636,6 +1721,7 @@ fn build_view(
                 pointer,
                 held_peaks,
                 overlay: None,
+                b_layer: None,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {
@@ -1766,6 +1852,7 @@ fn build_view(
                 frozen: a
                     .frozen()
                     .map(|curve| curve.iter().map(|&l| round_to(l, 0.1)).collect()),
+                pointer,
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),

@@ -211,7 +211,6 @@ view = "Auto"
 low_end_zoom = false
 parts = "Loud"
 key = "Auto"
-shift_to_key = false
 mono_cutoff = 120.0
 
 [preset.meters.settings.TonalBalance.averaging]

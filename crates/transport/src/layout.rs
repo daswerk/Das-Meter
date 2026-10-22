@@ -70,7 +70,10 @@ pub(crate) struct Slot {
     pub colour: AtomicU32,
     pub flags: AtomicU32,
     pub name_len: AtomicU32,
-    pub _reserved: AtomicU32,
+    /// The generation the app asks to be quiet (A/B listening): the Send
+    /// Plugin then outputs silence, still sending what it hears. Was
+    /// reserved, and so 0, before; older Send Plugins ignore it.
+    pub muted: AtomicU32,
     pub name: [AtomicU64; NAME_CAPACITY / 8],
     /// Bumped by the Send Plugin's main thread about every 250 ms.
     pub heartbeat: AtomicU64,

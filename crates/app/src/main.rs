@@ -19,6 +19,7 @@ mod main_menu;
 mod maintenance;
 mod meters;
 mod painter;
+mod playback;
 #[cfg(target_os = "macos")]
 mod plugin_install;
 mod preset_files;

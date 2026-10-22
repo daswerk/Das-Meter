@@ -243,6 +243,21 @@ impl Reader {
         }
     }
 
+    /// Asks one Send Plugin to output silence, or its audio again. It still
+    /// sends what it hears. (Older Send Plugins don't know this and play on.)
+    pub fn set_muted(&self, slot_ref: SlotRef, muted: bool) {
+        let slot = self.tables[slot_ref.table].slot(slot_ref.index);
+        if muted {
+            if self.is_current(slot_ref) {
+                slot.muted.store(slot_ref.generation, Relaxed);
+            }
+        } else {
+            let _ = slot
+                .muted
+                .compare_exchange(slot_ref.generation, 0, Relaxed, Relaxed);
+        }
+    }
+
     /// The position of the newest frame, to start reading from when listening begins
     /// (so audio left over from an earlier listen isn't shown). `None` if the slot was released.
     pub fn cursor(&self, slot_ref: SlotRef) -> Option<u64> {

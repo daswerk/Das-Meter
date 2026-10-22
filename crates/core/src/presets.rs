@@ -382,6 +382,8 @@ pub struct StoredSettings {
     /// When the update check last ran, in seconds since the Unix epoch.
     pub last_update_check: u64,
     pub frame_rate_cap: u32,
+    /// Draw at the display's refresh rate (see `AppSettings::match_display`).
+    pub match_display: bool,
     pub show_in_dock: bool,
     pub hotkeys: Vec<Hotkey>,
     pub first_launch: FirstLaunch,
@@ -397,6 +399,7 @@ impl Default for StoredSettings {
             check_for_updates: true,
             last_update_check: 0,
             frame_rate_cap: DEFAULT_FRAME_RATE_CAP,
+            match_display: true,
             show_in_dock: true,
             hotkeys: Vec::new(),
             first_launch: FirstLaunch::default(),

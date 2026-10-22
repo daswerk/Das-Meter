@@ -255,6 +255,25 @@ fn a_lagging_reader_jumps_to_the_newest_audio() {
 }
 
 #[test]
+fn the_app_can_ask_a_send_plugin_for_silence() {
+    let table = TestTable::new();
+    let mut reader = table.reader();
+    let claimed = table.claim(None);
+    let t0 = Instant::now();
+    let slot = only_slot(&mut reader, t0).slot;
+    let audio = claimed.writer.audio();
+    assert!(!audio.muted());
+    reader.set_muted(slot, true);
+    assert!(audio.muted());
+    reader.set_muted(slot, false);
+    assert!(!audio.muted());
+    // The Send Plugin plays again by itself once the app is gone.
+    reader.set_muted(slot, true);
+    claimed.writer.clear_muted();
+    assert!(!audio.muted());
+}
+
+#[test]
 fn audio_is_written_only_while_listened_to() {
     let table = TestTable::new();
     let mut reader = table.reader();

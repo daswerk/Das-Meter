@@ -89,9 +89,15 @@ impl SharedPreset {
     /// The Targets to embed with it.
     pub fn with_targets(mut self, targets: Vec<Target>) -> SharedPreset {
         self.targets = targets
-            .iter()
-            .map(|target| EmbeddedTheme {
-                toml: target.to_toml(),
+            .into_iter()
+            .map(|mut target| {
+                // Where its songs' files are on this machine is no one else's business.
+                for song in &mut target.songs {
+                    song.file = None;
+                }
+                EmbeddedTheme {
+                    toml: target.to_toml(),
+                }
             })
             .collect();
         self

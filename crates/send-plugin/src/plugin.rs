@@ -325,6 +325,9 @@ impl PluginGuiImpl for MainThread<'_> {
 /// The audio thread's state.
 pub struct Processor {
     send: AudioSend,
+    /// The main port's gain: 1, or on its way to 0 while the app plays a
+    /// reference (A/B) and back.
+    gain: f32,
 }
 
 impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
@@ -338,6 +341,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
         main_thread.active.set(true);
         Ok(Processor {
             send: AudioSend::new(writer, shared.mono.clone()),
+            gain: 1.0,
         })
     }
 
@@ -349,6 +353,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
     ) -> Result<ProcessStatus, PluginError> {
         let timing = process.transport.and_then(host_timing);
         self.process_audio(&mut audio, timing.as_ref());
+        self.apply_mute(&mut audio);
         Ok(ProcessStatus::ContinueIfNotQuiet)
     }
 
@@ -402,6 +407,35 @@ impl Processor {
                 }
             }
         }
+    }
+}
+
+impl Processor {
+    /// A/B listening: while the app plays a reference, the main port fades
+    /// to silence (what was sent is the track as it was), and back after.
+    fn apply_mute(&mut self, audio: &mut Audio) {
+        let to = if self.send.muted() { 0.0 } else { 1.0 };
+        if self.gain == 1.0 && to == 1.0 {
+            return;
+        }
+        let Some(mut pair) = audio.port_pair(0) else {
+            return;
+        };
+        let Some(mut channels) = pair.channels().ok().and_then(|c| c.into_f32()) else {
+            return;
+        };
+        let from = self.gain;
+        let mut end = from;
+        for i in 0..channels.channel_pair_count() {
+            match channels.channel_pair(i) {
+                Some(ChannelPair::InputOutput(_, output) | ChannelPair::OutputOnly(output)) => {
+                    end = send::ramp(output, from, to);
+                }
+                Some(ChannelPair::InPlace(buffer)) => end = send::ramp(buffer, from, to),
+                _ => {}
+            }
+        }
+        self.gain = end;
     }
 }
 

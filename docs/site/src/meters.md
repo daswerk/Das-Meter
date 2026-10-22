@@ -20,7 +20,9 @@ How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Style** (a line, or bars at 3, 6 or 12 per octave), attack and release,
 **Peak hold**, **Peak line**, and the shown frequency and level ranges. With
 **Peak line** on, the loudest peak's level, frequency and note stay at the top
-right, and a thin line runs from the peak to them.
+right, and a thin line runs from the peak to them. The peak is the music's
+loudest as it is, usually the kick or the bass, not as the slope tilts it:
+changing the slope moves the curve, never which peak the line follows.
 Turn on **Mouse readout** to read any frequency and its note under the mouse.
 Drag a box over the Spectrum to zoom into it: a zoom window opens in the
 other half of the Meter, showing the box's frequencies and levels larger, with
@@ -63,10 +65,10 @@ average over the last **3 s**, **10 s** or **30 s**, or over everything since
 you last reset it (**Whole**). Silence is left out, so a pause doesn't pull it
 down. **Reset long-term average** in the Meter's menu starts it over.
 
-Type a name and press **Save as Reference curve** to keep the long-term
-average as a **Reference curve**, say of a reference track you just played.
-Pick a curve under **Reference curve** and it's drawn dashed behind the live
-trace, with the Spectrum's slope, so you can compare your mix with it. Each
+**Reference curves** are in the Spectrum's settings (**Settings…** in its
+menu): with the long-term average on, play a reference track, type a name
+and press **Save curve** to keep that average as a curve. Pick one under
+**Show** and it's drawn dashed behind the live trace, with the Spectrum's slope, so you can compare your mix with it. Each
 Spectrum remembers its curve in the Preset, and an exported Preset takes its
 curves along. Curves are files in the curves folder:
 
@@ -317,8 +319,14 @@ over about a third of an octave, as the ear hears balance.
   **Low-mid** (120–300), **Mid** (300 Hz–2 kHz) and **High**, each a bar
   showing how far the mix is from the Target, inside its range or not.
 - **Auto** (the default) shows Fine in a window and Broad in the Bar.
-- **Low end zoom** shows only 20–300 Hz, with a grid line on every note and
-  the keys' root notes marked, so a bass that's too much on one note shows.
+- **Low end zoom** (the **Low end** button on the Meter) shows only
+  20–300 Hz, with a grid line on every note and the keys' root notes marked,
+  so a bass that's too much on one note shows.
+
+The view keeps its level range steady as the music moves: it widens at once
+when the curves would leave it, and narrows, smoothly, only when there's
+plenty of room. Point at the curves to see the frequency and note there, and
+how far the mix sits from the Target at that point.
 
 Under the curves, the low end's figures: the loudest **Sub** and **Bass**
 notes ("Sub A1 55.0 Hz"), **Low mono** (how alike Left and Right are below
@@ -329,34 +337,63 @@ Bass (peak over average, in dB: how punchy they are) against the Target's.
 **Average** sets how far back the mix's curve reaches: **3 s**, **10 s**
 (the default), **30 s** or **Whole** (everything since **Reset average**).
 **Freeze** keeps the curve as it is now as a ghost, to compare before and
-after a change. **Compare file…** compares a bounce of your mix instead of
-the live Source.
+after a change. **Add files… ▸ A bounce of your mix, to compare…** compares a
+bounce of your mix instead of the live Source; **Stop comparing** goes back.
+
+### Listening A/B
+
+When the song you compare with came from a file, **A** and **B** appear on
+the Meter: **A** is your mix, **B** plays the song, turned up or down to
+your mix's loudness so the louder one doesn't sound better just for being
+louder. The song keeps running while you hear A, so switching back picks up
+where it is; it loops at its end. While B plays, the mix's average pauses.
+
+A Spectrum can show B too: with a song loaded for A/B, **Show B** in the
+Spectrum's menu draws B's spectrum as a grey layer, gain-matched to your mix,
+while you hear either. Compare the two traces as you switch.
+
+Under the curves, the song's waveform shows where B is. Drag across it to
+choose the part B plays, say the drop, and it loops just that part; click
+to play from a point to the end, double-click for the whole song again.
+
+While B plays, Das-Meter Send goes quiet: the one the Meter listens to, or
+on System Capture every Das-Meter Send, so put one on your DAW's master bus
+to hear the song alone. They play again when you switch to A, and if
+Das-Meter quits. Other apps can't be quieted; without a Das-Meter Send,
+stop your DAW's playback to hear the song alone.
 
 ### Targets
 
-Make a Target from songs that sound the way you want, your own references:
+Make a Target from songs that sound the way you want, your own references.
+The Meter compares with one of its songs, picked at the top left of the
+Meter (the song you just added, at first); **Average of all** compares with
+all of them together instead.
 
 - **Learn a song…**, play a song from start to end, name it and the Target,
   then **Add**.
-- **Add files…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
+- **Add files… ▸ Reference songs for the Target…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
   ALAC) in the background, far faster than playing them. You can also drop
   files or whole folders on the Meter. Files that can't be read are listed
   with the reason.
 
 By default only each song's **loud parts** count (its drops and choruses,
 within 4 LU of its loudest moments); **Teach with ▸ Whole song** counts all
-of it. The Target's range is how far its songs differ from each other; with
-one song it's ±2.5 dB. **Songs** lists them, and **×** removes one.
+of it. Averaged, the Target's range is how far its songs differ from each
+other; one song's is ±2.5 dB. **Songs** lists them, and **×** removes one.
 
 Each song's key is detected, and its low end is lined up by key before the
 songs are averaged, so the Target stays note-sharp. When your mix is in
 another key ("Your mix is in F minor, this Target's songs in A minor"),
-**Shift** moves the Target's low end (below 300 Hz) to your key. **Key**
-can also be set by hand instead of detected.
+**Shift** moves the Target's low end (below 300 Hz) to your key, and it
+stays there, whatever the key detection says next, until **Undo shift**.
+The suggestion only comes once the detection has named the same key for
+10 seconds, and then stays.
+**Mix key** can also be set by hand instead of detected.
 
 Targets are files in the targets folder (next to `curves` and `themes`),
-one per Target, holding each song's figures but never any audio. An
-exported Preset takes its Targets along. Das-Meter ships no Targets: make
+one per Target, holding each song's figures and where its file is (for
+A/B), never any audio. An exported Preset takes its Targets along, without
+where the files are. Das-Meter ships no Targets: make
 your own from music you know.
 
 To show it, right-click a Meter and choose **Change Meter ▸ Tonal Balance**,
