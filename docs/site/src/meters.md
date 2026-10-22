@@ -65,10 +65,10 @@ average over the last **3 s**, **10 s** or **30 s**, or over everything since
 you last reset it (**Whole**). Silence is left out, so a pause doesn't pull it
 down. **Reset long-term average** in the Meter's menu starts it over.
 
-Type a name and press **Save as Reference curve** to keep the long-term
-average as a **Reference curve**, say of a reference track you just played.
-Pick a curve under **Reference curve** and it's drawn dashed behind the live
-trace, with the Spectrum's slope, so you can compare your mix with it. Each
+**Reference curves** are in the Spectrum's settings (**Settings…** in its
+menu): with the long-term average on, play a reference track, type a name
+and press **Save curve** to keep that average as a curve. Pick one under
+**Show** and it's drawn dashed behind the live trace, with the Spectrum's slope, so you can compare your mix with it. Each
 Spectrum remembers its curve in the Preset, and an exported Preset takes its
 curves along. Curves are files in the curves folder:
 

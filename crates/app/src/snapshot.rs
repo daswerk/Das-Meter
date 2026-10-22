@@ -581,7 +581,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             ),
             _,
         ) => (2400, 1440),
-        (Some("theme-settings"), _) => (2400, 1800),
+        (Some("theme-settings" | "spectrum-settings"), _) => (2400, 1800),
         (Some(option), _)
             if option.starts_with("solo-")
                 || option.starts_with("tonal-balance")
@@ -760,7 +760,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
             },
             now,
         ),
-        Some("settings") => core.handle(Event::ShowSettings(true), now),
+        Some("settings" | "spectrum-settings") => core.handle(Event::ShowSettings(true), now),
         // The Spectrogram in the Spectrum's place, on a sweep from 60 Hz to
         // 12 kHz over pink noise, with a 1 kHz tone joining halfway; or, in a
         // window, zoomed into the box around the tone.
@@ -1144,6 +1144,9 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     // egui lays windows out over a few frames; the last one is drawn.
     let mut ui = Ui::new();
     ui.use_fonts(painter.text.font_system.db());
+    if open == Some("spectrum-settings") {
+        ui.show_meter_page(1);
+    }
     if open == Some("theme-settings") {
         ui.show_theme_page();
     }
