@@ -643,6 +643,28 @@ fn reference_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions
     let MeterSettings::Spectrum(settings) = meter.settings else {
         return;
     };
+    // B's song as a grey layer, while a Tonal Balance Meter has one for A/B.
+    let b_song = all_meters(scene)
+        .into_iter()
+        .filter_map(|m| m.tonal_balance.as_ref()?.target.as_ref())
+        .find(|t| t.song_file.is_some())
+        .map(|t| t.label());
+    if let Some(song) = b_song {
+        widgets::section(ui, "A/B");
+        let mut show_b = settings.show_b;
+        if ui
+            .add(Toggle::new(&mut show_b, "Show B"))
+            .on_hover_text(format!(
+                "{song} as a grey layer, gain-matched to the mix, to compare A and B"
+            ))
+            .changed()
+        {
+            actions.push(Event::SetMeter {
+                meter: meter.meter,
+                settings: MeterSettings::Spectrum(SpectrumMeterSettings { show_b, ..settings }),
+            });
+        }
+    }
     let shown = meter.reference.as_ref().map(|r| r.name.clone());
     let long_term = settings.analysis.long_term != LongTerm::Off;
     widgets::section(ui, "Reference curve");

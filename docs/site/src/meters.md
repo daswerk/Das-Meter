@@ -346,6 +346,10 @@ your mix's loudness so the louder one doesn't sound better just for being
 louder. The song keeps running while you hear A, so switching back picks up
 where it is; it loops at its end. While B plays, the mix's average pauses.
 
+A Spectrum can show B too: with a song loaded for A/B, **Show B** in the
+Spectrum's menu draws B's spectrum as a grey layer, gain-matched to your mix,
+while you hear either. Compare the two traces as you switch.
+
 Under the curves, the song's waveform shows where B is. Drag across it to
 choose the part B plays, say the drop, and it loops just that part; click
 to play from a point to the end, double-click for the whole song again.
@@ -380,6 +384,8 @@ songs are averaged, so the Target stays note-sharp. When your mix is in
 another key ("Your mix is in F minor, this Target's songs in A minor"),
 **Shift** moves the Target's low end (below 300 Hz) to your key, and it
 stays there, whatever the key detection says next, until **Undo shift**.
+The suggestion only comes once the detection has named the same key for
+10 seconds, and then stays.
 **Mix key** can also be set by hand instead of detected.
 
 Targets are files in the targets folder (next to `curves` and `themes`),

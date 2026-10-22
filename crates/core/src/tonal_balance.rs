@@ -126,15 +126,50 @@ impl TonalBalanceMeterSettings {
     }
 
     /// The key the mix is taken to be in: the fixed one, or the detected
-    /// one when the detection is sure.
-    pub fn mix_key(&self, mix: Option<&Summary>) -> Option<Key> {
+    /// one once it has settled (see [`KeyWatch`]).
+    pub fn mix_key(&self, settled: Option<Key>) -> Option<Key> {
         match self.key {
             KeyChoice::Fixed(key) => Some(key),
-            KeyChoice::Auto => mix
-                .and_then(|m| m.key)
-                .filter(|k| k.confidence >= KEY_CONFIDENCE)
-                .map(|k| k.key),
+            KeyChoice::Auto => settled,
         }
+    }
+}
+
+/// How many frames in a row (10 s) the detection must name a key before
+/// it counts as the mix's.
+pub const KEY_SETTLE_FRAMES: u32 = 20;
+
+/// The mix's key as the Meter goes by it: the detection's, once it has
+/// named the same key (surely) for [`KEY_SETTLE_FRAMES`] frames in a row.
+/// It stays after that while the detection wavers; only another key that
+/// holds as long takes its place. So the shift suggestion comes once it's
+/// sure, and doesn't come and go.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct KeyWatch {
+    /// The key named in the latest run of frames, and how many.
+    run: Option<(Key, u32)>,
+    settled: Option<Key>,
+}
+
+impl KeyWatch {
+    /// `frames` more frames, after which the detection names `key` (or
+    /// isn't sure); returns the settled key.
+    pub fn observe(&mut self, key: Option<Key>, frames: u32) -> Option<Key> {
+        self.run = match (key, self.run) {
+            (Some(key), Some((run, count))) if run == key => Some((key, count + frames)),
+            (Some(key), _) => Some((key, frames)),
+            (None, _) => None,
+        };
+        if let Some((key, count)) = self.run
+            && count >= KEY_SETTLE_FRAMES
+        {
+            self.settled = Some(key);
+        }
+        self.settled
+    }
+
+    pub fn settled(&self) -> Option<Key> {
+        self.settled
     }
 }
 
@@ -157,6 +192,8 @@ pub(crate) struct TonalBalanceAnalyser {
     /// A/B: the reference plays (B), so what comes in isn't the mix alone:
     /// nothing is added to the average, nor to a song being learned.
     paused: bool,
+    /// The mix's key, once the detection has settled on it.
+    key: KeyWatch,
 }
 
 impl TonalBalanceAnalyser {
@@ -172,6 +209,7 @@ impl TonalBalanceAnalyser {
             frozen: None,
             compare: None,
             paused: false,
+            key: KeyWatch::default(),
         }
     }
 
@@ -203,6 +241,7 @@ impl TonalBalanceAnalyser {
             frames.clear();
         }
         let added = !frames.is_empty();
+        let added_frames = frames.len() as u32;
         for frame in frames {
             if let Some(learning) = &mut self.learning
                 && learning.len() < WHOLE_LIMIT_FRAMES
@@ -213,6 +252,13 @@ impl TonalBalanceAnalyser {
         }
         if added {
             self.summary = self.live.summary();
+            let detected = self
+                .summary
+                .as_ref()
+                .and_then(|s| s.key)
+                .filter(|k| k.confidence >= KEY_CONFIDENCE)
+                .map(|k| k.key);
+            self.key.observe(detected, added_frames);
         }
         let seconds = (interleaved.len() / 2) as f64 / f64::from(self.sample_rate());
         self.ease(seconds) || added
@@ -292,6 +338,12 @@ impl TonalBalanceAnalyser {
         self.live.reset();
         self.summary = None;
         self.shown = None;
+        self.key = KeyWatch::default();
+    }
+
+    /// The mix's key, once the detection has settled on it.
+    pub fn settled_key(&self) -> Option<Key> {
+        self.key.settled()
     }
 
     pub fn learn(&mut self) {
@@ -465,7 +517,7 @@ impl TargetScene {
         name: String,
         target: Option<&Target>,
         settings: &TonalBalanceMeterSettings,
-        mix: Option<&Summary>,
+        settled_key: Option<Key>,
     ) -> TargetScene {
         let Some(target) = target else {
             return TargetScene {
@@ -494,7 +546,7 @@ impl TargetScene {
             TargetPick::Average => target.clone(),
         };
         let home_key = picked.home_key();
-        let mix_key = settings.mix_key(mix);
+        let mix_key = settings.mix_key(settled_key);
         let mut combined = picked.combined();
         let mut key = home_key;
         let mut suggest_shift = None;
@@ -545,5 +597,44 @@ impl TargetScene {
                 TargetPick::Average => None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A_MINOR: Key = Key {
+        tonic: 9,
+        minor: true,
+    };
+    const F_MINOR: Key = Key {
+        tonic: 5,
+        minor: true,
+    };
+
+    #[test]
+    fn a_key_counts_once_the_detection_holds_it_and_then_stays() {
+        let mut watch = KeyWatch::default();
+        // Wavering: never settles.
+        for k in 0..30 {
+            let key = if k % 2 == 0 { A_MINOR } else { F_MINOR };
+            assert_eq!(watch.observe(Some(key), 1), None);
+        }
+        // Held for 10 s (20 frames): settled.
+        for _ in 0..19 {
+            assert_eq!(watch.observe(Some(A_MINOR), 1), None);
+        }
+        assert_eq!(watch.observe(Some(A_MINOR), 1), Some(A_MINOR));
+        // Unsure or another key for a while: it stays.
+        assert_eq!(watch.observe(None, 3), Some(A_MINOR));
+        for _ in 0..10 {
+            assert_eq!(watch.observe(Some(F_MINOR), 1), Some(A_MINOR));
+        }
+        // Another key held as long takes its place.
+        for _ in 0..10 {
+            watch.observe(Some(F_MINOR), 1);
+        }
+        assert_eq!(watch.settled(), Some(F_MINOR));
     }
 }

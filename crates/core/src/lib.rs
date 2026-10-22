@@ -349,6 +349,12 @@ pub enum Event<'a> {
         file: &'a str,
         overview: &'a SongOverview,
     },
+    /// B's song as the player plays it, gain-matched to the mix (interleaved
+    /// stereo at `sample_rate`), for Spectrums showing B.
+    BAudio {
+        frames: &'a [f32],
+        sample_rate: u32,
+    },
     /// Where B is in its song, in seconds, while it plays (from the shell).
     AbPosition {
         meter: usize,
@@ -999,6 +1005,7 @@ impl AppCore {
             | AbRegion { .. }
             | AbOverview { .. }
             | AbPosition { .. }
+            | BAudio { .. }
             | Display(_)
             | ThemeFiles(_)
             | CurveFiles(_)
@@ -1209,7 +1216,7 @@ impl AppCore {
         };
         let target = slot.reference.clone().map(|name| {
             let target = self.targets.get(&name);
-            TargetScene::new(name, target, &settings, slot.meter.tonal_summary())
+            TargetScene::new(name, target, &settings, slot.meter.settled_key())
         });
         let ab = target
             .as_ref()
@@ -2066,6 +2073,21 @@ impl AppCore {
                 }
                 self.ab_overviews
                     .insert(file.to_owned(), std::sync::Arc::new(overview.clone()));
+            }
+            Event::BAudio {
+                frames,
+                sample_rate,
+            } => {
+                let mut shown = false;
+                for slot in &mut self.meters {
+                    if matches!(slot.meter.settings(), MeterSettings::Spectrum(s) if s.show_b) {
+                        slot.meter.process_b(frames, sample_rate, now);
+                        shown = true;
+                    }
+                }
+                if !shown {
+                    return;
+                }
             }
             Event::AbPosition { meter, seconds } => {
                 let Some(slot) = self.meters.get_mut(meter) else {

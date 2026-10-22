@@ -77,6 +77,7 @@ pub fn run() {
         players: HashMap::new(),
         quieted: Vec::new(),
         overviews_asked: std::collections::HashSet::new(),
+        b_frames: Vec::new(),
         overviews: std::sync::mpsc::channel(),
         #[cfg(target_os = "macos")]
         main_menu: None,
@@ -241,6 +242,8 @@ struct Shell {
     /// A/B songs whose waveform is being (or was) read, and where the
     /// background reads report back.
     overviews_asked: std::collections::HashSet<String>,
+    /// B's song as last taken from its player, for the Spectrum's B layer.
+    b_frames: Vec<f32>,
     overviews: (
         std::sync::mpsc::Sender<ReadOverview>,
         std::sync::mpsc::Receiver<ReadOverview>,
@@ -988,6 +991,10 @@ impl Shell {
             return;
         };
         let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let scene_shows_b =
+            scene.windows.iter().flat_map(|w| &w.meters).any(
+                |m| matches!(m.settings, dasmeter_core::MeterSettings::Spectrum(s) if s.show_b),
+            );
         let any_b = scene.windows.iter().flat_map(|w| &w.meters).any(|m| {
             m.tonal_balance
                 .as_ref()
@@ -1032,8 +1039,10 @@ impl Shell {
                 m == meter && ab.file == player.file() && ab.region == player.region()
             })
         });
+        // A Spectrum showing B wants the song running, heard or not.
+        let b_layer = scene_shows_b;
         for (meter, ab, _) in &wanted {
-            if ab.b && !self.players.contains_key(meter) {
+            if (ab.b || b_layer) && !self.players.contains_key(meter) {
                 match crate::playback::Player::start(&ab.file, ab.region) {
                     Ok(player) => {
                         self.players.insert(*meter, player);
@@ -1042,12 +1051,7 @@ impl Shell {
                 }
             }
             if let Some(player) = self.players.get(meter) {
-                let gain = if ab.b {
-                    10f32.powf(ab.gain_db / 20.0)
-                } else {
-                    0.0
-                };
-                player.set_gain(gain);
+                player.set_gain(10f32.powf(ab.gain_db / 20.0), ab.b);
             }
             // Where B is, for the playhead on the waveform.
             let position = self
@@ -1564,6 +1568,19 @@ impl ApplicationHandler for Shell {
         let read: Vec<_> = self.overviews.1.try_iter().collect();
         for (file, overview) in &read {
             self.core.handle(Event::AbOverview { file, overview }, now);
+        }
+        // B's song as played, for Spectrums showing it (the first B playing).
+        if let Some(player) = self.players.values_mut().next() {
+            player.take_monitor(&mut self.b_frames);
+            if !self.b_frames.is_empty() {
+                self.core.handle(
+                    Event::BAudio {
+                        frames: &self.b_frames,
+                        sample_rate: player.rate(),
+                    },
+                    now,
+                );
+            }
         }
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {

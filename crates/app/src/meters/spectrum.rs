@@ -61,6 +61,7 @@ pub fn draw(
     zoom: Option<&SpectrumZoom>,
     reference: Option<&ReferenceScene>,
     overlay: Option<&SpectrumOverlay>,
+    b_layer: Option<&[f32]>,
 ) {
     let Marks {
         cursor,
@@ -96,6 +97,9 @@ pub fn draw(
     long_term_lines(c, area, spectrum, reference, &x_of, &y_of);
     if let Some(overlay) = overlay {
         overlay_lines(c, area, spectrum, overlay, &x_of, &y_of);
+    }
+    if let Some(levels) = b_layer {
+        b_lines(c, area, spectrum, levels, &x_of, &y_of);
     }
     // The loudest peak's readout pinned to the top right, a leader line from
     // the peak to it; the cursor's line and readout under it.
@@ -523,6 +527,44 @@ fn long_term_lines(
             Align::Right,
         );
     }
+}
+
+/// B's song (A/B) as a grey layer: a quiet line with a faint fill, "B" at
+/// the top right, so the mix's own trace stays in front.
+fn b_lines(
+    c: &mut Canvas,
+    area: Area,
+    spectrum: &Spectrum,
+    levels: &[f32],
+    x_of: &dyn Fn(f32) -> f32,
+    y_of: &dyn Fn(f32) -> f32,
+) {
+    let grey = c.colour(Role::Text);
+    c.text(
+        "B",
+        area.right() - c.px(4.0),
+        area.y + c.px(46.0),
+        10.0,
+        grey.faded(0.55),
+        Align::Right,
+    );
+    if levels.len() != spectrum.frequencies.len() {
+        return;
+    }
+    let floor = spectrum.db_range.0;
+    let points: Vec<[f32; 2]> = spectrum
+        .frequencies
+        .iter()
+        .zip(levels)
+        .map(|(&f, &db)| [x_of(f), y_of(db.max(floor))])
+        .collect();
+    let line = smooth(&points, c.px(2.0));
+    // Blended in linear light, a little goes a long way on a dark panel.
+    c.fill_under(&line, area.bottom(), grey.faded(0.015), grey.faded(0.0));
+    c.edge_faded(area, &line, |c, piece, strength| {
+        c.shapes
+            .polyline(piece, c.stroke(1.1), grey.faded(0.3 * strength));
+    });
 }
 
 /// The Overlay Source's line in its colour, its name at the top right, and

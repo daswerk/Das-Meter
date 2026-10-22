@@ -522,7 +522,8 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 || option.starts_with("loudness-")
                 || option.starts_with("preset-")
                 || option == "spectrum-collisions"
-                || option == "spectrum-reference" =>
+                || option == "spectrum-reference"
+                || option == "spectrum-b" =>
         {
             0
         }
@@ -586,7 +587,8 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 || option.starts_with("tonal-balance")
                 || option.starts_with("loudness-")
                 || option == "spectrum-collisions"
-                || option == "spectrum-reference" =>
+                || option == "spectrum-reference"
+                || option == "spectrum-b" =>
         {
             (1440, 900)
         }
@@ -947,6 +949,51 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
         }
         // A Spectrum alone with its long-term average (10 s) and a Reference
         // curve saved from other, darker audio.
+        // A Spectrum showing B: the music as the mix, a darker take on it as B.
+        Some("spectrum-b") => {
+            now = solo(&mut core, "spectrum", now)?;
+            let Some(dasmeter_core::MeterSettings::Spectrum(settings)) = core.meter_settings(0)
+            else {
+                return Err("no Spectrum".into());
+            };
+            core.handle(
+                Event::SetMeter {
+                    meter: 0,
+                    settings: dasmeter_core::MeterSettings::Spectrum(
+                        dasmeter_core::SpectrumMeterSettings {
+                            show_b: true,
+                            ..settings
+                        },
+                    ),
+                },
+                now,
+            );
+            let mix = music(4.0);
+            let mut low = [0.0f32; 2];
+            let b: Vec<f32> = mix
+                .chunks(2)
+                .flat_map(|frame| {
+                    let mut out = [0.0f32; 2];
+                    for ((s, &x), o) in low.iter_mut().zip(frame).zip(&mut out) {
+                        *s += 0.02 * (x - *s);
+                        *o = 0.5 * x + 2.5 * *s;
+                    }
+                    out
+                })
+                .collect();
+            for (a, b) in mix.chunks(1024).zip(b.chunks(1024)) {
+                now += Duration::from_secs_f64(512.0 / f64::from(RATE));
+                core.handle(Event::Audio(a), now);
+                core.handle(
+                    Event::BAudio {
+                        frames: b,
+                        sample_rate: RATE,
+                    },
+                    now,
+                );
+                core.decide(now);
+            }
+        }
         Some("spectrum-reference") => {
             now = solo(&mut core, "spectrum", now)?;
             let Some(dasmeter_core::MeterSettings::Spectrum(mut settings)) = core.meter_settings(0)

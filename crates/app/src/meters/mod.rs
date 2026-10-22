@@ -311,6 +311,7 @@ impl MeterRenderer {
                     pointer,
                     held_peaks,
                     overlay,
+                    b_layer,
                 } => spectrum::draw(
                     &mut c,
                     area,
@@ -328,6 +329,7 @@ impl MeterRenderer {
                     zoom.as_deref(),
                     meter.reference.as_ref(),
                     overlay.as_deref(),
+                    b_layer.as_deref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)

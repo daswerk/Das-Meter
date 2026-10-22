@@ -35,6 +35,11 @@ pub struct Player {
     rate: u32,
     /// The gain the output fades to, as `f32` bits: 0 while A is heard.
     gain: Arc<AtomicU32>,
+    /// The gain that matches the song to the mix, as `f32` bits: what the
+    /// monitor copy below gets, A or B.
+    matched: Arc<AtomicU32>,
+    /// What's played, at the matched gain, for the Spectrum's B layer.
+    monitor: Consumer<f32>,
     /// Frames of the song the output has taken (heard or faded out).
     played: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
@@ -57,14 +62,19 @@ impl Player {
         let capacity = ((f64::from(rate) * RING_SECONDS) as usize * 2).max(2);
         let (producer, consumer) = RingBuffer::<f32>::new(capacity);
         let gain = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let matched = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let played = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
+        let (monitor_in, monitor) = RingBuffer::<f32>::new(capacity);
         let stream = open(
             &device,
             (rate, format.channels(), channels),
-            consumer,
-            &gain,
-            &played,
+            (consumer, monitor_in),
+            Levels {
+                gain: gain.clone(),
+                matched: matched.clone(),
+                played: played.clone(),
+            },
         )?;
         let decoder = {
             let (path, stop) = (PathBuf::from(file), stop.clone());
@@ -81,6 +91,8 @@ impl Player {
             region,
             rate,
             gain,
+            matched,
+            monitor,
             played,
             stop,
             decoder: Some(decoder),
@@ -116,9 +128,27 @@ impl Player {
         self.played.load(Relaxed)
     }
 
-    /// Fades to `gain` (linear): the matched gain for B, 0 for A.
-    pub fn set_gain(&self, gain: f32) {
-        self.gain.store(gain.max(0.0).to_bits(), Relaxed);
+    /// `matched`: the gain (linear) that matches the song to the mix;
+    /// `heard`: B (it fades to that gain) or A (it fades out).
+    pub fn set_gain(&self, matched: f32, heard: bool) {
+        let matched = matched.max(0.0);
+        self.matched.store(matched.to_bits(), Relaxed);
+        let gain = if heard { matched } else { 0.0 };
+        self.gain.store(gain.to_bits(), Relaxed);
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// What was played since the last call, at the matched gain (A or B),
+    /// as interleaved stereo, into `out`.
+    pub fn take_monitor(&mut self, out: &mut Vec<f32>) {
+        out.clear();
+        let available = self.monitor.slots() & !1;
+        if let Ok(chunk) = self.monitor.read_chunk(available) {
+            out.extend(chunk);
+        }
     }
 }
 
@@ -131,20 +161,31 @@ impl Drop for Player {
     }
 }
 
+/// What the output callback shares with the [`Player`].
+struct Levels {
+    gain: Arc<AtomicU32>,
+    matched: Arc<AtomicU32>,
+    played: Arc<AtomicU64>,
+}
+
 /// `format`: the output's rate, its channel count, and that as a `usize`.
+/// `rings`: the song in, and the monitor copy out.
 fn open(
     device: &cpal::Device,
     (rate, channel_count, channels): (u32, u16, usize),
-    mut ring: Consumer<f32>,
-    gain: &Arc<AtomicU32>,
-    played: &Arc<AtomicU64>,
+    (mut ring, mut monitor): (Consumer<f32>, Producer<f32>),
+    levels: Levels,
 ) -> Result<Stream, String> {
     let config = StreamConfig {
         channels: channel_count,
         sample_rate: rate,
         buffer_size: cpal::BufferSize::Default,
     };
-    let (target, played) = (gain.clone(), played.clone());
+    let Levels {
+        gain: target,
+        matched,
+        played,
+    } = levels;
     let step = 1.0 / (FADE_SECONDS * rate as f32);
     let mut now = 0.0f32;
     let stream = device
@@ -152,12 +193,18 @@ fn open(
             config,
             move |data: &mut [f32], _| {
                 let to = f32::from_bits(target.load(Relaxed));
+                let level = f32::from_bits(matched.load(Relaxed));
                 let mut taken = 0;
                 for frame in data.chunks_exact_mut(channels) {
                     // Short of audio (the decoder lags): silence, not a stall.
                     let (left, right) = match (ring.pop(), ring.pop()) {
                         (Ok(l), Ok(r)) => {
                             taken += 1;
+                            // A full monitor (nobody reads it) just drops the frame.
+                            if monitor.slots() >= 2 {
+                                let _ = monitor.push(l * level);
+                                let _ = monitor.push(r * level);
+                            }
                             (l, r)
                         }
                         _ => (0.0, 0.0),
