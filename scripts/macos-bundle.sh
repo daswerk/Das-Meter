@@ -58,6 +58,8 @@ cp "$binary" "$app/Contents/MacOS/das-meter"
 # Our licences and the third-party ones the app is built from.
 cp "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$root/THIRD-PARTY-LICENSES.md" \
     "$app/Contents/Resources/"
+# The app icon (scripts/make-icons.sh makes it from the SVG).
+cp "$root/crates/app/assets/icon/AppIcon.icns" "$app/Contents/Resources/"
 # The Send Plugin bundles, signed already, as the app installs them.
 cp -R "$plugins/" "$app/Contents/PlugIns/"
 
@@ -70,6 +72,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>$name</string>
     <key>CFBundleIdentifier</key><string>$bundle_id</string>
     <key>CFBundleExecutable</key><string>das-meter</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>

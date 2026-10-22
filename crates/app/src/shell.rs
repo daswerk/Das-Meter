@@ -213,6 +213,14 @@ impl AppWindow {
     }
 }
 
+/// The app icon for a window's title bar and the taskbar: 64×64 RGBA, made
+/// by scripts/make-icons.sh.
+#[cfg(not(target_os = "macos"))]
+fn window_icon() -> Option<winit::window::Icon> {
+    const RGBA: &[u8] = include_bytes!("../assets/icon/das-meter-64.rgba");
+    winit::window::Icon::from_rgba(RGBA.to_vec(), 64, 64).ok()
+}
+
 /// An A/B song's waveform, read in the background: its file and the waveform.
 type ReadOverview = (String, dasmeter_core::SongOverview);
 
@@ -423,6 +431,10 @@ impl Shell {
     }
 
     fn open(&mut self, event_loop: &ActiveEventLoop, role: Role, attributes: WindowAttributes) {
+        // On Windows and Linux the window brings its own icon (title bar,
+        // taskbar); a macOS app takes its icon from the bundle.
+        #[cfg(not(target_os = "macos"))]
+        let attributes = attributes.with_window_icon(window_icon());
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
             Err(error) => {

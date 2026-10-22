@@ -42,7 +42,9 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Das-Meter
-UninstallDisplayIcon={app}\das-meter.exe
+; The app icon (scripts/make-icons.sh): the installer's own, and Add/Remove Programs'.
+SetupIconFile={#Root}\crates\app\assets\icon\das-meter.ico
+UninstallDisplayIcon={app}\das-meter.ico
 ChangesAssociations=yes
 ; Restart Manager: offers to close what has the app or the Send Plugin open
 ; (the plug-in binaries are .clap and .vst3 files).
@@ -57,6 +59,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#Root}\target\release\das-meter.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Root}\crates\app\assets\icon\das-meter.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE-MIT"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\THIRD-PARTY-LICENSES.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -74,13 +77,13 @@ Type: filesandordirs; Name: "{commoncf64}\VST3\Das-Meter Send.vst3"; Tasks: not 
 Root: HKA; Subkey: "Software\Classes\.dasmeter-preset"; ValueType: string; ValueName: ""; ValueData: "DasMeter.Preset"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.dasmeter-preset\OpenWithProgids"; ValueType: string; ValueName: "DasMeter.Preset"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\DasMeter.Preset"; ValueType: string; ValueName: ""; ValueData: "Das-Meter Preset"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\DasMeter.Preset\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\das-meter.exe,0"
+Root: HKA; Subkey: "Software\Classes\DasMeter.Preset\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\das-meter.ico"
 Root: HKA; Subkey: "Software\Classes\DasMeter.Preset\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\das-meter.exe"" ""%1"""
 
 [Icons]
-Name: "{group}\Das-Meter"; Filename: "{app}\das-meter.exe"
+Name: "{group}\Das-Meter"; Filename: "{app}\das-meter.exe"; IconFilename: "{app}\das-meter.ico"
 Name: "{group}\Uninstall Das-Meter"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Das-Meter"; Filename: "{app}\das-meter.exe"; Tasks: desktopicon
+Name: "{autodesktop}\Das-Meter"; Filename: "{app}\das-meter.exe"; IconFilename: "{app}\das-meter.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\das-meter.exe"; Description: "{cm:LaunchProgram,Das-Meter}"; Flags: nowait postinstall skipifsilent
