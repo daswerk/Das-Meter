@@ -337,8 +337,8 @@ Bass (peak over average, in dB: how punchy they are) against the Target's.
 **Average** sets how far back the mix's curve reaches: **3 s**, **10 s**
 (the default), **30 s** or **Whole** (everything since **Reset average**).
 **Freeze** keeps the curve as it is now as a ghost, to compare before and
-after a change. **Compare file…** compares a bounce of your mix instead of
-the live Source.
+after a change. **Add files… ▸ A bounce of your mix, to compare…** compares a
+bounce of your mix instead of the live Source; **Stop comparing** goes back.
 
 ### Listening A/B
 
@@ -371,7 +371,7 @@ all of them together instead.
 
 - **Learn a song…**, play a song from start to end, name it and the Target,
   then **Add**.
-- **Add files…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
+- **Add files… ▸ Reference songs for the Target…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
   ALAC) in the background, far faster than playing them. You can also drop
   files or whole folders on the Meter. Files that can't be read are listed
   with the reason.

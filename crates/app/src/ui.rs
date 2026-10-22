@@ -915,20 +915,35 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
             actions.push(shift(Some(mix)));
         }
     }
-    // Songs for the Target: from files, or taught by playing.
+    // Files, one button for both kinds: reference songs for the Target, or
+    // a bounce of the mix to compare in place of the live Source. Songs can
+    // also be taught by playing.
     ui.horizontal(|ui| {
-        if ui
-            .button("Add files…")
-            .on_hover_text(
-                "Analyse songs (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A, ALAC) for the Target; \
-                 files and folders can also be dropped on the Meter",
-            )
-            .clicked()
-        {
-            actions
-                .requests
-                .push(Request::AddTargetFiles { meter: index });
-        }
+        ui.menu_button("Add files…", |ui| {
+            if ui
+                .button("Reference songs for the Target…")
+                .on_hover_text(
+                    "Analyse songs (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A, ALAC) for the Target; \
+                     files and folders can also be dropped on the Meter",
+                )
+                .clicked()
+            {
+                actions
+                    .requests
+                    .push(Request::AddTargetFiles { meter: index });
+                ui.close();
+            }
+            if ui
+                .button("A bounce of your mix, to compare…")
+                .on_hover_text(
+                    "Compare a bounce of the mix with the Target in place of the live Source",
+                )
+                .clicked()
+            {
+                actions.requests.push(Request::CompareFile { meter: index });
+                ui.close();
+            }
+        });
         if learning.is_none()
             && ui
                 .button("Learn a song…")
@@ -1082,28 +1097,17 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
         {
             actions.push(Event::ResetLongTerm { meter: index });
         }
-        match &state.comparing {
-            None => {
-                if ui
-                    .button("Compare file…")
-                    .on_hover_text("Compare a bounce of the mix in place of the live Source")
-                    .clicked()
-                {
-                    actions.requests.push(Request::CompareFile { meter: index });
-                }
-            }
-            Some(name) => {
-                if ui
-                    .button("Stop comparing")
-                    .on_hover_text(format!("Back to the live Source from {name}"))
-                    .clicked()
-                {
-                    actions.push(Event::CompareFile {
-                        meter: index,
-                        file: None,
-                    });
-                }
-            }
+        // A bounce (from Add files…) in place of the live Source, while it is.
+        if let Some(name) = &state.comparing
+            && ui
+                .button("Stop comparing")
+                .on_hover_text(format!("Back to the live Source from {name}"))
+                .clicked()
+        {
+            actions.push(Event::CompareFile {
+                meter: index,
+                file: None,
+            });
         }
     });
 }

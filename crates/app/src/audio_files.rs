@@ -1,7 +1,7 @@
 //! Audio files for the Tonal Balance Meter: decoded with Symphonia and
 //! analysed into a summary far faster than real time, on a thread of their
-//! own, for a Target's songs (Add files…, or files dropped on the Meter) or
-//! a mix to compare (Compare file…).
+//! own, for a Target's songs (Add files… ▸ Reference songs, or files dropped
+//! on the Meter) or a mix to compare (Add files… ▸ A bounce of your mix).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
