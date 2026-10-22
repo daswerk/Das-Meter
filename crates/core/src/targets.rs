@@ -204,14 +204,31 @@ pub type Targets = Library<Target>;
 
 impl Targets {
     /// Adds a song to the Target called `target`, made if there's none.
+    /// The same file added again replaces its earlier copy, in its place.
     /// Returns the name the Target has.
     pub fn add_song(&mut self, target: &str, song: TargetSong) -> String {
         let mut item = self
             .get(target.trim())
             .cloned()
             .unwrap_or_else(|| Target::new(target));
-        item.songs.push(song);
+        let again = song.file.as_ref().and_then(|file| {
+            item.songs
+                .iter()
+                .position(|s| s.file.as_ref() == Some(file))
+        });
+        match again {
+            Some(i) => item.songs[i] = song,
+            None => item.songs.push(song),
+        }
         self.save(item)
+    }
+
+    /// Where the song from `file` is in the Target called `target`, if it's there.
+    pub fn song_from(&self, target: &str, file: &str) -> Option<usize> {
+        self.get(target)?
+            .songs
+            .iter()
+            .position(|s| s.file.as_deref() == Some(file))
     }
 
     /// Removes a Target's song by its place in the list; returns whether it did.
@@ -288,6 +305,23 @@ mod tests {
         assert_eq!(combined.key.tonic, 5);
         assert_eq!(combined.songs, 4);
         assert_eq!(combined.aligned, 3);
+    }
+
+    #[test]
+    fn the_same_file_added_again_replaces_its_song() {
+        let mut targets = Targets::default();
+        let first = song("Komit", -20.0, None).with_file("/music/komit.wav");
+        targets.add_song("Club", song("Other", -18.0, None));
+        targets.add_song("Club", first);
+        let again = song("Komit", -22.0, None).with_file("/music/komit.wav");
+        targets.add_song("Club", again);
+        let club = targets.get("Club").unwrap();
+        assert_eq!(club.songs.len(), 2, "once, not twice");
+        assert_eq!(
+            club.songs[1].regions[0], -22.0,
+            "the new analysis, in its place"
+        );
+        assert_eq!(targets.song_from("Club", "/music/komit.wav"), Some(1));
     }
 
     #[test]

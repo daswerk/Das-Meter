@@ -828,28 +828,19 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
     let (learning, frozen, target) = (state.learning, state.frozen, state.target.as_ref());
     let chosen = target.map(|t| t.name.clone());
     widgets::section(ui, "Target");
-    target_choice(ui, scene, index, chosen.as_ref(), actions);
+    let width = widgets::row_width(ui);
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label("Compare with");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                song_picker(ui, scene, meter, PICKER_WIDTH, actions);
+            });
+        },
+    );
     if let Some(target) = target.filter(|t| t.missing) {
         ui.label(RichText::new(format!("{} (missing)", target.name)).weak());
-    }
-    if let Some(target) = target.filter(|t| t.songs.len() > 1) {
-        let mut pick = target.pick;
-        let mut options: Vec<(TargetPick, &str)> = target
-            .songs
-            .iter()
-            .enumerate()
-            .map(|(i, song)| (TargetPick::Song(i), song.name.as_str()))
-            .collect();
-        options.push((TargetPick::Average, "Average of all"));
-        if choice(ui, "Song", &mut pick, &options) {
-            actions.push(Event::SetMeter {
-                meter: index,
-                settings: MeterSettings::TonalBalance(TonalBalanceMeterSettings {
-                    pick,
-                    ..settings
-                }),
-            });
-        }
     }
     // The key: a shift stays until it's undone; otherwise a suggestion.
     let shift = |to| Event::SetMeter {
@@ -860,39 +851,41 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
         }),
     };
     if let Some(target) = target {
+        // One row: what the low end is drawn in, and the one thing to do about it.
+        let row = |ui: &mut egui::Ui, text: String, button: String, tip: &str| -> bool {
+            let mut clicked = false;
+            ui.allocate_ui_with_layout(
+                egui::vec2(widgets::row_width(ui), ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label("Key");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        clicked = ui.button(button).on_hover_text(tip).clicked();
+                        ui.label(RichText::new(text).weak());
+                    });
+                },
+            );
+            clicked
+        };
         if let (Some(to), Some(home)) = (target.shifted_to, target.home_key) {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(format!(
-                    "Low end shifted to {} (the songs are in {}).",
-                    to.name(),
-                    home.name()
-                ));
-                if ui
-                    .button("Undo shift")
-                    .on_hover_text("Draw the Target in its songs' own key again")
-                    .clicked()
-                {
-                    actions.push(shift(None));
-                }
-            });
-        } else if let (Some(mix), Some(home)) = (target.suggest_shift, target.home_key) {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(format!(
-                    "Your mix is in {}, this Target's songs in {}.",
-                    mix.name(),
-                    home.name()
-                ));
-                if ui
-                    .button(format!("Shift to {}", mix.name()))
-                    .on_hover_text(
-                        "Move the Target's low end (below 300 Hz) to this key; \
-                         it stays there until you undo it",
-                    )
-                    .clicked()
-                {
-                    actions.push(shift(Some(mix)));
-                }
-            });
+            if row(
+                ui,
+                format!("in {} (songs: {})", to.name(), home.name()),
+                "Undo".to_owned(),
+                "Draw the Target in its songs' own key again",
+            ) {
+                actions.push(shift(None));
+            }
+        } else if let (Some(mix), Some(home)) = (target.suggest_shift, target.home_key)
+            && row(
+                ui,
+                format!("mix {}, songs {}", mix.name(), home.name()),
+                format!("Shift to {}", mix.name()),
+                "Move the Target's low end (below 300 Hz) to the mix's key; \
+                 it stays there until you undo it",
+            )
+        {
+            actions.push(shift(Some(mix)));
         }
     }
     // Songs for the Target: from files, or taught by playing.
@@ -1086,41 +1079,6 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
             }
         }
     });
-}
-
-/// Which Target a Tonal Balance Meter compares with, as a row of choices.
-fn target_choice(
-    ui: &mut egui::Ui,
-    scene: &Scene,
-    meter: usize,
-    chosen: Option<&String>,
-    actions: &mut Actions,
-) {
-    // −1 is none; a missing Target matches no option, so None can clear it.
-    let mut picked: isize = match chosen {
-        None => -1,
-        Some(name) => scene
-            .targets
-            .iter()
-            .position(|t| t == name)
-            .map_or(-2, |k| k as isize),
-    };
-    let mut options: Vec<(isize, &str)> = vec![(-1, "None")];
-    options.extend(
-        scene
-            .targets
-            .iter()
-            .enumerate()
-            .map(|(k, name)| (k as isize, name.as_str())),
-    );
-    if choice(ui, "Compare with", &mut picked, &options) {
-        actions.requests.push(Request::ChooseTarget {
-            meter,
-            name: usize::try_from(picked)
-                .ok()
-                .map(|k| scene.targets[k].clone()),
-        });
-    }
 }
 
 /// The Loudness Meter's basic settings; `reset` is set when Reset is clicked.
@@ -2289,62 +2247,7 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 small(ui);
-                let target = meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref());
-                let chosen = target.map(|t| t.name.clone());
-                let shown = target.map_or_else(|| "No Target".to_owned(), |t| t.label());
-                let set_pick = |pick| Event::SetMeter {
-                    meter: meter.meter,
-                    settings: MeterSettings::TonalBalance(TonalBalanceMeterSettings {
-                        pick,
-                        ..settings
-                    }),
-                };
-                egui::ComboBox::from_id_salt(("tonal balance target picker", meter.meter))
-                    .width(controls.target.width - 2.0 * 7.0)
-                    .selected_text(shown)
-                    .truncate()
-                    .show_ui(ui, |ui| {
-                        // This Target's songs, one by one or averaged.
-                        if let Some(target) = target {
-                            ui.label(RichText::new(&target.name).small().weak());
-                            for (i, song) in target.songs.iter().enumerate() {
-                                let pick = TargetPick::Song(i);
-                                if ui.selectable_label(target.pick == pick, &song.name).clicked()
-                                    && target.pick != pick
-                                {
-                                    actions.push(set_pick(pick));
-                                }
-                            }
-                            if target.songs.len() > 1
-                                && ui
-                                    .selectable_label(
-                                        target.pick == TargetPick::Average,
-                                        format!("Average of all {}", target.songs.len()),
-                                    )
-                                    .clicked()
-                                && target.pick != TargetPick::Average
-                            {
-                                actions.push(set_pick(TargetPick::Average));
-                            }
-                            ui.separator();
-                        }
-                        // Another Target (its first song), or none.
-                        let mut choose = |ui: &mut egui::Ui, name: Option<&String>, label: &str| {
-                            if chosen.as_ref() != name && ui.selectable_label(false, label).clicked() {
-                                actions.requests.push(Request::ChooseTarget {
-                                    meter: meter.meter,
-                                    name: name.cloned(),
-                                });
-                                actions.push(set_pick(TargetPick::default()));
-                            }
-                        };
-                        for name in &scene.targets {
-                            choose(ui, Some(name), name);
-                        }
-                        choose(ui, None, "No Target");
-                    })
-                    .response
-                    .on_hover_text("What to compare with: a song of the Target, or all of them averaged; add songs in the menu");
+                song_picker(ui, scene, meter, controls.target.width, actions);
             });
         if let (Some(area), Some(ab)) = (controls.strip, ab) {
             egui::Area::new(egui::Id::new(("tonal balance b waveform", meter.meter)))
@@ -2397,6 +2300,109 @@ fn meter_controls(ctx: &egui::Context, scene: &Scene, key: WindowKey, actions: &
                 }
             });
     }
+}
+
+/// How wide the song picker in a Tonal Balance Meter's menu is.
+const PICKER_WIDTH: f32 = 190.0;
+
+/// `text` shortened with "…" to fit `width` in `font`.
+fn fit_text(ui: &egui::Ui, text: &str, font: &egui::FontId, width: f32) -> String {
+    let measure = |t: &str| {
+        ui.painter()
+            .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    if measure(text) <= width {
+        return text.to_owned();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut keep = chars.len();
+    while keep > 0 {
+        keep -= 1;
+        let shorter: String = chars[..keep]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+            + "…";
+        if measure(&shorter) <= width {
+            return shorter;
+        }
+    }
+    "…".to_owned()
+}
+
+/// What a Tonal Balance Meter compares with, as one dropdown: every song by
+/// its name (under its Target's name when there are several Targets), each
+/// Target's songs averaged, or none. `width` includes the arrow.
+fn song_picker(
+    ui: &mut egui::Ui,
+    scene: &Scene,
+    meter: &MeterScene,
+    width: f32,
+    actions: &mut Actions,
+) {
+    let MeterSettings::TonalBalance(settings) = meter.settings else {
+        return;
+    };
+    let index = meter.meter;
+    let target = meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref());
+    let chosen = target.map(|t| t.name.as_str());
+    let shown = target.map_or_else(|| "No Target".to_owned(), |t| t.label());
+    let padding = ui.spacing().button_padding.x * 2.0 + ui.spacing().icon_width + 6.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let shown = fit_text(ui, &shown, &font, width - padding);
+    let set = |pick| Event::SetMeter {
+        meter: index,
+        settings: MeterSettings::TonalBalance(TonalBalanceMeterSettings { pick, ..settings }),
+    };
+    egui::ComboBox::from_id_salt(("tonal balance song picker", index, width as u32))
+        .width(width - padding)
+        .selected_text(shown)
+        .show_ui(ui, |ui| {
+            ui.set_min_width(PICKER_WIDTH);
+            let several = scene.targets.len() > 1;
+            for (name, songs) in scene.targets.iter().zip(&scene.target_songs) {
+                if several {
+                    ui.label(RichText::new(name).small().weak());
+                }
+                let here = chosen == Some(name.as_str());
+                let current = target.filter(|_| here).map(|t| t.pick);
+                let mut pick = |ui: &mut egui::Ui, pick: TargetPick, label: &str| {
+                    if ui.selectable_label(current == Some(pick), label).clicked()
+                        && current != Some(pick)
+                    {
+                        if !here {
+                            actions.requests.push(Request::ChooseTarget {
+                                meter: index,
+                                name: Some(name.clone()),
+                            });
+                        }
+                        actions.push(set(pick));
+                    }
+                };
+                for (k, song) in songs.iter().enumerate() {
+                    pick(ui, TargetPick::Song(k), song);
+                }
+                if songs.len() > 1 {
+                    pick(
+                        ui,
+                        TargetPick::Average,
+                        &format!("Average of all {}", songs.len()),
+                    );
+                }
+            }
+            ui.separator();
+            if ui.selectable_label(chosen.is_none(), "No Target").clicked() && chosen.is_some() {
+                actions.requests.push(Request::ChooseTarget {
+                    meter: index,
+                    name: None,
+                });
+            }
+        })
+        .response
+        .on_hover_text("The song to compare with, or several averaged; add songs in the menu");
 }
 
 /// "1:05" or "0:07.5": a time in the song.

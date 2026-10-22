@@ -1975,6 +1975,12 @@ impl AppCore {
                 for song in songs {
                     name = self.targets.add_song(&name, song.clone());
                 }
+                // A file added again keeps its place in the list.
+                let first = songs[0]
+                    .file
+                    .as_deref()
+                    .and_then(|file| self.targets.song_from(&name, file))
+                    .unwrap_or(before);
                 if let Some(slot) = self
                     .meters
                     .get_mut(meter)
@@ -1984,7 +1990,7 @@ impl AppCore {
                     if let MeterSettings::TonalBalance(settings) = slot.meter.settings() {
                         slot.meter.set_settings(MeterSettings::TonalBalance(
                             TonalBalanceMeterSettings {
-                                pick: TargetPick::Song(before),
+                                pick: TargetPick::Song(first),
                                 ..settings
                             },
                         ));
@@ -2915,6 +2921,17 @@ impl AppCore {
             windows,
             reference_curves: self.curves.names(),
             targets: self.targets.names(),
+            target_songs: self
+                .targets
+                .names()
+                .iter()
+                .map(|name| {
+                    self.targets
+                        .get(name)
+                        .map(|t| t.songs.iter().map(|s| s.name.clone()).collect())
+                        .unwrap_or_default()
+                })
+                .collect(),
             notes: if note { vec![self.note] } else { Vec::new() },
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),

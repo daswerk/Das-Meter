@@ -305,6 +305,7 @@ fn ui_view(scene: &Scene) -> Scene {
         windows,
         reference_curves: scene.reference_curves.clone(),
         targets: scene.targets.clone(),
+        target_songs: scene.target_songs.clone(),
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
@@ -719,6 +720,11 @@ impl Shell {
         }
         let requests = std::mem::take(&mut actions.requests);
         for action in actions {
+            // A/B goes to the player and the Send Plugins at once, not at
+            // the next frame.
+            if let Event::ListenB { meter, b } = action {
+                self.switch_ab(meter, b);
+            }
             self.core.handle(action, now);
         }
         for request in requests {
@@ -991,10 +997,6 @@ impl Shell {
             return;
         };
         let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
-        let scene_shows_b =
-            scene.windows.iter().flat_map(|w| &w.meters).any(
-                |m| matches!(m.settings, dasmeter_core::MeterSettings::Spectrum(s) if s.show_b),
-            );
         let any_b = scene.windows.iter().flat_map(|w| &w.meters).any(|m| {
             m.tonal_balance
                 .as_ref()
@@ -1039,10 +1041,10 @@ impl Shell {
                 m == meter && ab.file == player.file() && ab.region == player.region()
             })
         });
-        // A Spectrum showing B wants the song running, heard or not.
-        let b_layer = scene_shows_b;
+        // The song runs, silent on A, as soon as there's one: switching is
+        // then only a fade, never the wait for a stream to open.
         for (meter, ab, _) in &wanted {
-            if (ab.b || b_layer) && !self.players.contains_key(meter) {
+            if !self.players.contains_key(meter) {
                 match crate::playback::Player::start(&ab.file, ab.region) {
                     Ok(player) => {
                         self.players.insert(*meter, player);
@@ -1088,6 +1090,43 @@ impl Shell {
             self.send_plugins.set_muted(*id, true);
         }
         self.quieted = quiet;
+    }
+
+    /// A/B switched on `meter`: the song fades in or out and the Send
+    /// Plugins go quiet or play again right away, before the next frame
+    /// brings the rest ([`Shell::sync_ab`]).
+    fn switch_ab(&mut self, meter: usize, b: bool) {
+        let Some(scene) = self.core.scene() else {
+            return;
+        };
+        let Some(m) = scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .find(|m| m.meter == meter)
+        else {
+            return;
+        };
+        let Some(ab) = m.tonal_balance.as_ref().and_then(|t| t.ab.as_ref()) else {
+            return;
+        };
+        let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let (picked, gain) = (m.picked, 10f32.powf(ab.gain_db / 20.0));
+        let quiet = if on_send_plugins {
+            picked.into_iter().collect()
+        } else {
+            // Listed now if they weren't yet, so the first B finds them.
+            let now = self.now();
+            self.send_plugins.keep_alive(self.start + now);
+            self.send_plugins.ids()
+        };
+        if let Some(player) = self.players.get(&meter) {
+            player.set_gain(gain, b);
+        }
+        for id in &quiet {
+            self.send_plugins.set_muted(*id, b);
+        }
+        self.quieted = if b { quiet } else { Vec::new() };
     }
 
     /// Whether any window with Meters can be seen.

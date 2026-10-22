@@ -22,6 +22,10 @@ use rtrb::{Consumer, Producer, RingBuffer};
 const RING_SECONDS: f64 = 0.5;
 /// How long a fade between gains takes, in seconds.
 const FADE_SECONDS: f32 = 0.01;
+/// Going back to A, B holds this long before it fades out, in seconds: the
+/// DAW's own output (its Send Plugin playing again) comes that much later,
+/// so the two overlap rather than leave a gap.
+const FADE_OUT_DELAY_SECONDS: f32 = 0.04;
 /// How long the decoder waits for room in the ring.
 const WAIT: Duration = Duration::from_millis(5);
 /// The fade at each end of a looped region, in seconds.
@@ -187,13 +191,19 @@ fn open(
         played,
     } = levels;
     let step = 1.0 / (FADE_SECONDS * rate as f32);
-    let mut now = 0.0f32;
+    let delay = (FADE_OUT_DELAY_SECONDS * rate as f32) as usize;
+    let (mut now, mut last_to, mut hold) = (0.0f32, 0.0f32, 0usize);
     let stream = device
         .build_output_stream::<f32, _, _>(
             config,
             move |data: &mut [f32], _| {
                 let to = f32::from_bits(target.load(Relaxed));
                 let level = f32::from_bits(matched.load(Relaxed));
+                // Turned down to A: hold B a moment first (see FADE_OUT_DELAY_SECONDS).
+                if to < last_to && now > to {
+                    hold = delay;
+                }
+                last_to = to;
                 let mut taken = 0;
                 for frame in data.chunks_exact_mut(channels) {
                     // Short of audio (the decoder lags): silence, not a stall.
@@ -211,6 +221,9 @@ fn open(
                     };
                     now = if now < to {
                         (now + step * to.max(1.0)).min(to)
+                    } else if hold > 0 {
+                        hold -= 1;
+                        now
                     } else {
                         (now - step * now.max(1.0)).max(to)
                     };
