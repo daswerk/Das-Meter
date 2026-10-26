@@ -184,7 +184,7 @@ const PLAYHEAD_LAG: f64 = 0.04;
 /// A playhead further than this from where it should be jumps there, in seconds.
 const PLAYHEAD_JUMP: f64 = 0.25;
 /// The share of its drift a playhead corrects each frame.
-const PLAYHEAD_CORRECTION: f64 = 0.08;
+const PLAYHEAD_CORRECTION: f64 = 0.03;
 
 /// The zoom window's place for a box: the half of the plot the box's centre
 /// isn't in, so the box stays in view.
@@ -799,8 +799,11 @@ pub enum MeterView {
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
 /// the frames' clock: a scrolling Meter draws [`PLAYHEAD_LAG`] behind its
-/// newest column and moves on at the columns' rate, nudged back whenever
-/// it drifts.
+/// newest column and moves on at the columns' rate, nudged back gently
+/// whenever it drifts. With the display's refresh rate known, the time
+/// between frames counts in whole refreshes: a frame is prepared a little
+/// early or late (as the app wakes) but shown on a refresh, so each moves
+/// the same distance and the scrolling doesn't stutter.
 #[derive(Default)]
 struct Playhead {
     /// Columns shown (fractional), and when.
@@ -809,12 +812,17 @@ struct Playhead {
 
 impl Playhead {
     /// How many columns behind the newest to draw at `now`.
-    fn lag(&mut self, now: Duration, completed: u64, per_second: f64) -> f32 {
+    fn lag(&mut self, now: Duration, completed: u64, per_second: f64, refresh: Option<u32>) -> f32 {
         let newest = completed as f64;
         let target = newest - PLAYHEAD_LAG * per_second;
         let shown = match self.shown {
             Some((shown, at)) => {
-                let predicted = shown + now.saturating_sub(at).as_secs_f64() * per_second;
+                let mut elapsed = now.saturating_sub(at).as_secs_f64();
+                if let Some(rate) = refresh.filter(|&r| r > 0) {
+                    let period = 1.0 / f64::from(rate);
+                    elapsed = (elapsed / period).round() * period;
+                }
+                let predicted = shown + elapsed * per_second;
                 let drift = target - predicted;
                 if drift.abs() > PLAYHEAD_JUMP * per_second {
                     target
@@ -1497,7 +1505,14 @@ impl Meter {
     /// What the Meter shows now, or `None` before a Source starts.
     /// `pointer` is the cursor's position inside the Meter (0–1 each way), if it's over it.
     /// `now` paces the scrolling Meters.
-    pub fn view(&mut self, pointer: Option<[f32; 2]>, now: Duration) -> Option<&MeterView> {
+    /// `refresh` is the display's refresh rate, when known: scrolling Meters
+    /// move on its clock.
+    pub fn view(
+        &mut self,
+        pointer: Option<[f32; 2]>,
+        now: Duration,
+        refresh: Option<u32>,
+    ) -> Option<&MeterView> {
         if self.view.is_none() {
             let mut view = build_view(self.analyser.as_mut()?, &self.settings, pointer);
             if let MeterView::Spectrum {
@@ -1563,7 +1578,7 @@ impl Meter {
                 self.playhead.reset();
                 0.0
             } else {
-                self.playhead.lag(now, *completed, per_second)
+                self.playhead.lag(now, *completed, per_second, refresh)
             };
         }
         if let (
@@ -1579,7 +1594,7 @@ impl Meter {
                     0.0
                 } else {
                     zoom.playhead
-                        .lag(now, view.completed, a.columns_per_second())
+                        .lag(now, view.completed, a.columns_per_second(), refresh)
                 };
             }
         }
@@ -2083,4 +2098,39 @@ fn history(a: &LoudnessAnalyser, settings: &LoudnessMeterSettings) -> Vec<Level>
             Level::from_db(lufs, crate::scene::LUFS_FLOOR)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Columns a playhead moves each frame at 120 Hz, the frames prepared
+    /// a little early or late (as the event loop wakes), the audio coming
+    /// in 512-frame blocks at 48 kHz.
+    fn steps(refresh: Option<u32>) -> Vec<f64> {
+        let per_second = 200.0;
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let shown_at = f64::from(frame) / 120.0;
+            // ±2 ms of wake-up jitter.
+            let jitter = [0.0, 0.002, -0.0015, 0.001, -0.002][frame as usize % 5];
+            let now = Duration::from_secs_f64(1.0 + shown_at + jitter);
+            let audio = (1.0 + shown_at) * 48_000.0;
+            let completed = ((audio / 512.0).floor() * 512.0 / 240.0) as u64;
+            let lag = playhead.lag(now, completed, per_second, refresh);
+            shown.push(completed as f64 - f64::from(lag));
+        }
+        shown.windows(2).skip(240).map(|w| w[1] - w[0]).collect()
+    }
+
+    #[test]
+    fn on_the_displays_clock_every_frame_moves_the_same() {
+        let even = 200.0 / 120.0;
+        let worst = |steps: &[f64]| steps.iter().map(|s| (s - even).abs()).fold(0.0, f64::max);
+        let snapped = steps(Some(120));
+        assert!(worst(&snapped) < 0.1, "steps vary by {}", worst(&snapped));
+        let unsnapped = steps(None);
+        assert!(worst(&unsnapped) > worst(&snapped), "the clock must help");
+    }
 }

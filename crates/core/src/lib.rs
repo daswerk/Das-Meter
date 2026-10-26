@@ -2984,7 +2984,10 @@ impl AppCore {
         now: Duration,
     ) -> MeterState {
         let pointer = pointer.and_then(|p| frame.locate(p));
-        match self.meters[meter].meter.view(pointer, now) {
+        match self.meters[meter]
+            .meter
+            .view(pointer, now, self.refresh_rate)
+        {
             Some(view) => MeterState::Live(view.clone()),
             None => MeterState::Starting,
         }
