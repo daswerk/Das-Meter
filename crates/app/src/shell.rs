@@ -93,6 +93,7 @@ pub fn run() {
         players: HashMap::new(),
         quieted: Vec::new(),
         system_mute: None,
+        frame_log: FrameLog::open(),
         system_mute_failed: false,
         overviews_asked: std::collections::HashSet::new(),
         b_frames: Vec::new(),
@@ -267,6 +268,8 @@ struct Shell {
     quieted: Vec<u64>,
     /// A/B on System Capture: the other apps, muted while B plays.
     system_mute: Option<crate::system_mute::SystemMute>,
+    /// Hidden: `DASMETER_FRAME_LOG=<file>` logs each frame's timing.
+    frame_log: Option<FrameLog>,
     /// Muting them failed this time B came on (not tried again until A).
     system_mute_failed: bool,
     /// A/B songs whose waveform is being (or was) read, and where the
@@ -686,6 +689,7 @@ impl Shell {
             app.window.request_redraw();
             return;
         };
+        let acquired = self.start.elapsed();
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -722,6 +726,9 @@ impl Shell {
         );
         app.window.pre_present_notify();
         app.painter.gpu.queue.present(frame);
+        if let Some(log) = &mut self.frame_log {
+            log.frame(now, acquired, self.start.elapsed(), self.core.scene());
+        }
         // The card takes the size of what it shows, and moves to stay next to the Bar.
         if let (Role::Card, Some(size)) = (app.role, app.ui.content_size) {
             let [width, height] = app.logical_size();
@@ -1969,5 +1976,52 @@ impl Shell {
         };
         let now = self.now();
         self.core.handle(event, now);
+    }
+}
+
+/// Hidden, for finding stutter: with `DASMETER_FRAME_LOG=<file>`, one line a
+/// frame: when drawing began, when its frame was ready to draw into (it
+/// waits for the display) and when it was presented (ms since launch), and
+/// the first Waveform's newest column and lag.
+struct FrameLog(std::io::BufWriter<std::fs::File>);
+
+impl FrameLog {
+    fn open() -> Option<FrameLog> {
+        let path = std::env::var_os("DASMETER_FRAME_LOG")?;
+        let file = std::fs::File::create(path).ok()?;
+        Some(FrameLog(std::io::BufWriter::new(file)))
+    }
+
+    fn frame(
+        &mut self,
+        began: Duration,
+        acquired: Duration,
+        presented: Duration,
+        scene: Option<&dasmeter_core::Scene>,
+    ) {
+        use std::io::Write;
+        let waveform = scene.and_then(|scene| {
+            scene
+                .windows
+                .iter()
+                .flat_map(|w| &w.meters)
+                .find_map(|m| match &m.state {
+                    dasmeter_core::MeterState::Live(dasmeter_core::MeterView::Waveform {
+                        completed,
+                        lag,
+                        ..
+                    }) => Some((*completed, *lag)),
+                    _ => None,
+                })
+        });
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let (completed, lag) = waveform.unwrap_or((0, 0.0));
+        let _ = writeln!(
+            self.0,
+            "{:.3} {:.3} {:.3} {completed} {lag:.2}",
+            ms(began),
+            ms(acquired),
+            ms(presented)
+        );
     }
 }

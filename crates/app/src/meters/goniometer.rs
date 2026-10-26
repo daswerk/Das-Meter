@@ -1,9 +1,10 @@
-//! The Goniometer, as on the old studio meters: a square with the L and R
-//! axes dotted across it, and L against R as a cloud of glowing points,
-//! turned so mono stands upright. Each point is a faint wide dot under a
-//! small bright one: where many land, the cloud burns towards white, so the
-//! densest part of the stereo image glows hottest. The scale it's drawn at
-//! is read out on top, the correlation bar below.
+//! The Goniometer, as on the old studio meters: L against R drawn as the
+//! beam of a scope, turned so mono stands upright, in a square with the L
+//! and R axes faintly dotted across it. Each sample is joined to the next
+//! (smoothly, where they're far apart), and the trace leaves trails: older
+//! passes thinner and dimmer, the newest bright and hot, under a soft glow,
+//! so the figure reads as a shape with depth. The scale it's drawn at is
+//! read out on top, the correlation bar below.
 
 use dasmeter_analysis::StereoReadings;
 use dasmeter_core::{Colour, GoniometerMeterSettings, Role};
@@ -45,7 +46,7 @@ pub fn draw(
     let half = side / 2.0;
     let place = |[x, y]: [f32; 2]| [centre[0] + x * half, centre[1] - y * half];
     let dim = c.dim();
-    let axis = dim.faded(0.45);
+    let axis = dim.faded(0.25);
 
     // The L and R axes, dotted corner to corner.
     let dot = c.px(1.5).max(1.0);
@@ -72,24 +73,24 @@ pub fn draw(
     let scale = format!("Scale {scale_db:+.1} dB");
     c.text(&scale, centre[0], label_y, 10.0, dim, Align::Centre);
 
-    // The cloud: oldest faintest; a wide faint glow under a small hot core.
+    // The trace: oldest faintest and thinnest, under a soft glow.
     let trace = c.colour(Role::StereometerTrace);
-    let hot = mix(trace, Colour::rgb(0xff, 0xff, 0xff), 0.55);
-    let count = points.len().max(1) as f32;
-    let (glow, core) = (c.px(4.5), c.px(1.3).max(1.0));
-    let square_dot = |at: [f32; 2], size: f32| Area {
-        x: at[0] - size / 2.0,
-        y: at[1] - size / 2.0,
-        width: size,
-        height: size,
-    };
-    for (i, &point) in points.iter().enumerate() {
+    let hot = mix(trace, Colour::rgb(0xff, 0xff, 0xff), 0.4);
+    let segments = trail(
+        &points.iter().map(|&p| place(p)).collect::<Vec<_>>(),
+        c.px(3.0),
+    );
+    let count = segments.len().max(1) as f32;
+    let (glow, thin, thick) = (c.px(4.0), c.px(0.6), c.px(1.8));
+    for (i, &(from, to)) in segments.iter().enumerate() {
         let age = (i as f32 + 1.0) / count;
-        let at = place(point);
         c.shapes
-            .rect(square_dot(at, glow), trace.faded(0.03 + 0.09 * age));
-        c.shapes
-            .rect(square_dot(at, core), hot.faded(0.08 + 0.32 * age));
+            .glow_line(from, to, glow * (0.5 + 0.5 * age), trace.faded(0.05 * age));
+    }
+    for (i, &(from, to)) in segments.iter().enumerate() {
+        let age = (i as f32 + 1.0) / count;
+        let colour = mix(trace, hot, age * age).faded(0.12 + 0.88 * age);
+        c.shapes.line(from, to, thin + (thick - thin) * age, colour);
     }
     if readings.mono {
         let text = c.colour(Role::Text);
@@ -115,5 +116,71 @@ pub fn draw(
             colour
         };
         stereometer::bar(c, bar, readings.correlation, colour, ["−1", "0", "+1"]);
+    }
+}
+
+/// The trace through `points` (in px, oldest first) as segments: straight
+/// where samples are close, a Catmull-Rom curve through them where they're
+/// more than `step` apart, so a slow, wide figure stays round.
+fn trail(points: &[[f32; 2]], step: f32) -> Vec<([f32; 2], [f32; 2])> {
+    let mut segments = Vec::with_capacity(points.len());
+    for i in 1..points.len() {
+        let (a, b) = (points[i - 1], points[i]);
+        let before = points[i.saturating_sub(2)];
+        let after = points[(i + 1).min(points.len() - 1)];
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let pieces = (length / step.max(0.5)).ceil().clamp(1.0, 8.0) as usize;
+        let mut from = a;
+        for k in 1..=pieces {
+            let t = k as f32 / pieces as f32;
+            let to = if k == pieces {
+                b
+            } else {
+                catmull_rom(before, a, b, after, t)
+            };
+            segments.push((from, to));
+            from = to;
+        }
+    }
+    segments
+}
+
+/// The Catmull-Rom curve from `p1` to `p2` at `t` (0–1).
+fn catmull_rom(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], t: f32) -> [f32; 2] {
+    let (t2, t3) = (t * t, t * t * t);
+    let axis = |i: usize| {
+        0.5 * (2.0 * p1[i]
+            + (p2[i] - p0[i]) * t
+            + (2.0 * p0[i] - 5.0 * p1[i] + 4.0 * p2[i] - p3[i]) * t2
+            + (3.0 * p1[i] - p0[i] - 3.0 * p2[i] + p3[i]) * t3)
+    };
+    [axis(0), axis(1)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn far_apart_samples_are_joined_by_a_curve_through_them() {
+        let points = [[0.0, 0.0], [10.0, 0.0], [20.0, 10.0], [30.0, 10.0]];
+        let segments = trail(&points, 3.0);
+        assert!(segments.len() > 3, "subdivided: {}", segments.len());
+        // It starts and ends on the samples and passes through each one.
+        assert_eq!(segments[0].0, points[0]);
+        assert_eq!(segments.last().unwrap().1, points[3]);
+        for p in &points[1..3] {
+            assert!(segments.iter().any(|s| s.1 == *p), "through {p:?}");
+        }
+        // Joined end to end.
+        for pair in segments.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0);
+        }
+    }
+
+    #[test]
+    fn close_samples_stay_straight() {
+        let points = [[0.0, 0.0], [1.0, 1.0], [2.0, 1.5]];
+        assert_eq!(trail(&points, 3.0).len(), 2);
     }
 }
