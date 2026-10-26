@@ -57,7 +57,8 @@ impl Default for AppSettings {
 impl AppSettings {
     /// The shortest time between two new frames on a display refreshing
     /// `refresh` times a second (if known). Matching the display, it's the
-    /// whole number of refreshes nearest the cap, less a quarter of one:
+    /// whole number of refreshes nearest the cap, less 0.4 of one (room for
+    /// waking a little late; a quarter while the display's rate is unknown):
     /// frames are presented on every refresh (each waits for it), so a new
     /// one comes on exactly every k-th.
     pub fn frame_interval(&self, refresh: Option<u32>) -> Duration {
@@ -67,7 +68,9 @@ impl AppSettings {
             let k = (f64::from(rate) / f64::from(self.frame_rate_cap.max(1)))
                 .round()
                 .max(1.0);
-            return Duration::from_secs_f64((k - 0.25) * period);
+            // Unknown, nothing holds frames to a refresh: a quarter is enough.
+            let margin = if refresh.is_some() { 0.4 } else { 0.25 };
+            return Duration::from_secs_f64((k - margin) * period);
         }
         Duration::from_nanos(1_000_000_000 / u64::from(self.frame_rate_cap.max(1)))
     }

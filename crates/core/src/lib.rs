@@ -561,6 +561,9 @@ pub struct AppCore {
     /// The scene last handed to the shell, and when.
     drawn: Option<Scene>,
     drawn_at: Option<Duration>,
+    /// The scene drawn last is new and its frame isn't drawn yet: when it
+    /// is, [`AppCore::retime`] counts the next frame from then.
+    fresh: bool,
     taps: phase_scope::Taps,
 }
 
@@ -645,6 +648,7 @@ impl AppCore {
             changed: true,
             drawn: None,
             drawn_at: None,
+            fresh: false,
             onboarding: Onboarding::default(),
             taps: phase_scope::Taps::default(),
         }
@@ -2675,6 +2679,7 @@ impl AppCore {
         }
         self.drawn = Some(scene);
         self.drawn_at = Some(now);
+        self.fresh = true;
         Decision::Draw
     }
 
@@ -2688,7 +2693,14 @@ impl AppCore {
     /// a frame is about to be drawn (once it's ready, just after a refresh),
     /// so each frame shows where they are when it's shown, however long it
     /// waited for the display.
+    ///
+    /// A new scene's frame also sets when the next one is due: counted from
+    /// the refresh it lands on rather than from when it was built, so a late
+    /// wake-up doesn't push every frame after it late too.
     pub fn retime(&mut self, now: Duration) {
+        if std::mem::take(&mut self.fresh) {
+            self.drawn_at = Some(now);
+        }
         let (Some(scene), refresh) = (self.drawn.as_mut(), self.refresh_rate) else {
             return;
         };
