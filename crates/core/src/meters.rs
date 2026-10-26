@@ -818,11 +818,47 @@ struct Playhead {
     /// stays this far behind (at least [`PLAYHEAD_LAG`]), so late audio
     /// doesn't make it catch up, stop and jump. It shrinks back slowly.
     slack: f64,
+    /// Moved only as frames are drawn ([`Playhead::drive`]): building a
+    /// scene then just reads where it is. Moving it at both, each rounding
+    /// its share of a frame's time to whole refreshes, made some frames
+    /// move a refresh too far or too short.
+    driven: bool,
 }
 
 impl Playhead {
     /// How many columns behind the newest to draw at `now`.
+    /// How many columns behind the newest to draw at `now`, as a scene is
+    /// built: where it was last moved to, once frames drive it.
     fn lag(&mut self, now: Duration, completed: u64, per_second: f64, refresh: Option<u32>) -> f32 {
+        match self.shown {
+            Some((shown, _)) if self.driven => {
+                let newest = completed as f64;
+                (((newest - shown.clamp(0.0, newest)) * 100.0).round() / 100.0) as f32
+            }
+            _ => self.advance(now, completed, per_second, refresh),
+        }
+    }
+
+    /// Moves it to `now`, as a frame is about to be drawn; from then on only
+    /// frames move it.
+    fn drive(
+        &mut self,
+        now: Duration,
+        completed: u64,
+        per_second: f64,
+        refresh: Option<u32>,
+    ) -> f32 {
+        self.driven = true;
+        self.advance(now, completed, per_second, refresh)
+    }
+
+    fn advance(
+        &mut self,
+        now: Duration,
+        completed: u64,
+        per_second: f64,
+        refresh: Option<u32>,
+    ) -> f32 {
         let newest = completed as f64;
         let since = self
             .shown
@@ -1549,7 +1585,7 @@ impl Meter {
         refresh: Option<u32>,
     ) -> Option<f32> {
         let per_second = self.columns_per_second()?;
-        (completed > 0).then(|| self.playhead.lag(now, completed, per_second, refresh))
+        (completed > 0).then(|| self.playhead.drive(now, completed, per_second, refresh))
     }
 
     /// `refresh` is the display's refresh rate, when known: scrolling Meters
@@ -2167,6 +2203,35 @@ mod tests {
             shown.push(completed as f64 - f64::from(lag));
         }
         shown.windows(2).skip(240).map(|w| w[1] - w[0]).collect()
+    }
+
+    #[test]
+    fn building_a_scene_between_frames_doesnt_move_it() {
+        // Frames on a 120 Hz refresh, each scene built a varying time before
+        // its frame is ready.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let ready = 1.0 + f64::from(frame) / 120.0;
+            let built = ready - [0.001, 0.004, 0.0075, 0.002, 0.006][frame as usize % 5];
+            let completed = |t: f64| ((t * 48_000.0 / 512.0).floor() * 512.0 / 240.0) as u64;
+            playhead.lag(
+                Duration::from_secs_f64(built),
+                completed(built),
+                200.0,
+                Some(120),
+            );
+            let c = completed(ready);
+            let lag = playhead.drive(Duration::from_secs_f64(ready), c, 200.0, Some(120));
+            shown.push(c as f64 - f64::from(lag));
+        }
+        let even = 200.0 / 120.0;
+        let worst = shown
+            .windows(2)
+            .skip(240)
+            .map(|w| (w[1] - w[0] - even).abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.1, "steps vary by {worst} columns");
     }
 
     #[test]
