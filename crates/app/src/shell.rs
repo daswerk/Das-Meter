@@ -689,7 +689,10 @@ impl Shell {
             app.window.request_redraw();
             return;
         };
+        // The frame is ready just after a refresh: the scrolling Meters move
+        // to now, so every frame is placed at the same point of the rhythm.
         let acquired = self.start.elapsed();
+        self.core.retime(acquired);
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());

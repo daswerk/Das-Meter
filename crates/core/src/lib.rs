@@ -2684,6 +2684,27 @@ impl AppCore {
         self.drawn.as_ref()
     }
 
+    /// Moves the scrolling Meters' cameras in the scene to `now`: called as
+    /// a frame is about to be drawn (once it's ready, just after a refresh),
+    /// so each frame shows where they are when it's shown, however long it
+    /// waited for the display.
+    pub fn retime(&mut self, now: Duration) {
+        let (Some(scene), refresh) = (self.drawn.as_mut(), self.refresh_rate) else {
+            return;
+        };
+        for meter in scene.windows.iter_mut().flat_map(|w| &mut w.meters) {
+            if let MeterState::Live(
+                MeterView::Waveform { completed, lag, .. }
+                | MeterView::Spectrogram { completed, lag, .. },
+            ) = &mut meter.state
+                && let Some(slot) = self.meters.get_mut(meter.meter)
+                && let Some(new) = slot.meter.scroll_lag(*completed, now, refresh)
+            {
+                *lag = new;
+            }
+        }
+    }
+
     /// Bar mode's windows: the Bar and its Pop-outs, and where each Meter goes.
     fn bar_windows(&self) -> (Vec<(WindowKey, usize, Frame)>, Vec<WindowScene>) {
         let bar = &self.layout;

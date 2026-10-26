@@ -181,6 +181,10 @@ const HELD_PEAK_SPACING_OCTAVES: f32 = 1.0 / 6.0;
 /// enough to bridge the gaps between audio blocks, so it scrolls the same
 /// distance every frame instead of jumping a block at a time.
 const PLAYHEAD_LAG: f64 = 0.04;
+/// The furthest behind a playhead stays for late audio, in seconds.
+const PLAYHEAD_MAX_LAG: f64 = 0.15;
+/// How fast that comes back down once the audio is steady: seconds of lag a second.
+const PLAYHEAD_SLACK_EASE: f64 = 0.01;
 /// A playhead further than this from where it should be jumps there, in seconds.
 const PLAYHEAD_JUMP: f64 = 0.25;
 /// The share of its drift a playhead corrects each frame.
@@ -808,13 +812,32 @@ pub enum MeterView {
 struct Playhead {
     /// Columns shown (fractional), and when.
     shown: Option<(f64, Duration)>,
+    /// The newest column count seen, and when it last grew.
+    arrived: Option<(u64, Duration)>,
+    /// The longest recent wait for new columns, in seconds: the playhead
+    /// stays this far behind (at least [`PLAYHEAD_LAG`]), so late audio
+    /// doesn't make it catch up, stop and jump. It shrinks back slowly.
+    slack: f64,
 }
 
 impl Playhead {
     /// How many columns behind the newest to draw at `now`.
     fn lag(&mut self, now: Duration, completed: u64, per_second: f64, refresh: Option<u32>) -> f32 {
         let newest = completed as f64;
-        let target = newest - PLAYHEAD_LAG * per_second;
+        let since = self
+            .shown
+            .map(|(_, at)| now.saturating_sub(at).as_secs_f64());
+        self.slack = (self.slack - since.unwrap_or(0.0) * PLAYHEAD_SLACK_EASE).max(PLAYHEAD_LAG);
+        match self.arrived {
+            Some((count, at)) if completed > count => {
+                let gap = now.saturating_sub(at).as_secs_f64();
+                self.slack = self.slack.max(gap * 1.2).min(PLAYHEAD_MAX_LAG);
+                self.arrived = Some((completed, now));
+            }
+            Some(_) => {}
+            None => self.arrived = Some((completed, now)),
+        }
+        let target = newest - self.slack * per_second;
         let shown = match self.shown {
             Some((shown, at)) => {
                 let mut elapsed = now.saturating_sub(at).as_secs_f64();
@@ -839,7 +862,7 @@ impl Playhead {
     }
 
     fn reset(&mut self) {
-        self.shown = None;
+        *self = Playhead::default();
     }
 }
 
@@ -1505,6 +1528,30 @@ impl Meter {
     /// What the Meter shows now, or `None` before a Source starts.
     /// `pointer` is the cursor's position inside the Meter (0–1 each way), if it's over it.
     /// `now` paces the scrolling Meters.
+    /// A scrolling Meter's columns a second (the Waveform's, the Spectrogram's).
+    fn columns_per_second(&self) -> Option<f64> {
+        match self.analyser.as_ref()? {
+            Analyser::Waveform(_) => {
+                Some(f64::from(dasmeter_analysis::waveform::COLUMNS_PER_SECOND))
+            }
+            Analyser::Spectrogram(a) => Some(a.columns_per_second()),
+            _ => None,
+        }
+    }
+
+    /// Where a scrolling Meter's camera is at `now` (just before its frame
+    /// is drawn), for a view of `completed` columns: how far behind the
+    /// newest to draw.
+    pub fn scroll_lag(
+        &mut self,
+        completed: u64,
+        now: Duration,
+        refresh: Option<u32>,
+    ) -> Option<f32> {
+        let per_second = self.columns_per_second()?;
+        (completed > 0).then(|| self.playhead.lag(now, completed, per_second, refresh))
+    }
+
     /// `refresh` is the display's refresh rate, when known: scrolling Meters
     /// move on its clock.
     pub fn view(
@@ -1564,10 +1611,8 @@ impl Meter {
             }
             self.view = Some(view);
         }
-        let per_second = match self.analyser.as_ref()? {
-            Analyser::Waveform(_) => f64::from(dasmeter_analysis::waveform::COLUMNS_PER_SECOND),
-            Analyser::Spectrogram(a) => a.columns_per_second(),
-            _ => return self.view.as_ref(),
+        let Some(per_second) = self.columns_per_second() else {
+            return self.view.as_ref();
         };
         if let Some(
             MeterView::Waveform { completed, lag, .. }
@@ -2122,6 +2167,29 @@ mod tests {
             shown.push(completed as f64 - f64::from(lag));
         }
         shown.windows(2).skip(240).map(|w| w[1] - w[0]).collect()
+    }
+
+    #[test]
+    fn late_audio_doesnt_stop_the_scrolling() {
+        // Audio in 10.7 ms blocks, but every two seconds one comes 90 ms late
+        // (then all at once), as a busy system sometimes delivers it.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        let mut delivered = 0.0f64;
+        for frame in 0..1200u32 {
+            let t = f64::from(frame) / 120.0;
+            let late = (t % 2.0) > 1.0 && (t % 2.0) < 1.09;
+            if !late {
+                delivered = (t * 48_000.0 / 512.0).floor() * 512.0 / 240.0;
+            }
+            let now = Duration::from_secs_f64(1.0 + t);
+            let lag = playhead.lag(now, delivered as u64, 200.0, Some(120));
+            shown.push(delivered.floor() - f64::from(lag));
+        }
+        // After the first gap it has learned to stay far enough behind.
+        let steps: Vec<f64> = shown.windows(2).skip(400).map(|w| w[1] - w[0]).collect();
+        let slowest = steps.iter().copied().fold(f64::MAX, f64::min);
+        assert!(slowest > 0.8, "it stalled: a step of {slowest} columns");
     }
 
     #[test]
