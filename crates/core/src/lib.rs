@@ -9,6 +9,10 @@
 //! drive the core with a fake clock.
 
 mod activity;
+
+/// Who designed Das-Meter, as the app's About and settings say.
+pub const DESIGNED_BY: &str = "Designed by Punktmidi";
+
 pub mod curves;
 pub mod displays;
 pub mod docs;
@@ -37,8 +41,8 @@ pub use layout::{
 };
 pub use meters::{
     BandDisplay, BigReading, CepstrumMeterSettings, CursorReadout, CycleLength,
-    LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView, NeedleDisplay,
-    NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    GoniometerMeterSettings, LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView,
+    NeedleDisplay, NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
     SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings,
     SpectrumOverlay, SpectrumZoom, Steadiness, StereoBandsMeterSettings, StereoDrawing,
     StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
@@ -1956,7 +1960,10 @@ impl AppCore {
                     return;
                 };
                 let target = match target.trim() {
-                    "" => slot.reference.clone().unwrap_or_default(),
+                    "" => slot
+                        .reference
+                        .clone()
+                        .unwrap_or_else(|| targets::SONGS.to_owned()),
                     name => name.to_owned(),
                 };
                 let count = self.targets.get(&target).map_or(0, |t| t.songs.len());

@@ -488,17 +488,20 @@ pub struct TargetScene {
 
 impl TargetScene {
     /// What it compares with, as the picker names it: the song's name, or
-    /// the Target's for its average.
+    /// how many songs are averaged (the Target's own name isn't shown).
     pub fn label(&self) -> String {
         match self.pick {
             TargetPick::Song(i) => self
                 .songs
                 .get(i)
-                .map_or_else(|| self.name.clone(), |s| s.name.clone()),
+                .map_or_else(|| "No songs yet".to_owned(), |s| s.name.clone()),
             TargetPick::Average if self.songs.len() > 1 => {
-                format!("{} (average of {})", self.name, self.songs.len())
+                format!("Average of {} songs", self.songs.len())
             }
-            TargetPick::Average => self.name.clone(),
+            TargetPick::Average => self
+                .songs
+                .first()
+                .map_or_else(|| "No songs yet".to_owned(), |s| s.name.clone()),
         }
     }
 }

@@ -1,14 +1,20 @@
 //! The Waveform: columns scrolling right to left, newest at the right edge,
 //! one lane per trace (L or M above, R or S below), coloured by band energy.
-//! It scrolls smoothly: the core says how many columns are still to come in
-//! (`lag`), and everything is drawn that far right of its place.
+//!
+//! The Waveform itself stays where it is in time; a camera moves over it.
+//! Its columns, merged into groups of about a pixel by their number in time,
+//! go to the GPU once ([`super::strip`]), and each frame only says where the
+//! right edge is now: the core says how many columns are still to come in
+//! (`lag`), and the camera sits that far behind the newest. No column is
+//! laid out again as it scrolls, so none can shimmer.
 
-use dasmeter_analysis::{ChannelView, WaveformColumn};
-use dasmeter_core::{Colour, Role, WaveformColouring, WaveformMeterSettings};
+use dasmeter_analysis::{ChannelView, WaveformColumn, WaveformScale};
+use dasmeter_core::{Role, WaveformMeterSettings};
 
 use super::Canvas;
 use super::labels::Align;
 use super::shapes::Area;
+use super::strip::Picture;
 
 pub fn draw(
     c: &mut Canvas,
@@ -27,81 +33,62 @@ pub fn draw(
     let lane_height = area.height / lanes as f32;
     let capacity = settings.analysis.columns().max(1);
     let column_width = area.width / capacity as f32;
+    let (grid, dim) = (c.colour(Role::Grid), c.dim());
+    for lane in 0..lanes {
+        let top = area.y + lane_height * lane as f32;
+        c.grid_h(area, top + lane_height / 2.0, grid, true);
+        if let Some(name) = names.get(lane).filter(|n| !n.is_empty()) {
+            c.text(name, area.x, top, 10.0, dim, Align::Left);
+        }
+    }
+
+    // Columns narrower than a pixel are merged, so a 30 s span costs no
+    // more to draw than the Meter is wide.
+    let pixels = area.width.ceil().max(1.0) as usize;
+    let per_group = (1.0 / column_width).max(1.0);
+    // 0: the core left the count out (silence); any numbering draws the same.
+    let numbered = completed.max(traces.iter().map(Vec::len).max().unwrap_or(0) as u64);
+    if numbered == 0 {
+        return;
+    }
+    let newest = group_of(numbered - 1, per_group);
+    let groups: Vec<Vec<WaveformColumn>> = traces
+        .iter()
+        .map(|columns| {
+            merge(columns, numbered, capacity, per_group, pixels)
+                .into_iter()
+                .map(|(_, column)| column)
+                .collect()
+        })
+        .collect();
+    // The right edge, in groups after the newest group's start.
+    let camera = ((numbered as f64 - f64::from(lag)) / f64::from(per_group) - newest as f64) as f32;
     let bands = [
         c.colour(Role::WaveformLow),
         c.colour(Role::WaveformMid),
         c.colour(Role::WaveformHigh),
     ];
-    let (grid, dim) = (c.colour(Role::Grid), c.dim());
-
-    for (lane, columns) in traces.iter().enumerate() {
-        let top = area.y + lane_height * lane as f32;
-        let centre = top + lane_height / 2.0;
-        let half = lane_height / 2.0 - c.px(2.0);
-        c.grid_h(area, centre, grid, true);
-        if let Some(name) = names.get(lane).filter(|n| !n.is_empty()) {
-            c.text(name, area.x, top, 10.0, dim, Align::Left);
-        }
-
-        // Columns narrower than a pixel are merged, so a 30 s span costs no
-        // more to draw than the Meter is wide.
-        let pixels = area.width.ceil().max(1.0) as usize;
-        let per_pixel = (1.0 / column_width).max(1.0);
-        let merged = merge(columns, completed, capacity, per_pixel, pixels);
-        let width = column_width.max(1.0);
-        // How far the playhead (the newest column less the lag) sits from
-        // the right edge of the newest group, in columns.
-        let numbered = completed.max(columns.len() as u64);
-        let groups = f64::from(per_pixel.max(1.0));
-        let newest_group = ((numbered.max(1) - 1) as f64 / groups).floor();
-        let behind = (numbered as f64 - f64::from(lag) - (newest_group + 1.0) * groups) as f32;
-        for (right_edge, column) in merged {
-            let x = area.right() - (right_edge + behind) * column_width;
-            if x >= area.right() {
-                continue;
-            }
-            let width = width.min(area.right() - x);
-            let y = |sample: f32| centre - settings.analysis.height(sample) * half;
-            match settings.colouring {
-                WaveformColouring::Solid => {
-                    let span = envelope(x, width, y(column.max), y(column.min));
-                    c.shapes.rect(span, bands[1]);
-                }
-                WaveformColouring::Rgb => {
-                    let span = envelope(x, width, y(column.max), y(column.min));
-                    c.shapes
-                        .rect(span, mix(bands, [column.low, column.mid, column.high]));
-                }
-                WaveformColouring::Rekordbox => {
-                    // Each band's height follows its own level, low widest underneath.
-                    let peak = column.max.max(-column.min);
-                    let total = column.low + column.mid + column.high;
-                    for (band, &colour) in [column.low, column.mid, column.high]
-                        .into_iter()
-                        .zip(&bands)
-                    {
-                        if total <= 0.0 {
-                            break;
-                        }
-                        let level = peak * (band / total).sqrt();
-                        let span = envelope(x, width, y(level), y(-level));
-                        c.shapes.rect(span, colour);
-                    }
-                }
-            }
-        }
-    }
+    let margin = c.px(2.0);
+    c.strip.draw(Picture {
+        area,
+        lanes: groups,
+        newest,
+        capacity: (capacity as f32 / per_group).ceil() as usize + 1,
+        per_group,
+        column_width,
+        camera,
+        gain: settings.analysis.gain,
+        decibels: settings.analysis.scale == WaveformScale::Decibels,
+        auto_gain: settings.auto_gain,
+        colouring: settings.colouring,
+        bands,
+        margin,
+    });
 }
 
-/// A column's vertical span, at least a pixel high so silence still shows a line.
-fn envelope(x: f32, width: f32, top: f32, bottom: f32) -> Area {
-    let height = (bottom - top).max(1.0);
-    Area {
-        x,
-        y: (top + bottom) / 2.0 - height / 2.0,
-        width,
-        height,
-    }
+/// The group a column is in, by its number in time.
+fn group_of(number: u64, per_group: f32) -> u64 {
+    (number as f64 / f64::from(per_group.max(1.0))).floor() as u64
 }
 
 /// Merges columns into groups of `per_pixel` by their number in time (not by
@@ -143,34 +130,6 @@ fn merge(
         }
     }
     merged
-}
-
-/// The band colours mixed by energy, as bright as the brightest band colour
-/// (full brightness on Dark; darker on a light Theme so it stays visible).
-fn mix(colours: [Colour; 3], energies: [f32; 3]) -> Colour {
-    let total: f32 = energies.iter().sum();
-    if total <= 0.0 {
-        return colours[1];
-    }
-    let channel = |pick: fn(&Colour) -> u8| {
-        colours
-            .iter()
-            .zip(energies)
-            .map(|(colour, energy)| f32::from(pick(colour)) * energy / total)
-            .sum::<f32>()
-    };
-    let (r, g, b) = (channel(|c| c.r), channel(|c| c.g), channel(|c| c.b));
-    let brightest = r.max(g).max(b).max(1.0);
-    let ceiling = colours
-        .iter()
-        .map(|c| f32::from(c.r.max(c.g).max(c.b)))
-        .fold(1.0, f32::max);
-    let scale = ceiling / brightest;
-    Colour::rgb(
-        (r * scale).min(255.0) as u8,
-        (g * scale).min(255.0) as u8,
-        (b * scale).min(255.0) as u8,
-    )
 }
 
 #[cfg(test)]

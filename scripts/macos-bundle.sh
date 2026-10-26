@@ -80,7 +80,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key><true/>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Das-Meter shows meters for the audio your Mac plays.</string>
-    <key>NSHumanReadableCopyright</key><string>Das Werk, MIT OR Apache-2.0</string>
+    <key>NSHumanReadableCopyright</key><string>Designed by Punktmidi · Das Werk, MIT OR Apache-2.0</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

@@ -12,6 +12,10 @@ use crate::library::{Library, LibraryItem};
 /// The file layout's version.
 pub const TARGET_VERSION: u32 = 1;
 
+/// Where songs go when no Target is chosen yet. Songs are shown by their
+/// own names; the Target holding them isn't shown.
+pub const SONGS: &str = "Reference songs";
+
 /// One song a Target was taught with: its figures as the Tonal Balance
 /// analysis gave them, rounded to 0.1.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

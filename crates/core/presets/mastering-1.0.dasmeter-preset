@@ -79,7 +79,7 @@ show_source_label = false
 [preset.meters.settings.Spectrum]
 show_peak_hold = true
 show_peak_line = true
-show_cursor = false
+show_cursor = true
 slow_on_hover = true
 colouring = "Plain"
 collision_floor = -50.0
@@ -151,7 +151,7 @@ show_source_label = false
 [preset.meters.settings.Spectrum]
 show_peak_hold = true
 show_peak_line = true
-show_cursor = false
+show_cursor = true
 slow_on_hover = true
 colouring = "SteadyHarmonics"
 collision_floor = -50.0

@@ -69,7 +69,7 @@ The Meter that compares a Source's long-term spectrum, shape only, with a Target
 _Avoid_: Tonal balance control, EQ match
 
 **Target**:
-A named reference for tonal balance: an average curve and a range around it, taught with one or more songs.
+A reference for tonal balance: an average curve and a range around it, taught with one or more songs. It has a name in its file, but the app shows only its songs, by their own names; songs added with no Target chosen go to "Reference songs".
 _Avoid_: Genre curve, preset, profile
 
 **Tuner**:
@@ -86,7 +86,11 @@ _Avoid_: Multiband correlator, band correlation
 
 **Stereometer**:
 The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
-_Avoid_: Goniometer, vectorscope, correlometer
+_Avoid_: Vectorscope, correlometer
+
+**Goniometer**:
+The Meter for stereo image as on the old studio meters: Left against Right as a glowing cloud in a square turned 45°, mono upright, with its scale and the correlation. The same analysis as the Stereometer, drawn its own way.
+_Avoid_: Vectorscope, phase meter
 
 **Channel View**:
 Which pair of channels a Waveform, Spectrum or Oscilloscope shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.

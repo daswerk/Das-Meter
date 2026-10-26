@@ -306,11 +306,12 @@ fn title_line(c: &mut Canvas, area: Area, drawn: &Drawn, controls: Option<Contro
                 t.key.map(|key| key.name())
             };
             match (with_picker, state) {
-                (false, Some(state)) if t.missing || t.songs.is_empty() => {
-                    parts.push(format!("{} {state}", t.name));
+                (false, Some(state)) if t.songs.is_empty() => parts.push(state),
+                (false, Some(state)) if t.missing => {
+                    parts.push(format!("{} {state}", t.label()));
                 }
-                (false, Some(key)) => parts.push(format!("{} · {key}", t.name)),
-                (false, None) => parts.push(t.name.clone()),
+                (false, Some(key)) => parts.push(format!("{} · {key}", t.label())),
+                (false, None) => parts.push(t.label()),
                 (true, Some(state)) => parts.push(state),
                 (true, None) => {}
             }

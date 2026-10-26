@@ -27,6 +27,7 @@ mod send_plugins;
 mod sharing;
 mod shell;
 mod snapshot;
+mod system_mute;
 mod theme_files;
 mod ui;
 #[cfg(any(target_os = "macos", windows))]

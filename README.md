@@ -1,17 +1,22 @@
 # Das-Meter
 
-**Live audio Meters for producers: twelve Meters, two Looks, any colour you
-like.** Das-Meter shows whatever your computer plays, or single tracks from
-your DAW, as Waveform, Spectrum, Spectrogram, Loudness, Stereometer, Phase
-Scope, Cepstrum, Oscilloscope, Tonal Balance, Tuner, Stereo Bands and Needle. Put them in a Bar along the edge of your
-screen or in a window of their own, and make them look the way you want.
-It's free and open source, for macOS and Linux, with Windows on the way.
+**Live audio Meters for producers: thirteen Meters, two Looks, any colour
+you like.** Das-Meter shows whatever your computer plays, or single tracks
+from your DAW, as Waveform, Spectrum, Spectrogram, Loudness, Stereometer,
+Goniometer, Phase Scope, Cepstrum, Oscilloscope, Tonal Balance, Tuner, Stereo
+Bands and Needle. Put them in a Bar along the edge of your screen or in a
+window of their own, and make them look the way you want. It's free and open
+source, for macOS, Windows and Linux.
+
+*Designed by Punktmidi.*
 
 ![Das-Meter in the Smooth Look: Spectrum and Spectrogram on top; Waveform, Phase Scope, Loudness Meter and Stereometer below](docs/images/smooth.png)
 
 **[Download](https://github.com/daswerk/Das-Meter/releases/latest)** ·
 **[Install guide](INSTALL.md)** ·
-**[Docs](https://daswerk.github.io/Das-Meter/)**
+**[Docs](https://daswerk.github.io/Das-Meter/)** ·
+**[Tonal Balance and A/B](https://daswerk.github.io/Das-Meter/tonal-balance.html)** ·
+**[Kick and bass in the Phase Scope](https://daswerk.github.io/Das-Meter/kick-and-bass.html)**
 
 ## Two Looks
 
@@ -27,7 +32,7 @@ Every Theme is drawn in one of two **Looks**, and switching is one click in
 
 ## The Meters
 
-Twelve kinds, as many of each as you like. Right-click any Meter for its
+Thirteen kinds, as many of each as you like. Right-click any Meter for its
 settings.
 
 <table>
@@ -76,10 +81,20 @@ settings.
 <td><b>Needle Meter</b>: classic VU or PPM (DIN, Nordic, BBC, EBU) needles with their standard timing, a red zone and an overload lamp. Fits the Bar.</td>
 </tr>
 <tr>
+<td><img src="docs/images/meter-goniometer.png" alt="The Goniometer: a glowing cloud standing upright between the dotted L and R axes"></td>
+<td><b>Goniometer</b>: the stereo image as on the old studio meters, a glowing cloud of Left against Right that burns brightest where the image is densest: mono stands upright, wide spreads out, out of phase lies flat. With its scale and the correlation below.</td>
+</tr>
+<tr>
 <td colspan="2"><img src="docs/images/meter-tonal-balance.png" alt="The Tonal Balance Meter: the mix's curve over a Target's range, too much highs marked"></td>
 </tr>
 <tr>
 <td colspan="2"><b>Tonal Balance</b>: your mix's balance against a <b>Target</b> made from your own reference songs (played, or analysed from files), finest in the low end (two points per semitone below 300 Hz), with the Sub and Bass notes, low end mono and punch, and the Target shifted to your mix's key (<a href="https://daswerk.github.io/Das-Meter/meters.html#tonal-balance">more</a>).</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/tonal-balance-ab.png" alt="Tonal Balance on B: the reference song's curve over the Target, its waveform below with the looped part"></td>
+</tr>
+<tr>
+<td colspan="2"><b>A/B</b>: hear your mix (A) and the reference song (B) at the same loudness, switching without a gap. On B everything else goes quiet, your DAW too, so you hear the song alone; drag across its waveform to loop just the drop. A Spectrum can show B as a grey layer under your mix. <a href="https://daswerk.github.io/Das-Meter/tonal-balance.html">The guide</a> goes through it step by step.</td>
 </tr>
 </table>
 
@@ -195,7 +210,7 @@ sleeps in silence, and does its analysis outside your DAW.
 |---|---|
 | **macOS** 14.6+, Apple silicon and Intel | Download `Das-Meter-<version>.dmg`, drag Das-Meter to Applications, then allow it once under **System Settings ▸ Privacy & Security ▸ Open Anyway**. |
 | **Linux** x86_64 (Arch, Fedora, Ubuntu 24.04+…), PipeWire | Download `das-meter-<version>-linux-x86_64.tar.gz`, unpack it and run `./das-meter`. There's no Send Plugin for Linux yet. |
-| **Windows** 10 and 11 | Coming soon. |
+| **Windows** 10 and 11, x64 | Download `Das-Meter-<version>-windows-x64-setup.exe` and run it. It installs the app and the Send Plugin (CLAP and VST3). |
 
 The [install guide](INSTALL.md) has every step, including the Send Plugin,
 updates, uninstalling and building from source. The
@@ -230,6 +245,11 @@ audio. To redo them after a visual change, build the app and run
 | `docs/site` | The [docs site](https://daswerk.github.io/Das-Meter/) (mdBook) |
 | `docs/adr` | Architecture decisions, with the [research](docs/research) behind them |
 | `docs/release-checklist.md` | How to make a release |
+
+## Credits
+
+Designed by **Punktmidi**. Feedback is welcome: open an
+[issue](https://github.com/daswerk/Das-Meter/issues).
 
 ## Licence
 

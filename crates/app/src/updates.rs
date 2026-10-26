@@ -278,9 +278,18 @@ pub fn download(url: &str) -> Result<Vec<u8>, UpdateError> {
 
 /// The newer release, if there is one.
 pub fn check() -> Result<Option<Release>, UpdateError> {
-    let json = download(LATEST_RELEASE)?;
+    let json = match download(LATEST_RELEASE) {
+        // Nothing published yet (only drafts and pre-releases): up to date.
+        Err(error) if no_release_yet(&error) => return Ok(None),
+        result => result?,
+    };
     let release = parse_release(&String::from_utf8_lossy(&json), Platform::THIS);
     Ok(release.filter(|r| r.version > current_version()))
+}
+
+/// GitHub answers the latest release with 404 while none is published.
+fn no_release_yet(error: &UpdateError) -> bool {
+    matches!(error, UpdateError::Download(message) if message.contains("error: 404"))
 }
 
 /// Whether the app can replace itself: its folder is writable.
@@ -538,6 +547,15 @@ mod tests {
         assert!(script.contains(
             "catch { Start-Process -FilePath 'C:\\Program Files\\Das-Meter\\it''s.exe' }"
         ));
+    }
+
+    #[test]
+    fn no_published_release_is_up_to_date_but_other_failures_are_not() {
+        let missing =
+            UpdateError::Download("curl: (22) The requested URL returned error: 404".into());
+        assert!(no_release_yet(&missing));
+        let offline = UpdateError::Download("curl: (6) Could not resolve host".into());
+        assert!(!no_release_yet(&offline));
     }
 
     #[test]

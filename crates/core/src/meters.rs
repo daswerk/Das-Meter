@@ -32,6 +32,9 @@ pub enum WaveformColouring {
 pub struct WaveformMeterSettings {
     pub analysis: WaveformSettings,
     pub colouring: WaveformColouring,
+    /// Brings quiet input up to a good height (on top of the gain, by up
+    /// to +30 dB; it eases up and comes down at once). Default off.
+    pub auto_gain: bool,
 }
 
 /// How the Spectrum is coloured.
@@ -54,7 +57,7 @@ pub struct SpectrumMeterSettings {
     /// Whether a line marks the loudest peak, with its frequency and note. Default on.
     pub show_peak_line: bool,
     /// Whether a line and readout follow the mouse over the Spectrum.
-    /// Default off: the peak line's readout is enough.
+    /// Default on.
     pub show_cursor: bool,
     /// Whether the Spectrum slows down and keeps its peaks while the
     /// pointer is over it, the held peaks marked with their notes. Default on.
@@ -76,7 +79,7 @@ impl Default for SpectrumMeterSettings {
             analysis: SpectrumSettings::default(),
             show_peak_hold: true,
             show_peak_line: true,
-            show_cursor: false,
+            show_cursor: true,
             slow_on_hover: true,
             colouring: SpectrumColouring::Plain,
             collision_floor: -50.0,
@@ -303,6 +306,31 @@ impl Default for StereometerMeterSettings {
     }
 }
 
+/// The Goniometer: L against R as a cloud of glowing points in a square
+/// turned 45°, as on the old studio meters: mono stands upright, wide
+/// stereo spreads out, out of phase lies flat.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GoniometerMeterSettings {
+    /// Analysis settings. `points` is derived from `persistence` and the sample rate.
+    pub analysis: StereometerSettings,
+    /// How long a point glows, fading as it ages. Default 120 ms.
+    #[serde(with = "dasmeter_analysis::seconds")]
+    pub persistence: Duration,
+    /// Whether the correlation bar is shown below. Default on.
+    pub show_correlation: bool,
+}
+
+impl Default for GoniometerMeterSettings {
+    fn default() -> Self {
+        GoniometerMeterSettings {
+            analysis: StereometerSettings::default(),
+            persistence: Duration::from_millis(120),
+            show_correlation: true,
+        }
+    }
+}
+
 /// The Cepstrum Meter: the cepstrum of the mono sum and the pitch it finds.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -523,6 +551,7 @@ pub enum MeterSettings {
     Tuner(TunerMeterSettings),
     StereoBands(StereoBandsMeterSettings),
     Needle(NeedleMeterSettings),
+    Goniometer(GoniometerMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -540,10 +569,11 @@ pub enum MeterKind {
     Tuner,
     StereoBands,
     Needle,
+    Goniometer,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 12] = [
+    pub const ALL: [MeterKind; 13] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -556,6 +586,7 @@ impl MeterKind {
         MeterKind::Tuner,
         MeterKind::StereoBands,
         MeterKind::Needle,
+        MeterKind::Goniometer,
     ];
 }
 
@@ -585,6 +616,7 @@ impl MeterSettings {
                 MeterSettings::StereoBands(StereoBandsMeterSettings::default())
             }
             MeterKind::Needle => MeterSettings::Needle(NeedleMeterSettings::default()),
+            MeterKind::Goniometer => MeterSettings::Goniometer(GoniometerMeterSettings::default()),
         }
     }
 
@@ -602,6 +634,7 @@ impl MeterSettings {
             MeterSettings::Tuner(_) => MeterKind::Tuner,
             MeterSettings::StereoBands(_) => MeterKind::StereoBands,
             MeterSettings::Needle(_) => MeterKind::Needle,
+            MeterSettings::Goniometer(_) => MeterKind::Goniometer,
         }
     }
 
@@ -620,6 +653,7 @@ impl MeterSettings {
             MeterSettings::Tuner(_) => "Tuner",
             MeterSettings::StereoBands(_) => "Stereo Bands",
             MeterSettings::Needle(_) => "Needle Meter",
+            MeterSettings::Goniometer(_) => "Goniometer",
         }
     }
 }
@@ -678,6 +712,15 @@ pub enum MeterView {
     Loudness {
         settings: LoudnessMeterSettings,
         display: LoudnessDisplay,
+    },
+    Goniometer {
+        settings: GoniometerMeterSettings,
+        /// Correlation rounded to 0.01.
+        readings: StereoReadings,
+        /// Points in −1..1 (Lissajous: mono up), oldest first.
+        points: Vec<[f32; 2]>,
+        /// How far the points are scaled up to fill the scope, in dB to 0.5.
+        scale_db: f32,
     },
     Stereometer {
         settings: StereometerMeterSettings,
@@ -1269,6 +1312,9 @@ impl Meter {
             (Some(Analyser::Stereometer(a)), MeterSettings::Stereometer(s)) => {
                 a.set_settings(stereo_analysis(sample_rate, &s))
             }
+            (Some(Analyser::Stereometer(a)), MeterSettings::Goniometer(s)) => {
+                a.set_settings(goniometer_analysis(sample_rate, &s))
+            }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Tuner(a)), MeterSettings::Tuner(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Needle(a)), MeterSettings::Needle(s)) => {
@@ -1591,6 +1637,17 @@ fn stereo_analysis(sample_rate: u32, settings: &StereometerMeterSettings) -> Ste
     }
 }
 
+fn goniometer_analysis(
+    sample_rate: u32,
+    settings: &GoniometerMeterSettings,
+) -> StereometerSettings {
+    let points = (settings.persistence.as_secs_f64() * f64::from(sample_rate)).round() as usize;
+    StereometerSettings {
+        points: points.clamp(1, MAX_STEREO_POINTS),
+        ..settings.analysis
+    }
+}
+
 fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
     match settings {
         MeterSettings::Waveform(s) => {
@@ -1605,6 +1662,11 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Stereometer(s) => Analyser::Stereometer(Box::new(StereometerAnalyser::new(
             sample_rate,
             stereo_analysis(sample_rate, s),
+        ))),
+        // The Goniometer looks at the same thing the Stereometer does.
+        MeterSettings::Goniometer(s) => Analyser::Stereometer(Box::new(StereometerAnalyser::new(
+            sample_rate,
+            goniometer_analysis(sample_rate, s),
         ))),
         MeterSettings::Cepstrum(s) => {
             Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
@@ -1744,6 +1806,18 @@ fn build_view(
                 settings,
                 readings,
                 points,
+            }
+        }
+        (Analyser::Stereometer(a), MeterSettings::Goniometer(settings)) => {
+            let mut readings = a.readings();
+            readings.correlation = round_to(readings.correlation, 0.01);
+            let mut points = Vec::new();
+            a.points(StereoView::Lissajous, &mut points);
+            MeterView::Goniometer {
+                settings,
+                readings,
+                points,
+                scale_db: round_to(20.0 * a.gain().max(1e-6).log10(), 0.5),
             }
         }
         (Analyser::Needle(a), MeterSettings::Needle(settings)) => MeterView::Needle {

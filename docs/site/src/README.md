@@ -2,10 +2,10 @@
 
 Das-Meter shows live Meters for what your computer plays, or for single
 tracks from your DAW: **Waveform**, **Spectrum**, **Spectrogram**, **Loudness
-Meter**, **Stereometer**, **Phase Scope**, **Cepstrum**, **Oscilloscope** and
-**Tonal Balance**, **Tuner**, **Stereo Bands** and **Needle Meter**.
-It runs on its own, next to any app or DAW, on macOS and Linux, with Windows
-to come. It's free and open source (MIT OR Apache-2.0).
+Meter**, **Stereometer**, **Goniometer**, **Phase Scope**, **Cepstrum**,
+**Oscilloscope**, **Tonal Balance**, **Tuner**, **Stereo Bands** and **Needle
+Meter**. It runs on its own, next to any app or DAW, on macOS, Windows and
+Linux. It's free and open source (MIT OR Apache-2.0). *Designed by Punktmidi.*
 
 ![Das-Meter in the Smooth Look](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/smooth.png)
 
@@ -19,6 +19,8 @@ Look are all yours to change; see [Themes](themes.md).
 - What does each Meter show? See [Meters](meters.md).
 - Using a DAW? See [Send Plugins](send-plugins.md).
 - What do the numbers mean? See [Measurements](measurements.md).
+- Comparing with reference songs? See [Tonal Balance and A/B](tonal-balance.md).
+- Kick and bass fighting? See [Kick and bass in the Phase Scope](kick-and-bass.md).
 
 The Loudness Meter measures to ITU-R BS.1770-5 and EBU Tech 3341/3342, tested
 on those standards' cases with signals we generate ourselves.

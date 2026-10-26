@@ -241,6 +241,7 @@ fn solo(core: &mut AppCore, kind: &str, now: Duration) -> Result<Duration, Strin
         "tuner" => MeterKind::Tuner,
         "stereo-bands" => MeterKind::StereoBands,
         "needle" => MeterKind::Needle,
+        "goniometer" => MeterKind::Goniometer,
         other => return Err(format!("no Meter kind {other:?}")),
     };
     core.handle(Event::SetMode(LayoutMode::Window), now);

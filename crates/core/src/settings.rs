@@ -12,10 +12,10 @@ use dasmeter_analysis::{
 };
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, NeedleMeterSettings,
-    OscilloscopeMeterSettings, PhaseScopeMeterSettings, SpectrogramMeterSettings,
-    SpectrumMeterSettings, StereoBandsMeterSettings, StereometerMeterSettings, TunerMeterSettings,
-    WaveformMeterSettings,
+    CepstrumMeterSettings, GoniometerMeterSettings, LoudnessMeterSettings, MeterSettings,
+    NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrumMeterSettings, StereoBandsMeterSettings,
+    StereometerMeterSettings, TunerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -218,6 +218,7 @@ impl MeterSettings {
             MeterSettings::StereoBands(s) => MeterSettings::StereoBands(StereoBandsMeterSettings {
                 time: clamp_duration(s.time, CORRELATION_TIME),
             }),
+            MeterSettings::Goniometer(s) => MeterSettings::Goniometer(s.clamped()),
         }
     }
 }
@@ -411,6 +412,20 @@ impl StereometerMeterSettings {
             (-1.0, 1.0),
             defaults.correlation_threshold,
         );
+        let a = &mut self.analysis;
+        a.correlation_time = clamp_duration(a.correlation_time, CORRELATION_TIME);
+        if let StereoScaling::Fixed { gain } = a.scaling {
+            a.scaling = StereoScaling::Fixed {
+                gain: clamp_f32(gain, STEREO_GAIN, 1.0),
+            };
+        }
+        self
+    }
+}
+
+impl GoniometerMeterSettings {
+    fn clamped(mut self) -> Self {
+        self.persistence = clamp_duration(self.persistence, STEREO_PERSISTENCE);
         let a = &mut self.analysis;
         a.correlation_time = clamp_duration(a.correlation_time, CORRELATION_TIME);
         if let StereoScaling::Fixed { gain } = a.scaling {

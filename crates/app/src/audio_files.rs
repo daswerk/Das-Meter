@@ -47,19 +47,6 @@ pub fn audio_files_in(paths: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
-/// The name for a Target made from `paths` (as picked or dropped): the
-/// folder dropped, or the folder the first file is in.
-pub fn target_name(paths: &[PathBuf]) -> String {
-    let folder = paths.first().and_then(|first| {
-        if first.is_dir() {
-            first.file_name()
-        } else {
-            first.parent().and_then(Path::file_name)
-        }
-    });
-    folder.map_or_else(|| "Target".to_owned(), |f| f.to_string_lossy().into_owned())
-}
-
 /// A file's name without its folder or extension: a song's name.
 pub fn song_name(path: &Path) -> String {
     path.file_stem()

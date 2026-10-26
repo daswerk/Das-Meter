@@ -2,6 +2,7 @@
 //! drawing that Meter's part of the scene with the palette's colour roles.
 
 mod cepstrum;
+mod goniometer;
 mod heatmap;
 mod labels;
 mod loudness;
@@ -14,6 +15,7 @@ mod spectrogram;
 mod spectrum;
 mod stereo_bands;
 mod stereometer;
+mod strip;
 mod tonal_balance;
 mod tuner;
 mod waveform;
@@ -27,6 +29,7 @@ use heatmap::Heatmap;
 use labels::{Align, Labels, Style};
 pub use shapes::Area;
 use shapes::Shapes;
+use strip::Strip;
 pub use tonal_balance::controls as tonal_balance_controls;
 
 /// What a Meter's drawing code draws with: shapes, labels, colours and the scale factor.
@@ -35,6 +38,8 @@ pub struct Canvas<'a> {
     /// Shapes drawn over the heat map (and under the labels).
     pub overlay: &'a mut Shapes,
     pub heatmap: &'a mut Heatmap,
+    /// The Waveform's picture, drawn with the heat maps.
+    pub strip: &'a mut Strip,
     labels: &'a mut Labels,
     palette: &'a Palette,
     /// Physical pixels per logical pixel.
@@ -131,6 +136,7 @@ pub struct Look<'a> {
 pub struct MeterRenderer {
     shapes: Shapes,
     heatmap: Heatmap,
+    strip: Strip,
     overlay: Shapes,
     labels: Labels,
     /// A Tonal Balance Meter's view range, held between frames.
@@ -159,6 +165,7 @@ impl MeterRenderer {
         MeterRenderer {
             shapes: Shapes::new(gpu),
             heatmap: Heatmap::new(gpu),
+            strip: Strip::new(gpu),
             overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
             tonal: tonal_balance::Steady::default(),
@@ -172,6 +179,7 @@ impl MeterRenderer {
             shapes: &mut self.shapes,
             overlay: &mut self.overlay,
             heatmap: &mut self.heatmap,
+            strip: &mut self.strip,
             labels: &mut self.labels,
             palette,
             scale,
@@ -184,6 +192,7 @@ impl MeterRenderer {
     fn begin(&mut self, gpu: &Gpu, area: Area) {
         self.shapes.begin(gpu, area);
         self.heatmap.begin();
+        self.strip.begin();
         self.overlay.begin(gpu, area);
         self.labels.clear();
     }
@@ -205,6 +214,7 @@ impl MeterRenderer {
         self.changed = true;
         self.shapes.prepare(gpu);
         self.heatmap.prepare(gpu);
+        self.strip.prepare(gpu);
         self.overlay.prepare(gpu);
         self.labels.prepare(gpu, text, area);
     }
@@ -392,6 +402,12 @@ impl MeterRenderer {
                     readings,
                     points,
                 } => stereometer::draw(&mut c, inner, settings, readings, points),
+                MeterView::Goniometer {
+                    settings,
+                    readings,
+                    points,
+                    scale_db,
+                } => goniometer::draw(&mut c, inner, settings, readings, points, *scale_db),
                 MeterView::Cepstrum {
                     settings,
                     values,
@@ -553,6 +569,7 @@ impl MeterRenderer {
         // The shapes set the Meter's scissor, which clips the rest too.
         self.shapes.render(pass);
         self.heatmap.render(pass);
+        self.strip.render(pass);
         self.overlay.render(pass);
         self.labels.render(text, pass);
     }

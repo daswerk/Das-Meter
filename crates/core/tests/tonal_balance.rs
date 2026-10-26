@@ -569,7 +569,11 @@ fn it_compares_with_one_song_unless_the_average_is_picked() {
     });
     let average = app.target().unwrap();
     assert_eq!(average.regions.unwrap()[0].average, -12.0);
-    assert_eq!(average.label(), "Club (average of 2)");
+    assert_eq!(
+        average.label(),
+        "Average of 2 songs",
+        "no Target name shown"
+    );
 
     // Songs added later are what it compares with next.
     let mut third = song("Third", A_MINOR, 55.0);

@@ -1,7 +1,9 @@
 # Meters
 
-Das-Meter has eight kinds of Meter. Right-click one for its settings; the settings
-panel has the same settings for every Meter.
+Das-Meter has thirteen kinds of Meter. Right-click one for its settings; the
+settings panel has the same settings for every Meter, and a few more.
+Step-by-step guides: [Tonal Balance and A/B](tonal-balance.md) and
+[Kick and bass in the Phase Scope](kick-and-bass.md).
 
 ## Waveform
 
@@ -9,7 +11,13 @@ panel has the same settings for every Meter.
 
 The audio over time, coloured by frequency band (low, mid, high). Settings:
 **Channels** (mono, Left/Right, or Mid/Side), time span (1–30 s), display gain
-and the two band crossovers.
+and the two band crossovers. **Boost quiet input** brings a quiet signal up to
+a good height (by up to +30 dB on top of the gain): it rises slowly and comes
+down at once, so a loud hit is never cut off.
+
+The Waveform stays put in time and a camera glides over it: each slice of
+the audio is drawn once, where it belongs, and only the view moves. So it
+scrolls smoothly, by fractions of a pixel, without any part of it shimmering.
 
 ## Spectrum
 
@@ -23,7 +31,8 @@ How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 right, and a thin line runs from the peak to them. The peak is the music's
 loudest as it is, usually the kick or the bass, not as the slope tilts it:
 changing the slope moves the curve, never which peak the line follows.
-Turn on **Mouse readout** to read any frequency and its note under the mouse.
+**Mouse readout** (on by default) reads any frequency and its note under the
+mouse.
 Drag a box over the Spectrum to zoom into it: a zoom window opens in the
 other half of the Meter, showing the box's frequencies and levels larger, with
 its own scale and a finer frequency resolution (the largest FFT size). Its ×
@@ -124,6 +133,21 @@ under it (+1: mono, 0: unrelated, −1: out of phase) and an optional **Balance
 bar**. Settings: the view, **Scale** (auto or fixed gain), persistence and
 the correlation's averaging time. The scope stretches to whatever shape the
 Meter has; in a wide, low Meter the bars stand upright beside it.
+
+## Goniometer
+
+![The Goniometer](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-goniometer.png)
+
+The stereo image as on the old studio meters: Left against Right as a cloud
+of glowing points, in a square with the **L** and **R** axes dotted across
+it. Mono stands upright in the middle, wide stereo spreads out sideways, and
+something out of phase lies flat. Where many points land the cloud burns
+towards white, so the densest part of the image glows hottest. A quiet
+signal is scaled up to fill the square, and **Scale** at the top says by how
+much (**Scale** in the settings: auto or a fixed gain). Below it, the phase
+**correlation** (+1 mono, −1 out of phase). Settings: **Persistence** (how
+long a point glows), **Correlation bar** and the correlation's averaging
+time. It uses the Stereometer's colours.
 
 ## Cepstrum
 
@@ -356,21 +380,29 @@ Under the curves, the song's waveform shows where B is. Drag across it to
 choose the part B plays, say the drop, and it loops just that part; click
 to play from a point to the end, double-click for the whole song again.
 
-While B plays, Das-Meter Send goes quiet: the one the Meter listens to, or
-on System Capture every Das-Meter Send, so put one on your DAW's master bus
-to hear the song alone. They play again when you switch to A, and if
-Das-Meter quits. Other apps can't be quieted; without a Das-Meter Send,
-stop your DAW's playback to hear the song alone.
+While B plays you hear the song alone:
+
+- **On Send Plugins**, the Das-Meter Send the Meter listens to goes quiet
+  (it fades out and back in).
+- **On System Capture**, everything else on the computer goes quiet, your
+  DAW too; only Das-Meter plays. The Meters still see the mix (on macOS),
+  so switching back is instant. Switch to A and it all plays again, as it
+  does if Das-Meter quits. On macOS this uses the same permission as System
+  Capture; on Windows each other app's sound is muted and unmuted after
+  (an app you'd muted yourself stays muted). On Linux it can't yet, so put
+  a Das-Meter Send on your DAW's master bus, or stop playback, to hear the
+  song alone.
 
 ### Targets
 
 Make a Target from songs that sound the way you want, your own references.
-The Meter compares with one of its songs, picked at the top left of the
-Meter (the song you just added, at first); **Average of all** compares with
-all of them together instead.
+Songs are shown by their file's name (or the name you gave a learned one).
+The Meter compares with one of them, picked at the top left of the Meter
+(the song you just added, at first); **Average of all** compares with all of
+them together instead.
 
-- **Learn a song…**, play a song from start to end, name it and the Target,
-  then **Add**.
+- **Learn a song…**, play a song from start to end, give it a name (or
+  leave it as "Song 1"), then **Add**.
 - **Add files… ▸ Reference songs for the Target…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
   ALAC) in the background, far faster than playing them. You can also drop
   files or whole folders on the Meter. Files that can't be read are listed

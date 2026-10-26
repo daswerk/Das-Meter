@@ -120,7 +120,8 @@ def main():
 
     # Every Meter alone.
     for kind in ["waveform", "spectrum", "spectrogram", "loudness", "stereometer",
-                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands", "needle"]:
+                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands", "needle",
+                 "goniometer"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
     # A Spectrum with an Overlay Source, and where the two collide.
@@ -135,6 +136,8 @@ def main():
     # The Tonal Balance Meter against a Target: Fine, and Broad beside the
     # low end zoom with the Target's key and the mix's.
     save(flat(shot("tonal-balance")), "meter-tonal-balance.png", 960)
+    save(flat(shot("tonal-balance-ab")), "tonal-balance-ab.png", 960)
+    save(flat(shot("spectrum-b")), "spectrum-b.png", 960)
     save(labelled([flat(shot("tonal-balance-broad")), flat(shot("tonal-balance-shift"))],
                   ["Broad", "Low end zoom, keys differing"], columns=2, tile_width=760),
          "tonal-balance-views.png", 1600)

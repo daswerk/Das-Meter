@@ -92,6 +92,8 @@ pub fn run() {
         ui_wake: None,
         players: HashMap::new(),
         quieted: Vec::new(),
+        system_mute: None,
+        system_mute_failed: false,
         overviews_asked: std::collections::HashSet::new(),
         b_frames: Vec::new(),
         overviews: std::sync::mpsc::channel(),
@@ -263,6 +265,10 @@ struct Shell {
     /// quiet while B plays.
     players: HashMap<usize, crate::playback::Player>,
     quieted: Vec<u64>,
+    /// A/B on System Capture: the other apps, muted while B plays.
+    system_mute: Option<crate::system_mute::SystemMute>,
+    /// Muting them failed this time B came on (not tried again until A).
+    system_mute_failed: bool,
     /// A/B songs whose waveform is being (or was) read, and where the
     /// background reads report back.
     overviews_asked: std::collections::HashSet<String>,
@@ -1114,13 +1120,14 @@ impl Shell {
                 );
             }
         }
+        let muted_system = self.mute_system(any_b && !on_send_plugins);
         let quiet: Vec<u64> = if on_send_plugins {
             wanted
                 .iter()
                 .filter(|(_, ab, _)| ab.b)
                 .filter_map(|(_, _, picked)| *picked)
                 .collect()
-        } else if any_b {
+        } else if any_b && !muted_system {
             everyone
         } else {
             Vec::new()
@@ -1154,8 +1161,21 @@ impl Shell {
         };
         let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
         let (picked, gain) = (m.picked, 10f32.powf(ab.gain_db / 20.0));
+        // Another Meter still on B keeps the rest of the computer quiet.
+        let any_b = b
+            || scene.windows.iter().flat_map(|w| &w.meters).any(|other| {
+                other.meter != meter
+                    && other
+                        .tonal_balance
+                        .as_ref()
+                        .and_then(|t| t.ab.as_ref())
+                        .is_some_and(|ab| ab.b)
+            });
+        let muted_system = !on_send_plugins && self.mute_system(any_b);
         let quiet = if on_send_plugins {
             picked.into_iter().collect()
+        } else if muted_system || !b {
+            Vec::new()
         } else {
             // Listed now if they weren't yet, so the first B finds them.
             let now = self.now();
@@ -1165,10 +1185,35 @@ impl Shell {
         if let Some(player) = self.players.get(&meter) {
             player.set_gain(gain, b);
         }
+        for id in self.quieted.iter().filter(|id| !quiet.contains(id)) {
+            self.send_plugins.set_muted(*id, false);
+        }
         for id in &quiet {
             self.send_plugins.set_muted(*id, b);
         }
         self.quieted = if b { quiet } else { Vec::new() };
+    }
+
+    /// On System Capture B quiets the rest of the computer (the DAW too),
+    /// so the song is heard alone. Whether the other apps are muted now;
+    /// where that can't be done, B falls back to quieting the Send Plugins.
+    fn mute_system(&mut self, mute: bool) -> bool {
+        if !mute {
+            self.system_mute = None;
+            self.system_mute_failed = false;
+            return false;
+        }
+        // Tried once each time B comes on: where it can't, it won't next frame either.
+        if self.system_mute.is_none() && !self.system_mute_failed {
+            match crate::system_mute::SystemMute::start() {
+                Ok(muted) => self.system_mute = Some(muted),
+                Err(reason) => {
+                    eprintln!("A/B: {reason}");
+                    self.system_mute_failed = true;
+                }
+            }
+        }
+        self.system_mute.is_some()
     }
 
     /// Whether any window with Meters can be seen.
@@ -1754,7 +1799,7 @@ impl Shell {
             .and_then(|m| m.tonal_balance.as_ref())
             .and_then(|t| t.target.as_ref())
             .map(|t| t.name.clone())
-            .unwrap_or_else(|| crate::audio_files::target_name(&paths));
+            .unwrap_or_else(|| dasmeter_core::targets::SONGS.to_owned());
         let files = crate::audio_files::audio_files_in(&paths);
         if files.is_empty() {
             return;

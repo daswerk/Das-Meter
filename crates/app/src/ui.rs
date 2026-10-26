@@ -20,12 +20,13 @@ use dasmeter_core::settings::{self as limits, MEASUREMENTS_NOTE, MEASUREMENTS_UR
 use dasmeter_core::tonal_balance as limits_tonal;
 use dasmeter_core::{
     BigReading, Card, CepstrumMeterSettings, Colour, CycleLength, Direction, Edge, Event,
-    LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings, LufsBar, MeterKind, MeterScene,
-    MeterSettings, MeterState, NeedleMeterSettings, OscilloscopeMeterSettings, Palette,
-    PhaseScopeMeterSettings, Platform, Role, Scene, ScreenMode, SpectrogramMeterSettings,
-    SpectrumColouring, SpectrumMeterSettings, Steadiness, StereoBandsMeterSettings, StereoDrawing,
-    StereometerMeterSettings, TargetPick, TonalBalanceMeterSettings, TonalView, TunerMeterSettings,
-    WaveformColouring, WaveformMeterSettings, WindowKey,
+    GoniometerMeterSettings, LayoutMode, LineWeight, ListenTo, Look, LoudnessMeterSettings,
+    LufsBar, MeterKind, MeterScene, MeterSettings, MeterState, NeedleMeterSettings,
+    OscilloscopeMeterSettings, Palette, PhaseScopeMeterSettings, Platform, Role, Scene, ScreenMode,
+    SpectrogramMeterSettings, SpectrumColouring, SpectrumMeterSettings, Steadiness,
+    StereoBandsMeterSettings, StereoDrawing, StereometerMeterSettings, TargetPick,
+    TonalBalanceMeterSettings, TonalView, TunerMeterSettings, WaveformColouring,
+    WaveformMeterSettings, WindowKey,
 };
 use egui::{Color32, RichText, Slider};
 
@@ -592,6 +593,10 @@ fn waveform_basic(ui: &mut egui::Ui, s: &mut WaveformMeterSettings) -> bool {
             (WaveformColouring::Solid, "Solid"),
         ],
     );
+    changed |= ui
+        .add(Toggle::new(&mut s.auto_gain, "Boost quiet input"))
+        .on_hover_text("Brings a quiet Waveform up to a good height, by up to +30 dB")
+        .changed();
     changed
 }
 
@@ -891,7 +896,12 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
         },
     );
     if let Some(target) = target.filter(|t| t.missing) {
-        ui.label(RichText::new(format!("{} (missing)", target.name)).weak());
+        let text = if target.songs.is_empty() {
+            "Its songs are missing".to_owned()
+        } else {
+            format!("{} (missing)", target.label())
+        };
+        ui.label(RichText::new(text).weak());
     }
     // The key: a shift stays until it's undone; otherwise a suggestion.
     let shift = |to| Event::SetMeter {
@@ -1003,40 +1013,26 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
     // Teaching by playing: Learn (above), play the song, Add.
     if let Some(s) = learning {
         ui.label(format!("Learning: {}:{:02} heard", s / 60, s % 60));
-        let ids = (
-            egui::Id::new(("learn target", index)),
-            egui::Id::new(("learn song", index)),
-        );
-        let mut target = ui
-            .data_mut(|d| d.get_temp::<String>(ids.0))
-            .or_else(|| chosen.clone())
-            .unwrap_or_default();
+        // Only the song is named; it joins the songs compared with.
+        let id = egui::Id::new(("learn song", index));
         let mut song = ui
-            .data_mut(|d| d.get_temp::<String>(ids.1))
+            .data_mut(|d| d.get_temp::<String>(id))
             .unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut song)
-                    .hint_text("Song")
-                    .desired_width(110.0),
-            );
-            ui.add(
-                egui::TextEdit::singleline(&mut target)
-                    .hint_text("Target")
-                    .desired_width(110.0),
-            );
-        });
+        ui.add(
+            egui::TextEdit::singleline(&mut song)
+                .hint_text("Song name")
+                .desired_width(widgets::row_width(ui)),
+        );
         let mut done = false;
         ui.horizontal(|ui| {
-            let can_add = !target.trim().is_empty() && s > 0;
             if ui
-                .add_enabled(can_add, egui::Button::new("Add"))
-                .on_disabled_hover_text("Name the Target and play something")
+                .add_enabled(s > 0, egui::Button::new("Add"))
+                .on_disabled_hover_text("Play the song first")
                 .clicked()
             {
                 actions.requests.push(Request::AddLearnedSong {
                     meter: index,
-                    target: target.trim().to_owned(),
+                    target: chosen.clone().unwrap_or_default(),
                     song: song.trim().to_owned(),
                 });
                 done = true;
@@ -1048,11 +1044,9 @@ fn target_items(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &
         });
         ui.data_mut(|d| {
             if done {
-                d.remove::<String>(ids.0);
-                d.remove::<String>(ids.1);
+                d.remove::<String>(id);
             } else {
-                d.insert_temp(ids.0, target);
-                d.insert_temp(ids.1, song);
+                d.insert_temp(id, song);
             }
         });
     }
@@ -1239,6 +1233,20 @@ fn stereometer_basic(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> boo
     );
     changed |= ui
         .add(Toggle::new(&mut s.show_balance, "Balance bar"))
+        .changed();
+    changed
+}
+
+fn goniometer_basic(ui: &mut egui::Ui, s: &mut GoniometerMeterSettings) -> bool {
+    let mut changed = duration_slider(
+        ui,
+        "Persistence",
+        &mut s.persistence,
+        limits::STEREO_PERSISTENCE,
+        false,
+    );
+    changed |= ui
+        .add(Toggle::new(&mut s.show_correlation, "Correlation bar"))
         .changed();
     changed
 }
@@ -1747,6 +1755,33 @@ fn phase_scope_basic(ui: &mut egui::Ui, s: &mut PhaseScopeMeterSettings, tap: &m
     changed
 }
 
+fn goniometer_advanced(ui: &mut egui::Ui, s: &mut GoniometerMeterSettings) -> bool {
+    let mut fixed = matches!(s.analysis.scaling, StereoScaling::Fixed { .. });
+    let mut changed = false;
+    if choice(ui, "Scale", &mut fixed, &[(false, "Auto"), (true, "Fixed")]) {
+        s.analysis.scaling = if fixed {
+            StereoScaling::Fixed { gain: 1.0 }
+        } else {
+            StereoScaling::Auto
+        };
+        changed = true;
+    }
+    if let StereoScaling::Fixed { gain } = &mut s.analysis.scaling {
+        let (low, high) = limits::STEREO_GAIN;
+        changed |= ui
+            .add(Slider::new(gain, low..=high).text("Gain").logarithmic(true))
+            .changed();
+    }
+    changed |= duration_slider(
+        ui,
+        "Correlation averaging",
+        &mut s.analysis.correlation_time,
+        limits::CORRELATION_TIME,
+        false,
+    );
+    changed
+}
+
 fn stereometer_advanced(ui: &mut egui::Ui, s: &mut StereometerMeterSettings) -> bool {
     let mut changed = duration_slider(
         ui,
@@ -1813,6 +1848,7 @@ fn basic(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &mut
         MeterSettings::Tuner(w) => tuner_basic(ui, w),
         MeterSettings::StereoBands(w) => stereo_bands_basic(ui, w),
         MeterSettings::Needle(w) => needle_basic(ui, w),
+        MeterSettings::Goniometer(w) => goniometer_basic(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -1839,6 +1875,7 @@ fn advanced(ui: &mut egui::Ui, meter: usize, settings: MeterSettings, actions: &
         MeterSettings::TonalBalance(w) => tonal_balance_advanced(ui, w),
         MeterSettings::Tuner(w) => tuner_advanced(ui, w),
         MeterSettings::StereoBands(_) | MeterSettings::Needle(_) => false, // all in the basics
+        MeterSettings::Goniometer(w) => goniometer_advanced(ui, w),
     };
     if changed {
         actions.push(Event::SetMeter { meter, settings: s });
@@ -2109,6 +2146,7 @@ fn kind_label(kind: MeterKind) -> &'static str {
         MeterKind::Tuner => "Tuner",
         MeterKind::StereoBands => "Stereo Bands",
         MeterKind::Needle => "Needle Meter",
+        MeterKind::Goniometer => "Goniometer",
     }
 }
 
@@ -2417,10 +2455,11 @@ fn song_picker(
         .selected_text(shown)
         .show_ui(ui, |ui| {
             ui.set_min_width(PICKER_WIDTH);
-            let several = scene.targets.len() > 1;
-            for (name, songs) in scene.targets.iter().zip(&scene.target_songs) {
-                if several {
-                    ui.label(RichText::new(name).small().weak());
+            // Songs by their own names; the Targets holding them aren't
+            // named, only set apart.
+            for (k, (name, songs)) in scene.targets.iter().zip(&scene.target_songs).enumerate() {
+                if k > 0 {
+                    ui.separator();
                 }
                 let here = chosen == Some(name.as_str());
                 let current = target.filter(|_| here).map(|t| t.pick);
@@ -2989,7 +3028,7 @@ fn rename_theme(
 /// The Theme's styling and colours. Edits to a built-in go to a copy.
 fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, current: usize) {
     let mut styling = scene.theme.styling;
-    widgets::heading(ui, "Look");
+    widgets::section(ui, "Look");
     let mut changed = choice(
         ui,
         "Look",
@@ -3011,7 +3050,7 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
             .add(Toggle::new(&mut styling.dim_when_silent, "Dim when silent"))
             .changed();
     }
-    widgets::heading(ui, "Layout");
+    widgets::section(ui, "Layout");
     changed |= ui
         .add(Slider::new(&mut styling.background_opacity, 0.0..=1.0).text("Background opacity"))
         .changed();
@@ -3059,27 +3098,38 @@ fn theme_styling(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions, curren
     }
     // Colours, grouped by Meter, under a small live preview; the Meters
     // themselves change at once too.
-    widgets::heading(ui, "Colours");
+    widgets::section(ui, "Colours");
     theme_preview(ui, &scene.palette, scene.theme.styling);
     for (group, roles) in COLOUR_GROUPS {
         widgets::heading(ui, group);
-        egui::Grid::new(("theme colours", group))
-            .num_columns(2)
-            .min_col_width(150.0)
-            .show(ui, |ui| {
-                for &role in roles {
-                    ui.label(role.label());
-                    if let Some(colour) = colour_button(ui, scene.palette[role]) {
-                        actions.push(Event::SetThemeColour {
-                            theme: current,
-                            role,
-                            colour,
-                        });
-                    }
-                    ui.end_row();
-                }
-            });
+        for &role in roles {
+            if let Some(colour) = colour_row(ui, role.label(), scene.palette[role]) {
+                actions.push(Event::SetThemeColour {
+                    theme: current,
+                    role,
+                    colour,
+                });
+            }
+        }
     }
+}
+
+/// A colour's row: its name, and its button at the row's right edge, so
+/// every button lines up however long the names are.
+fn colour_row(ui: &mut egui::Ui, label: &str, colour: Colour) -> Option<Colour> {
+    let width = widgets::row_width(ui);
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(label);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                colour_button(ui, colour)
+            })
+            .inner
+        },
+    )
+    .inner
 }
 
 /// The Theme's colours by the Meter that uses them.
@@ -3254,7 +3304,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
             Role::LoudnessOverTarget,
             Role::LoudnessCounter,
         ],
-        MeterSettings::Stereometer(_) => &[
+        MeterSettings::Stereometer(_) | MeterSettings::Goniometer(_) => &[
             Role::StereometerTrace,
             Role::CorrelationPositive,
             Role::CorrelationNegative,
@@ -3286,7 +3336,7 @@ fn meter_roles(settings: &MeterSettings) -> &'static [Role] {
 
 /// A Meter's own colours: each of its roles, the Theme's or overridden.
 fn meter_colours(ui: &mut egui::Ui, scene: &Scene, meter: &MeterScene, actions: &mut Actions) {
-    ui.label(RichText::new("Colours (this Meter only)").small());
+    ui.label(RichText::new("This Meter only").small().weak());
     egui::Grid::new(("meter colours", meter.meter))
         .num_columns(3)
         .show(ui, |ui| {
@@ -3626,13 +3676,16 @@ fn page_button(ui: &mut egui::Ui, page: &mut Page, choice: Page, name: &str) {
 
 /// Where Das-Meter listens, the layout, frame rate and start-up.
 fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
+    widgets::heading(ui, "Source");
     listen_to(ui, scene, actions);
+    widgets::section(ui, "Layout");
     let mut mode = scene.mode;
     let modes = [(LayoutMode::Bar, "Bar"), (LayoutMode::Window, "Window")];
     if choice(ui, "Layout", &mut mode, &modes) {
         actions.push(Event::SetMode(mode));
     }
     let mut app = scene.app;
+    widgets::section(ui, "Drawing");
     let mut changed = ui
         .add(Toggle::new(
             &mut app.match_display,
@@ -3654,6 +3707,7 @@ fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         )
         .on_hover_text("Fewer frames use less CPU; in step with a 120 Hz display, 60 is smooth too")
         .changed();
+    widgets::section(ui, "Updates");
     changed |= ui
         .add(Toggle::new(
             &mut app.check_for_updates,
@@ -3685,6 +3739,7 @@ fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
             }
         });
     }
+    widgets::section(ui, "Startup");
     let mut launch_at_login = scene.launch_at_login;
     if ui
         .add(Toggle::new(&mut launch_at_login, "Launch at login"))
@@ -3702,6 +3757,16 @@ fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
             actions.push(Event::SetShowInDock(show_in_dock));
         }
     }
+    ui.add_space(12.0);
+    ui.label(
+        RichText::new(format!(
+            "Das-Meter {} · {}",
+            env!("CARGO_PKG_VERSION"),
+            dasmeter_core::DESIGNED_BY
+        ))
+        .small()
+        .weak(),
+    );
 }
 
 /// Every setting of one Meter, and its colours.
@@ -3725,9 +3790,9 @@ fn meter_settings(
     spectrum_extras(ui, scene, meter_scene, actions);
     reference_items(ui, scene, meter_scene, actions);
     target_items(ui, scene, meter_scene, actions);
-    ui.separator();
+    widgets::section(ui, "Advanced");
     advanced(ui, meter, settings, &mut edited);
-    ui.separator();
+    widgets::section(ui, "Colours");
     meter_colours(ui, scene, meter_scene, &mut edited);
     if let Some(last) = edited
         .iter()

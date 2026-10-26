@@ -96,6 +96,7 @@ impl MainMenu {
         let about = AboutMetadata {
             name: Some("Das-Meter".into()),
             version: Some(env!("CARGO_PKG_VERSION").into()),
+            credits: Some(dasmeter_core::DESIGNED_BY.into()),
             ..Default::default()
         };
         let app = Submenu::with_items(
