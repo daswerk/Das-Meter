@@ -1,10 +1,10 @@
 // The Waveform on the GPU. Its columns sit still in a ring texture, each
 // group of them (about a pixel's worth) written once at its place in time;
-// only the camera moves. Every pixel asks where it is in time (the camera,
-// less its distance from the right edge) and reads the two groups around
-// that point, blended by how far between them it is. So the picture glides
-// by fractions of a pixel without any column changing its look: nothing in
-// it is rasterised again as it scrolls, so nothing can flicker.
+// only the camera moves, by whole pixels. Every pixel asks where it is in
+// time (the camera, less its distance from the right edge) and shows the
+// one group there, as it is. So the picture only ever shifts: a column
+// looks the same in every frame (no blending between neighbours, which
+// made peaks swell and shrink as they slid), so nothing can flicker.
 //
 // Texture: one texel per group across (a ring: group n is at n mod width);
 // two rows per lane: (min, max, low, mid) and (high, 0, 0, 0), as sampled.
@@ -104,24 +104,18 @@ fn fs_main(in: Out) -> @location(0) vec4<f32> {
     let half = lane_height * 0.5 - p.ring.w;
 
     // Where this pixel is in time, in groups: the camera, less how far it
-    // is from the right edge. Group n spans n..n+1; between two groups'
-    // middles the pixel blends them.
-    let at = p.view.x - (p.area.x + p.area.z - px.x) / p.view.y - 0.5;
-    let newest = 0.0;
+    // is from the right edge. Group n spans n..n+1.
+    let at = p.view.x - (p.area.x + p.area.z - px.x) / p.view.y;
     let oldest = 1.0 - p.view.z;
-    if at + 1.0 < oldest {
+    let group = floor(at);
+    if group < oldest {
         discard;
     }
-    let first = clamp(floor(at), oldest, newest);
-    let second = clamp(first + 1.0, oldest, newest);
-    let t = clamp(at - floor(at), 0.0, 1.0);
-    let a = fetch(first, lane);
-    let b = fetch(second, lane);
-    let envelope = mix(a[0], b[0], t);
-    let bands_high = mix(a[1].x, b[1].x, t);
+    let texels = fetch(min(group, 0.0), lane);
+    let envelope = texels[0];
     let lo = envelope.z;
     let md = envelope.w;
-    let hi = bands_high;
+    let hi = texels[1].x;
 
     var colour = vec3<f32>(0.0);
     var alpha = 0.0;

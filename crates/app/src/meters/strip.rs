@@ -1,7 +1,8 @@
 //! The Waveform's picture on the GPU (`strip.wgsl`): its columns, merged
 //! into groups of about a pixel by their number in time, are written once
 //! into a ring texture and stay there; each frame only moves the camera.
-//! Only the newest groups go up, so a frame costs a few texels, and a group
+//! Only the newest groups go up, so a frame costs a few texels; the camera
+//! moves by whole pixels and each pixel shows one group as it is, so a group
 //! never changes its look while it scrolls: the Waveform can't flicker.
 
 use dasmeter_analysis::WaveformColumn;
@@ -228,6 +229,12 @@ impl Strip {
             picture.gain
         };
 
+        // The camera moves by whole pixels, so the picture only ever shifts,
+        // placed so pixel centres fall mid-group (never on a boundary, where
+        // rounding could pick either neighbour from frame to frame).
+        let group_px = picture.column_width * picture.per_group;
+        let edge = picture.area.right().fract();
+        let camera = ((picture.camera * group_px - edge).round() + edge) / group_px;
         let (width, height) = gpu.size();
         let (width, height) = (width as f32, height as f32);
         let area = picture.area;
@@ -259,8 +266,8 @@ impl Strip {
             area.y,
             area.width,
             area.height,
-            picture.camera,
-            picture.column_width * picture.per_group,
+            camera,
+            group_px,
             stored as f32,
             0.0,
             shape.width as f32,
