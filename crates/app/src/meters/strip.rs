@@ -1,15 +1,30 @@
 //! The Waveform's picture on the GPU (`strip.wgsl`): its columns, merged
-//! into groups of about a pixel by their number in time, are written once
-//! into a ring texture and stay there; each frame only moves the camera.
-//! Only the newest groups go up, so a frame costs a few texels; the camera
-//! moves by whole pixels and each pixel shows one group as it is, so a group
-//! never changes its look while it scrolls: the Waveform can't flicker.
+//! into blocks of a power of two by their number in time, are written once
+//! into a ring texture and stay there; each frame only moves the camera, by
+//! fractions of a pixel, and the shader box-filters every pixel over a
+//! window exactly one pixel wide. Only the newest blocks go up, so a frame
+//! costs a few texels, and a block never changes its look while it scrolls.
 
 use dasmeter_analysis::WaveformColumn;
 use dasmeter_core::{Colour, WaveformColouring};
 
 use super::shapes::Area;
 use crate::gpu::Gpu;
+
+/// The finest a block may be, in px: the shader looks every 1/8 px, so a
+/// block at least that wide is never skipped.
+const FINEST: f32 = 0.125;
+
+/// Columns per block for columns `column_width` px wide: the fewest (a power
+/// of two, so a block always holds the same columns) that make a block at
+/// least [`FINEST`] wide; one when columns are that wide already.
+pub fn columns_per_block(column_width: f32) -> f32 {
+    let mut columns = 1.0;
+    while column_width * columns < FINEST && columns < 65_536.0 {
+        columns *= 2.0;
+    }
+    columns
+}
 
 /// Bytes in the uniform block: nine `vec4`s.
 const UNIFORM_SIZE: u64 = 9 * 16;
@@ -31,7 +46,7 @@ pub struct Picture {
     pub newest: u64,
     /// How many groups the ring must hold.
     pub capacity: usize,
-    /// Columns per group (1 when a column is a pixel or wider).
+    /// Columns per block: a power of two (see [`columns_per_block`]).
     pub per_group: f32,
     /// A column's width in px.
     pub column_width: f32,
@@ -133,7 +148,7 @@ impl Strip {
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: gpu.format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -229,12 +244,7 @@ impl Strip {
             picture.gain
         };
 
-        // The camera moves by whole pixels, so the picture only ever shifts,
-        // placed so pixel centres fall mid-group (never on a boundary, where
-        // rounding could pick either neighbour from frame to frame).
         let group_px = picture.column_width * picture.per_group;
-        let edge = picture.area.right().fract();
-        let camera = ((picture.camera * group_px - edge).round() + edge) / group_px;
         let (width, height) = gpu.size();
         let (width, height) = (width as f32, height as f32);
         let area = picture.area;
@@ -266,7 +276,7 @@ impl Strip {
             area.y,
             area.width,
             area.height,
-            camera,
+            picture.camera,
             group_px,
             stored as f32,
             0.0,
@@ -379,5 +389,23 @@ fn write_groups(gpu: &Gpu, ring: &Ring, lanes: &[Vec<WaveformColumn>], newest: u
             );
         }
         start += run as u64;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blocks_are_a_power_of_two_columns_and_never_finer_than_an_eighth_pixel() {
+        for width in [4.0, 1.75, 0.5, 0.125, 0.124, 0.03, 0.001] {
+            let columns = columns_per_block(width);
+            assert_eq!(columns, columns.log2().round().exp2(), "{width}: {columns}");
+            assert!(width * columns >= FINEST, "{width}: {columns}");
+            assert!(
+                columns == 1.0 || width * columns < 2.0 * FINEST,
+                "{width}: {columns}"
+            );
+        }
     }
 }

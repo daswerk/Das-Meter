@@ -2,11 +2,11 @@
 //! one lane per trace (L or M above, R or S below), coloured by band energy.
 //!
 //! The Waveform itself stays where it is in time; a camera moves over it.
-//! Its columns, merged into groups of about a pixel by their number in time,
-//! go to the GPU once ([`super::strip`]), and each frame only says where the
-//! right edge is now: the core says how many columns are still to come in
-//! (`lag`), and the camera sits that far behind the newest. No column is
-//! laid out again as it scrolls, so none can shimmer.
+//! Its columns (merged into blocks of a power of two when they're very
+//! narrow) go to the GPU once ([`super::strip`]), and each frame only says
+//! where the right edge is now: the core says how many columns are still to
+//! come in (`lag`), and the camera sits that far behind the newest. No
+//! column is laid out again as it scrolls, so none can shimmer.
 
 use dasmeter_analysis::{ChannelView, WaveformColumn, WaveformScale};
 use dasmeter_core::{Role, WaveformMeterSettings};
@@ -42,10 +42,10 @@ pub fn draw(
         }
     }
 
-    // Columns narrower than a pixel are merged, so a 30 s span costs no
-    // more to draw than the Meter is wide.
+    // Very narrow columns are merged into blocks of a power of two, so a
+    // 30 s span in a small Meter costs no more than a few blocks a pixel.
     let pixels = area.width.ceil().max(1.0) as usize;
-    let per_group = (1.0 / column_width).max(1.0);
+    let per_group = super::strip::columns_per_block(column_width);
     // 0: the core left the count out (silence); any numbering draws the same.
     let numbered = completed.max(traces.iter().map(Vec::len).max().unwrap_or(0) as u64);
     if numbered == 0 {
