@@ -860,9 +860,18 @@ impl Playhead {
         refresh: Option<u32>,
     ) -> f32 {
         let newest = completed as f64;
+        let period = refresh.filter(|&r| r > 0).map(|r| 1.0 / f64::from(r));
         let since = self
             .shown
             .map(|(_, at)| now.saturating_sub(at).as_secs_f64());
+        // Drawn again on the refresh it was moved to (another window, a
+        // repaint): it stays put. Moving it by a frame's rounding would send
+        // it back a little, then forward in a jump.
+        if let (Some((shown, _)), Some(since), Some(period)) = (self.shown, since, period)
+            && (since / period).round() == 0.0
+        {
+            return (((newest - shown.clamp(0.0, newest)) * 100.0).round() / 100.0) as f32;
+        }
         self.slack = (self.slack - since.unwrap_or(0.0) * PLAYHEAD_SLACK_EASE).max(PLAYHEAD_LAG);
         match self.arrived {
             Some((count, at)) if completed > count => {
@@ -877,8 +886,7 @@ impl Playhead {
         let shown = match self.shown {
             Some((shown, at)) => {
                 let mut elapsed = now.saturating_sub(at).as_secs_f64();
-                if let Some(rate) = refresh.filter(|&r| r > 0) {
-                    let period = 1.0 / f64::from(rate);
+                if let Some(period) = period {
                     elapsed = (elapsed / period).round() * period;
                 }
                 let predicted = shown + elapsed * per_second;
@@ -886,7 +894,8 @@ impl Playhead {
                 if drift.abs() > PLAYHEAD_JUMP * per_second {
                     target
                 } else {
-                    predicted + drift * PLAYHEAD_CORRECTION
+                    // Slowed to keep in step, never sent back.
+                    (predicted + drift * PLAYHEAD_CORRECTION).max(shown)
                 }
             }
             None => target,
@@ -2224,6 +2233,39 @@ mod tests {
             let c = completed(ready);
             let lag = playhead.drive(Duration::from_secs_f64(ready), c, 200.0, Some(120));
             shown.push(c as f64 - f64::from(lag));
+        }
+        let even = 200.0 / 120.0;
+        let worst = shown
+            .windows(2)
+            .skip(240)
+            .map(|w| (w[1] - w[0] - even).abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.1, "steps vary by {worst} columns");
+    }
+
+    #[test]
+    fn a_second_window_drawn_on_the_same_refresh_doesnt_move_it() {
+        // Each refresh drawn by two windows (the Meters and Settings), the
+        // second a fraction of a ms after the first: both show the camera
+        // where it is on that refresh, and it moves the same every refresh.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let ready = 1.0 + f64::from(frame) / 120.0;
+            let completed = |t: f64| ((t * 48_000.0 / 512.0).floor() * 512.0 / 240.0) as u64;
+            let mut lags = Vec::new();
+            for after in [0.0, 0.0004] {
+                let at = ready + after;
+                let c = completed(at);
+                let lag = playhead.drive(Duration::from_secs_f64(at), c, 200.0, Some(120));
+                lags.push(c as f64 - f64::from(lag));
+            }
+            assert!(
+                (lags[1] - lags[0]).abs() < 0.011,
+                "frame {frame}: the second window shows {} columns on",
+                lags[1] - lags[0]
+            );
+            shown.push(lags[0]);
         }
         let even = 200.0 / 120.0;
         let worst = shown
