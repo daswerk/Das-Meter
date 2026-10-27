@@ -185,7 +185,7 @@ any of them, so one Meter can stand apart from its Theme:
 ## Presets
 
 A **Preset** saves which Meters you see, how they're arranged, their settings
-and their Theme. Changes save on their own, and **Revert Preset** undoes them.
+and their Theme. Changes save on their own; **Edit ▸ Undo** (⌘Z) takes back the last one, and **Revert Preset** all of them.
 Switch with ⌘1–⌘9. Three built-ins, each with its own Theme, get you
 started: **Producing Top-Bar 1.0**, **Mixing/Producing 1.0** and
 **Mastering 1.0**.

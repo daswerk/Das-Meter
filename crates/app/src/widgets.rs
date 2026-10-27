@@ -113,15 +113,11 @@ fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     response
 }
 
-/// A heading over a group of settings: small dim caps in Smooth, a strong
-/// label in Classic.
+/// A heading over a group of settings: small dim caps, in Smooth and
+/// Classic alike, so it stands apart from the settings under it.
 pub fn heading(ui: &mut Ui, text: &str) {
-    if is_smooth(ui.ctx()) {
-        ui.add_space(6.0);
-        ui.label(RichText::new(text.to_uppercase()).small().weak());
-    } else {
-        ui.label(RichText::new(text).strong());
-    }
+    ui.add_space(6.0);
+    ui.label(RichText::new(text.to_uppercase()).small().weak());
 }
 
 /// A section of a menu: a thin line, then its heading, keeping what

@@ -33,6 +33,10 @@ pub enum Command {
     LaunchAtLogin(bool),
     /// Bring the app's windows forward (the menu bar icon).
     ShowWindows,
+    /// Edit ▸ Undo (⌘Z), or Redo (⇧⌘Z): the text being typed, else the
+    /// last change to the Preset or its Themes.
+    Undo,
+    Redo,
 }
 
 pub struct MainMenu {
@@ -48,6 +52,8 @@ pub struct MainMenu {
     presets: Submenu,
     preset_items: Vec<CheckMenuItem>,
     revert: MenuItem,
+    undo: MenuId,
+    redo: MenuId,
     save_as_new: MenuItem,
     export: MenuItem,
     import: MenuItem,
@@ -142,6 +148,20 @@ impl MainMenu {
         .expect("build the Window menu");
         let help_menu = Submenu::with_items("Help", true, &[&help, &show_welcome])
             .expect("build the Help menu");
+        let undo = MenuItem::new(
+            "Undo",
+            true,
+            Some(Accelerator::new(Modifiers::META, Code::KeyZ)),
+        );
+        let redo = MenuItem::new(
+            "Redo",
+            true,
+            Some(Accelerator::new(
+                Modifiers::META | Modifiers::SHIFT,
+                Code::KeyZ,
+            )),
+        );
+        let edit = Submenu::with_items("Edit", true, &[&undo, &redo]).expect("build the Edit menu");
         // Filled from the Preset list; see `show_presets`.
         let presets = Submenu::new("Presets", true);
         let revert = MenuItem::new("Revert Preset", false, None);
@@ -152,7 +172,7 @@ impl MainMenu {
             true,
             Some(Accelerator::new(Modifiers::META, Code::KeyO)),
         );
-        let menu = Menu::with_items(&[&app, &listen_to, &presets, &window, &help_menu])
+        let menu = Menu::with_items(&[&app, &edit, &listen_to, &presets, &window, &help_menu])
             .expect("build the menu bar");
         menu.init_for_nsapp();
         window.set_as_windows_menu_for_nsapp();
@@ -193,6 +213,8 @@ impl MainMenu {
             presets,
             preset_items: Vec::new(),
             revert,
+            undo: undo.id().clone(),
+            redo: redo.id().clone(),
             save_as_new,
             export,
             import,
@@ -248,6 +270,10 @@ impl MainMenu {
                     Some(Command::Core(Event::SetMode(LayoutMode::Bar)))
                 } else if id == *self.window_mode.id() {
                     Some(Command::Core(Event::SetMode(LayoutMode::Window)))
+                } else if id == self.undo {
+                    Some(Command::Undo)
+                } else if id == self.redo {
+                    Some(Command::Redo)
                 } else if id == *self.revert.id() {
                     Some(Command::Core(Event::RevertPreset))
                 } else if id == *self.save_as_new.id() {

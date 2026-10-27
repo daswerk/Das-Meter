@@ -278,7 +278,7 @@ impl Palette {
             Role::SpectrumFill => Colour::rgb(0x7a, 0x3f, 0xd6),
             Role::SpectrumPeakHold => Colour::rgb(0xe8, 0xe8, 0xe8),
             Role::SpectrumPeakDots => Colour::rgb(0xc3, 0x9b, 0xff),
-            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd2, 0x6e),
+            Role::SpectrumHarmonics => Colour::rgb(0x7f, 0xe0, 0xc8),
             Role::SpectrumSecond => Colour::rgb(0x5e, 0xc8, 0xff),
             Role::LoudnessBar => Colour::rgb(0x2f, 0xbf, 0x71),
             Role::LoudnessPeak => Colour::rgb(0xe8, 0xe8, 0xe8),
@@ -413,7 +413,7 @@ impl Palette {
             Role::SpectrumFill => Colour::rgb(0x5b, 0x2a, 0xa8),
             Role::SpectrumPeakHold => Colour::rgb(0xec, 0xe6, 0xf5),
             Role::SpectrumPeakDots => Colour::rgb(0xc9, 0xa2, 0xff),
-            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xcf, 0x6e),
+            Role::SpectrumHarmonics => Colour::rgb(0xff, 0x9b, 0xe8),
             Role::SpectrumSecond => Colour::rgb(0xff, 0x7a, 0xd9),
             Role::LoudnessBar => Colour::rgb(0xa0, 0x70, 0xff),
             Role::LoudnessPeak => Colour::rgb(0xec, 0xe6, 0xf5),
@@ -434,7 +434,7 @@ impl Palette {
             Role::TonalBalanceUnder => Colour::rgb(0x7f, 0xe0, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x6a),
             Role::TunerInTune => Colour::rgb(0x57, 0xd6, 0x8d),
-            Role::TunerOff => Colour::rgb(0xff, 0xcf, 0x6e),
+            Role::TunerOff => Colour::rgb(0xff, 0x7a, 0x59),
             Role::SpectrumCollision => Colour::rgb(0xff, 0x4d, 0x6a),
         };
         Palette {
@@ -457,7 +457,7 @@ impl Palette {
             Role::SpectrumFill => Colour::rgb(0x0d, 0x6f, 0x6a),
             Role::SpectrumPeakHold => Colour::rgb(0xe0, 0xf5, 0xf5),
             Role::SpectrumPeakDots => Colour::rgb(0x4f, 0xf0, 0xe0),
-            Role::SpectrumHarmonics => Colour::rgb(0xff, 0xd1, 0x66),
+            Role::SpectrumHarmonics => Colour::rgb(0x3d, 0x9b, 0xff),
             Role::SpectrumSecond => Colour::rgb(0x7a, 0xa8, 0xff),
             Role::LoudnessBar => Colour::rgb(0x22, 0xc7, 0xb8),
             Role::LoudnessPeak => Colour::rgb(0xe0, 0xf5, 0xf5),
@@ -467,7 +467,7 @@ impl Palette {
             Role::StereometerTrace => Colour::rgb(0x6f, 0xf5, 0xe6),
             Role::CepstrumTrace => Colour::rgb(0xff, 0x8f, 0xb3),
             Role::OscilloscopeTrace => Colour::rgb(0x5e, 0xf0, 0xe0),
-            Role::OscilloscopeSecond => Colour::rgb(0xff, 0xc8, 0x6e),
+            Role::OscilloscopeSecond => Colour::rgb(0x7a, 0xa8, 0xff),
             Role::PhaseScopeTrace => Colour::rgb(0x5f, 0xe8, 0xff),
             Role::PhaseScopeCancel => Colour::rgb(0xff, 0x4d, 0x5e),
             Role::PhaseScopeSum => Colour::rgb(0xea, 0xfc, 0xfc),
@@ -478,7 +478,7 @@ impl Palette {
             Role::TonalBalanceUnder => Colour::rgb(0x7a, 0xa8, 0xff),
             Role::LoudnessCounter => Colour::rgb(0xff, 0x4d, 0x5e),
             Role::TunerInTune => Colour::rgb(0x3d, 0xdc, 0x97),
-            Role::TunerOff => Colour::rgb(0xff, 0xd1, 0x66),
+            Role::TunerOff => Colour::rgb(0xff, 0x8a, 0x3d),
             Role::SpectrumCollision => Colour::rgb(0xff, 0x6b, 0x5c),
         };
         Palette {
@@ -643,9 +643,9 @@ pub struct Styling {
     /// The window background's opacity, 0–1 (no blur). Default 1.
     pub background_opacity: f32,
     pub line: LineWeight,
-    /// Space between Meters and around them, in logical px. Default 6.
+    /// Space between Meters and around them, in logical px. Default 2.3.
     pub gap: f32,
-    /// Corner radius of the Meters' panels, in logical px. Default 4.
+    /// Corner radius of the Meters' panels, in logical px. Default 0.
     pub corner_radius: f32,
     /// Text size factor, 0.9–1.5. Default 1.
     pub text_scale: f32,
@@ -654,15 +654,15 @@ pub struct Styling {
     pub shape_cues: bool,
     /// How it's drawn. Default Smooth; the rest below only count there.
     pub look: Look,
-    /// How strongly traces and big numbers glow, 0 (none) to 1. Default 0.35.
+    /// How strongly traces and big numbers glow, 0 (none) to 1. Default 0.
     pub glow: f32,
     /// How much of a plot grid lines fade out over toward each edge, 0 to
-    /// 0.4. Default 0.15.
+    /// 0.4. Default 0.09.
     pub grid_fade: f32,
     /// How much lighter the background is at the top than the bottom, 0 to 1.
-    /// Default 0.5.
+    /// Default 0.
     pub gradient: f32,
-    /// How much darker the panels' corners are, 0 to 1. Default 0.35.
+    /// How much darker the panels' corners are, 0 to 1. Default 0.
     pub vignette: f32,
     /// Whether a Meter dims gently while no audio arrives. Default on.
     pub dim_when_silent: bool,
@@ -673,15 +673,15 @@ impl Default for Styling {
         Styling {
             background_opacity: 1.0,
             line: LineWeight::Normal,
-            gap: 6.0,
-            corner_radius: 10.0,
+            gap: 2.3,
+            corner_radius: 0.0,
             text_scale: 1.0,
             shape_cues: false,
             look: Look::Smooth,
-            glow: 0.35,
-            grid_fade: 0.15,
-            gradient: 0.5,
-            vignette: 0.35,
+            glow: 0.0,
+            grid_fade: 0.09,
+            gradient: 0.0,
+            vignette: 0.0,
             dim_when_silent: true,
         }
     }
@@ -730,6 +730,9 @@ pub const MIDNIGHT_PURPLE: &str = "Midnight Purple";
 pub const DEEP_TURQUOISE: &str = "Deep Turquoise";
 pub const GRAPHITE: &str = "Graphite";
 pub const NOCTURNE: &str = "Nocturne";
+/// The Mixing/Producing Preset's Theme: the standard one, and the dark
+/// side when following the system.
+pub const MIXING_PRODUCING: &str = "Mixing/Producing 1.0";
 
 /// The Theme file layout's version.
 const FILE_VERSION: i64 = 1;

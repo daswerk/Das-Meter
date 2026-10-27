@@ -24,8 +24,8 @@ pop_outs = []
 on_top = false
 
 [preset.window.frame]
-x = 90.0
-y = 82.0
+x = 111.0
+y = 81.0
 width = 1265.0
 height = 633.0
 
@@ -40,8 +40,15 @@ ratio = 0.7299284
 [preset.window.tree.Split.first.Split.first]
 Pane = 1
 
-[preset.window.tree.Split.first.Split.second]
+[preset.window.tree.Split.first.Split.second.Split]
+direction = "Stacked"
+ratio = 0.5
+
+[preset.window.tree.Split.first.Split.second.Split.first]
 Pane = 5
+
+[preset.window.tree.Split.first.Split.second.Split.second]
+Pane = 7
 
 [preset.window.tree.Split.second.Split]
 direction = "SideBySide"
@@ -82,6 +89,7 @@ slow_on_hover = true
 colouring = "SteadyHarmonics"
 collision_floor = -50.0
 collision_within = 6.0
+show_b = true
 
 [preset.meters.settings.Spectrum.analysis]
 channel_view = "Mono"
@@ -120,6 +128,7 @@ points = 2048
 show_source_label = false
 
 [preset.meters.settings.Loudness]
+target = -14.0
 lufs_bar = "ShortTerm"
 bar_range = [-60.0, 0.0]
 show_true_peak = true
@@ -151,6 +160,7 @@ show_source_label = false
 
 [preset.meters.settings.Waveform]
 colouring = "Rgb"
+auto_gain = false
 
 [preset.meters.settings.Waveform.analysis]
 span = 4.0
@@ -186,16 +196,18 @@ suggestions = false
 [[preset.meters]]
 show_source_label = false
 
-[preset.meters.settings.Spectrogram]
-show_scale = true
+[preset.meters.settings.TonalBalance]
+view = "Auto"
+low_end_zoom = false
+parts = "Loud"
+key = "Auto"
+mono_cutoff = 120.0
 
-[preset.meters.settings.Spectrogram.analysis]
-fft_size = 4096
-window = "Hann"
-slope = 4.5
-frequency_range = [20.0, 20000.0]
-db_range = [-90.0, 0.0]
-span = 10.0
+[preset.meters.settings.TonalBalance.averaging]
+Seconds = 10.0
+
+[preset.meters.settings.TonalBalance.pick]
+Song = 0
 
 [[themes]]
 toml = """
@@ -203,7 +215,7 @@ name = "Mixing/Producing 1.0"
 version = 1
 
 [colours]
-accent = "#348ca5"
+accent = "#ffffff"
 background = "#141414"
 cepstrum_trace = "#78ffc3"
 correlation_negative = "#f03e3e"
@@ -227,12 +239,12 @@ spectrum_line = "#d9d5de"
 spectrum_peak_dots = "#c39bff"
 spectrum_peak_hold = "#e8e8e8"
 spectrum_second = "#ffb347"
-stereometer_trace = "#7fe0c8"
+stereometer_trace = "#e3e3e3"
 text = "#d8dde3"
-tonal_balance_mix = "#7fe0c8"
-tonal_balance_over = "#ff8a3d"
-tonal_balance_range = "#4d8dff"
-tonal_balance_under = "#5ec8ff"
+tonal_balance_mix = "#ffffff"
+tonal_balance_over = "#820000"
+tonal_balance_range = "#808080"
+tonal_balance_under = "#000000"
 tuner_in_tune = "#2fbf71"
 tuner_off = "#ffb347"
 waveform_high = "#4d8dff"
@@ -243,13 +255,13 @@ waveform_mid = "#4de06b"
 background_opacity = 1.0
 corner_radius = 0.0
 dim_when_silent = true
-gap = 0.0
+gap = 2.3
 glow = 0.0
-gradient = 0.5699999928474426
-grid_fade = 0.11999999731779099
-line = "thin"
+gradient = 0.0
+grid_fade = 0.09
+line = "normal"
 look = "smooth"
 shape_cues = false
-text_scale = 0.8999999761581421
-vignette = 0.3199999928474426
+text_scale = 1.0
+vignette = 0.0
 """

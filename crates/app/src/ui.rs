@@ -2939,7 +2939,7 @@ fn theme_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
             let named = |name: &str| theme.themes.iter().position(|t| t.name == name);
             (
                 named(dasmeter_core::theme::LIGHT).unwrap_or(1),
-                named(dasmeter_core::theme::NOCTURNE).unwrap_or(0),
+                named(dasmeter_core::theme::MIXING_PRODUCING).unwrap_or(0),
             )
         } else {
             let current = theme.current.unwrap_or(0);

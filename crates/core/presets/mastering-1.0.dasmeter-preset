@@ -84,6 +84,7 @@ slow_on_hover = true
 colouring = "Plain"
 collision_floor = -50.0
 collision_within = 6.0
+show_b = false
 
 [preset.meters.settings.Spectrum.analysis]
 channel_view = "Mono"
@@ -106,14 +107,11 @@ points = 512
 [[preset.meters]]
 show_source_label = false
 
-[preset.meters.settings.Stereometer]
-view = "Lissajous"
-drawing = "Dots"
-persistence = 0.05
-show_balance = true
-correlation_threshold = 0.0
+[preset.meters.settings.Goniometer]
+persistence = 0.016
+show_correlation = false
 
-[preset.meters.settings.Stereometer.analysis]
+[preset.meters.settings.Goniometer.analysis]
 correlation_time = 0.3
 scaling = "Auto"
 points = 2048
@@ -122,7 +120,7 @@ points = 2048
 show_source_label = false
 
 [preset.meters.settings.Loudness]
-target = -22.5
+target = -7.0
 lufs_bar = "ShortTerm"
 bar_range = [-60.0, 0.0]
 show_true_peak = true
@@ -156,6 +154,7 @@ slow_on_hover = true
 colouring = "SteadyHarmonics"
 collision_floor = -50.0
 collision_within = 6.0
+show_b = false
 
 [preset.meters.settings.Spectrum.analysis]
 channel_view = "Mono"
@@ -180,6 +179,7 @@ show_source_label = false
 
 [preset.meters.settings.Waveform]
 colouring = "Rgb"
+auto_gain = false
 
 [preset.meters.settings.Waveform.analysis]
 span = 2.1
@@ -215,6 +215,9 @@ mono_cutoff = 120.0
 
 [preset.meters.settings.TonalBalance.averaging]
 Seconds = 10.0
+
+[preset.meters.settings.TonalBalance.pick]
+Song = 0
 
 [[themes]]
 toml = """
@@ -262,13 +265,13 @@ waveform_mid = "#f2c94c"
 background_opacity = 1.0
 corner_radius = 0.0
 dim_when_silent = true
-gap = 3.0
+gap = 2.3
 glow = 0.0
 gradient = 0.0
-grid_fade = 0.029999999329447746
-line = "thin"
+grid_fade = 0.09
+line = "normal"
 look = "smooth"
 shape_cues = false
-text_scale = 0.8999999761581421
-vignette = 0.30000001192092896
+text_scale = 1.0
+vignette = 0.0
 """

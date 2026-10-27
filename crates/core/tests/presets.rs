@@ -181,7 +181,14 @@ fn the_built_ins_hold_the_meters_for_their_job_in_their_own_theme() {
     assert_eq!(app.scene().mode, LayoutMode::Window);
     assert_eq!(
         app.shown(),
-        [Spectrum, Stereometer, Loudness, Waveform, StereoBands]
+        [
+            Spectrum,
+            Stereometer,
+            Loudness,
+            Waveform,
+            StereoBands,
+            TonalBalance
+        ]
     );
     assert_eq!(app.scene().theme.name, MIXING);
     app.switch_to(MASTERING);
@@ -190,7 +197,7 @@ fn the_built_ins_hold_the_meters_for_their_job_in_their_own_theme() {
         app.shown(),
         [
             StereoBands,
-            Stereometer,
+            Goniometer,
             Loudness,
             Spectrum,
             Waveform,
@@ -286,7 +293,7 @@ fn changes_are_saved_after_a_pause_and_come_back_at_launch() {
     app.send(Event::ClosePane { meter: 2 });
     let mut app = app.relaunch();
     assert_eq!(app.current(), MIXING);
-    assert_eq!(app.scene().windows[0].meters.len(), 4);
+    assert_eq!(app.scene().windows[0].meters.len(), 5);
     app.send(Event::SwitchPreset { index: 0 });
     assert_eq!(app.edge(), Some(Edge::Left));
     assert_eq!(app.core.layout().thickness, 240.0);
@@ -410,11 +417,11 @@ fn reset_brings_a_built_in_back() {
         name: "My mix",
     });
     app.wait(AUTOSAVE_DELAY * 2);
-    assert_eq!(app.scene().windows[0].meters.len(), 4);
+    assert_eq!(app.scene().windows[0].meters.len(), 5);
     app.send(Event::ResetPreset { index: 1 });
     app.flush();
     assert_eq!(app.current(), MIXING);
-    assert_eq!(app.scene().windows[0].meters.len(), 5);
+    assert_eq!(app.scene().windows[0].meters.len(), 6);
     let saved: PresetData = toml::from_str(&app.disk.files[MIXING_FILE]).unwrap();
     assert_eq!(
         saved,

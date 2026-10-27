@@ -31,6 +31,7 @@ pub mod targets;
 pub mod theme;
 pub mod themes;
 pub mod tonal_balance;
+mod undo;
 
 use std::time::Duration;
 
@@ -398,6 +399,10 @@ pub enum Event<'a> {
     },
     /// Back to the current Preset as it was opened.
     RevertPreset,
+    /// ⌘Z: the last change to the Preset or its Themes taken back.
+    Undo,
+    /// ⇧⌘Z: the last change taken back made again.
+    Redo,
     /// The current state as a new Preset, which becomes current.
     SavePresetAsNew,
     DuplicatePreset {
@@ -565,6 +570,8 @@ pub struct AppCore {
     /// is, [`AppCore::retime`] counts the next frame from then.
     fresh: bool,
     taps: phase_scope::Taps,
+    /// Undo and Redo.
+    history: undo::History,
 }
 
 impl Default for AppCore {
@@ -651,6 +658,7 @@ impl AppCore {
             fresh: false,
             onboarding: Onboarding::default(),
             taps: phase_scope::Taps::default(),
+            history: undo::History::default(),
         }
     }
 
@@ -984,7 +992,13 @@ impl AppCore {
 
     pub fn handle(&mut self, event: Event, now: Duration) {
         use Event::*;
+        let mut record = None;
         match event {
+            Undo | Redo => {
+                self.step(matches!(event, Redo), now);
+                self.changed = true;
+                return;
+            }
             PresetFiles { files, settings } => {
                 let open = self.presets.load(files, settings);
                 self.onboarding.loaded(&self.presets.settings.first_launch);
@@ -995,6 +1009,7 @@ impl AppCore {
                 self.clamp_frame_rate_cap();
                 if let Some(data) = open {
                     self.apply(data, now);
+                    self.history.reset(self.snapshot());
                 }
                 self.changed = true;
                 return;
@@ -1056,9 +1071,11 @@ impl AppCore {
             _ if self.presets.current_index().is_some() => {
                 self.save_after = Some(now + AUTOSAVE_DELAY);
                 self.touched = true;
+                record = Some(undo::kind(&event));
             }
             _ => {}
         }
+        let theme_files = matches!(event, ThemeFiles(_));
         if let CaptureStarted { sample_rate } = event {
             self.capture_rate = Some(sample_rate);
         }
@@ -1070,6 +1087,96 @@ impl AppCore {
             self.presets.save_settings();
         }
         self.handle_event(event, now);
+        if let Some(kind) = record {
+            let current = self.snapshot();
+            self.history.changed(kind, current, now);
+        } else if theme_files {
+            // The folder's Themes as they are now, not a change to undo.
+            let current = self.snapshot();
+            self.history.settle(current);
+        }
+    }
+
+    /// What Undo and Redo bring back: the Preset's state, its window left
+    /// where it is, and the folder Themes it uses.
+    fn snapshot(&self) -> undo::Snapshot {
+        let mut data = self.current_data();
+        data.window.frame = None;
+        data.window.display = None;
+        let mut themes: Vec<Theme> = Vec::new();
+        for name in [&data.theme.light, &data.theme.dark] {
+            if let Some((theme, false)) = self.themes.get(name)
+                && !themes.iter().any(|t| t.name == theme.name)
+            {
+                themes.push(theme.clone());
+            }
+        }
+        undo::Snapshot { data, themes }
+    }
+
+    /// Undo (or Redo, `forward`): back to the state before the last change.
+    fn step(&mut self, forward: bool, now: Duration) {
+        let current = self.snapshot();
+        let state = if forward {
+            self.history.redo(current)
+        } else {
+            self.history.undo(current)
+        };
+        let Some(state) = state else {
+            return;
+        };
+        self.restore(state, now);
+        if self.presets.current_index().is_some() {
+            self.save_after = Some(now + AUTOSAVE_DELAY);
+            self.touched = true;
+        }
+    }
+
+    /// Puts a step's state back. Meters whose settings didn't change keep
+    /// running as they are; only a different set of Meters starts over.
+    fn restore(&mut self, state: undo::Snapshot, now: Duration) {
+        for theme in &state.themes {
+            self.themes.restore(theme);
+        }
+        let mut data = state.data.sanitised();
+        data.window.frame = self.window.frame;
+        data.window.display = self.window.display.clone();
+        let same_meters = data.meters.len() == self.meters.len()
+            && data
+                .meters
+                .iter()
+                .zip(&self.meters)
+                .all(|(m, slot)| m.settings.kind() == slot.meter.settings().kind());
+        if !same_meters {
+            self.apply(data, now);
+            return;
+        }
+        let mut reroute = false;
+        for (slot, m) in self.meters.iter_mut().zip(data.meters) {
+            if slot.meter.settings() != m.settings {
+                slot.meter.set_settings(m.settings.clamped());
+            }
+            reroute |= slot.pick != m.send_plugin || slot.overlay != m.overlay;
+            slot.pick = m.send_plugin;
+            slot.overlay = m.overlay;
+            slot.show_source_label = m.show_source_label;
+            slot.overrides = m.overrides.iter().map(|o| (o.role, o.colour)).collect();
+            slot.reference = m.reference;
+        }
+        self.layout = data.bar;
+        if self.layout.screen == ScreenMode::ReserveSpace && self.platform == Platform::MacOs {
+            self.layout.screen = ScreenMode::FloatOnTop;
+        }
+        self.window = data.window;
+        self.mode = data.mode;
+        self.themes
+            .choose_names(&data.theme.light, &data.theme.dark);
+        if data.listen_to != self.listen_to {
+            self.handle_event(Event::SetListenTo(data.listen_to), now);
+        } else if reroute && self.listen_to == ListenTo::SendPlugins {
+            self.route(now);
+        }
+        self.changed = true;
     }
 
     fn handle_preset(&mut self, event: Event, now: Duration) {
@@ -1102,6 +1209,7 @@ impl AppCore {
         };
         if let Some(data) = open {
             self.apply(data, now);
+            self.history.reset(self.snapshot());
             // Reverting saves the opened state back.
             if matches!(event, Event::RevertPreset) {
                 self.touched = true;
@@ -2166,7 +2274,9 @@ impl AppCore {
             | Event::DeletePreset { .. }
             | Event::MovePreset { .. }
             | Event::ResetPreset { .. }
-            | Event::ImportPreset(_) => return,
+            | Event::ImportPreset(_)
+            | Event::Undo
+            | Event::Redo => return,
             Event::Screens(screens) => {
                 if self.screens == screens {
                     return;

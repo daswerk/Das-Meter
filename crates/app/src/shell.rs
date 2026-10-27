@@ -184,6 +184,8 @@ struct AppWindow {
     /// The window has had keyboard focus. A new window reports losing focus
     /// before it first gains it, which mustn't close a menu.
     had_focus: bool,
+    /// Key presses for egui that came another way (⌘Z from the menu bar).
+    keys: Vec<egui::Event>,
     // Dropped last: the surface must go before the window.
     window: Arc<Window>,
 }
@@ -494,6 +496,7 @@ impl Shell {
                 ui_hot: false,
                 title: String::new(),
                 had_focus: false,
+                keys: Vec::new(),
                 window,
             },
         );
@@ -698,7 +701,8 @@ impl Shell {
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut actions = crate::ui::Actions::new();
         let ui = self.core.scene().map(|scene| {
-            let input = app.egui.take_egui_input(&app.window);
+            let mut input = app.egui.take_egui_input(&app.window);
+            input.events.append(&mut app.keys);
             let (mut output, done) = app.ui.run(input, scene, app.role.surface());
             actions = done;
             let platform = std::mem::take(&mut output.platform_output);
@@ -1466,6 +1470,22 @@ impl ApplicationHandler for Shell {
                     self.core.handle(close, now);
                 }
             },
+            // Ctrl+Z / Ctrl+Shift+Z where there's no menu bar to give them
+            // (on macOS the Edit menu has them); a text field takes its own.
+            WindowEvent::KeyboardInput { event: key, .. }
+                if cfg!(not(target_os = "macos"))
+                    && !on_ui
+                    && key.state == ElementState::Pressed
+                    && self.modifiers.control_key()
+                    && matches!(
+                        key.logical_key.as_ref(),
+                        winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("z")
+                    ) =>
+            {
+                let redo = self.modifiers.shift_key();
+                self.core
+                    .handle(if redo { Event::Redo } else { Event::Undo }, now);
+            }
             WindowEvent::Resized(size) => {
                 app.surface
                     .resize(&mut app.painter.gpu, size.width, size.height);
@@ -1622,6 +1642,12 @@ impl ApplicationHandler for Shell {
             for command in commands {
                 match command {
                     crate::main_menu::Command::Core(event) => self.core.handle(event, now),
+                    crate::main_menu::Command::Undo => {
+                        undo(&mut self.windows, &mut self.core, false, now);
+                    }
+                    crate::main_menu::Command::Redo => {
+                        undo(&mut self.windows, &mut self.core, true, now);
+                    }
                     crate::main_menu::Command::Export => crate::sharing::export(&self.core),
                     crate::main_menu::Command::Import => {
                         crate::sharing::import_chosen(&mut self.core, now);
@@ -1790,6 +1816,32 @@ impl ApplicationHandler for Shell {
             None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+/// ⌘Z (or ⇧⌘Z, `redo`): to the text field being typed in, if there's
+/// one, else Undo (Redo) of the last change.
+fn undo(windows: &mut HashMap<WindowId, AppWindow>, core: &mut AppCore, redo: bool, now: Duration) {
+    let typing = windows
+        .values_mut()
+        .find(|app| app.window.has_focus() && app.ui.ctx.egui_wants_keyboard_input());
+    if let Some(app) = typing {
+        let modifiers = if redo {
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+        } else {
+            egui::Modifiers::COMMAND
+        };
+        app.keys.push(egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+        app.window.request_redraw();
+        return;
+    }
+    core.handle(if redo { Event::Redo } else { Event::Undo }, now);
 }
 
 impl Shell {

@@ -144,10 +144,15 @@ fn the_built_ins_are_listed_and_read_only() {
         ]
     );
     assert!(scene.theme.themes.iter().all(|t| t.built_in));
-    // Default: follow the system with Light and Nocturne; the system starts dark.
-    assert_eq!(scene.theme.name, "Nocturne");
+    // Default: follow the system with Light and Mixing/Producing; the
+    // system starts dark.
+    assert_eq!(scene.theme.name, "Mixing/Producing 1.0");
     assert!(scene.theme.follows_system());
-    assert_eq!(scene.palette, Palette::nocturne());
+    let mixing = Theme::built_ins()
+        .into_iter()
+        .find(|t| t.name == "Mixing/Producing 1.0")
+        .unwrap();
+    assert_eq!(scene.palette, mixing.palette);
 }
 
 #[test]
