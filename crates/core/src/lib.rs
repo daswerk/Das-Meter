@@ -12,6 +12,8 @@ mod activity;
 
 /// Who designed Das-Meter, as the app's About and settings say.
 pub const DESIGNED_BY: &str = "Designed by Punktmidi";
+/// Where people can give something for Das-Meter, if they like it.
+pub const DONATE_URL: &str = "https://paypal.me/forpunktmidi";
 
 pub mod curves;
 pub mod displays;

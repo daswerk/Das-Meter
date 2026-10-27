@@ -2,7 +2,9 @@
 
 A **Theme** is a named set of colours and styling: background opacity, line
 thickness, spacing, corner radius, text size and its **Look**. Das-Meter
-comes with **Nocturne** (deep blue-violet black with gold, cyan and green), **Dark**,
+comes with the built-in Presets' Themes (**Mixing/Producing 1.0**, the
+standard one, **Mastering 1.0** and **Producing Top-Bar 1.0**), **Nocturne**
+(deep blue-violet black with gold, cyan and green), **Dark**,
 **Light** and **High contrast** (a colour-blind-safe palette, with shape cues
 besides colour), and three darker ones with a near-black body and dark grey
 panels: **Midnight Purple**, **Deep Turquoise** and **Graphite** (neutral
@@ -31,7 +33,7 @@ files in the themes folder, so you can share them:
 
 A lower background opacity makes the Meters see-through.
 
-![All built-in Themes, and an edited Nocturne](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/themes.png)
+![All built-in Themes](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/themes.png)
 
 ## Look
 

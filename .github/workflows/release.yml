@@ -160,6 +160,10 @@ jobs:
         run: |
           flags=(--draft --title "Das-Meter $VERSION" --generate-notes)
           [[ $PRERELEASE == true ]] && flags+=(--prerelease)
+          # The version's own notes (downloads, what's new, the donation
+          # link) go above GitHub's list of changes.
+          notes="docs/release-notes/$GITHUB_REF_NAME.md"
+          [[ -f $notes ]] && flags+=(--notes-file "$notes")
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/Das-Meter-"$VERSION".*
 
   linux:

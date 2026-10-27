@@ -45,6 +45,7 @@ pub struct MainMenu {
     system_capture: CheckMenuItem,
     send_plugins: CheckMenuItem,
     help: MenuId,
+    donate: MenuId,
     float_on_top: CheckMenuItem,
     keep_here: MenuItem,
     bar_mode: CheckMenuItem,
@@ -87,6 +88,7 @@ impl MainMenu {
         let system_capture = CheckMenuItem::new("System Capture", true, true, None);
         let send_plugins = CheckMenuItem::new("Send Plugins", true, false, None);
         let help = MenuItem::new("Das-Meter Help", true, None);
+        let donate = MenuItem::new("Support Das-Meter…", true, None);
         let float_on_top = CheckMenuItem::new("Float on Top", true, true, None);
         let keep_here = MenuItem::new("Keep Windows Here", false, None);
         let bar_mode = CheckMenuItem::new("Bar Mode", true, true, None);
@@ -146,7 +148,7 @@ impl MainMenu {
             ],
         )
         .expect("build the Window menu");
-        let help_menu = Submenu::with_items("Help", true, &[&help, &show_welcome])
+        let help_menu = Submenu::with_items("Help", true, &[&help, &show_welcome, &donate])
             .expect("build the Help menu");
         let undo = MenuItem::new(
             "Undo",
@@ -208,6 +210,7 @@ impl MainMenu {
             system_capture,
             send_plugins,
             help: help.id().clone(),
+            donate: donate.id().clone(),
             float_on_top,
             keep_here,
             presets,
@@ -294,6 +297,8 @@ impl MainMenu {
                     Some(Command::Uninstall)
                 } else if id == self.help {
                     Some(Command::Open(HELP_URL))
+                } else if id == self.donate {
+                    Some(Command::Open(dasmeter_core::DONATE_URL))
                 } else {
                     None
                 }

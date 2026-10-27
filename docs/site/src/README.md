@@ -5,7 +5,8 @@ tracks from your DAW: **Waveform**, **Spectrum**, **Spectrogram**, **Loudness
 Meter**, **Stereometer**, **Goniometer**, **Phase Scope**, **Cepstrum**,
 **Oscilloscope**, **Tonal Balance**, **Tuner**, **Stereo Bands** and **Needle
 Meter**. It runs on its own, next to any app or DAW, on macOS, Windows and
-Linux. It's free and open source (MIT OR Apache-2.0). *Designed by Punktmidi.*
+Linux. It's free and open source (MIT OR Apache-2.0). *Designed by Punktmidi.* If it
+helps your music, you can [support it with a donation](https://paypal.me/forpunktmidi).
 
 ![Das-Meter in the Smooth Look](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/smooth.png)
 

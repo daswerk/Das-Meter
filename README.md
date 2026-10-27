@@ -111,7 +111,7 @@ built-in and it's saved as your own copy, which you can rename. A Preset can
 follow the system's light/dark setting with a pair of Themes, and Themes are
 plain TOML files you can share.
 
-![All built-in Themes: Nocturne, Dark, Light, High contrast, Midnight Purple, Deep Turquoise and Graphite, and an edited Nocturne](docs/images/themes.png)
+![All built-in Themes: Mixing/Producing, Mastering, Producing Top-Bar, Dark, Light, High contrast, Midnight Purple, Deep Turquoise, Graphite and Nocturne](docs/images/themes.png)
 
 Everything is in **Settings ▸ Theme**, with a live preview:
 
@@ -212,6 +212,9 @@ sleeps in silence, and does its analysis outside your DAW.
 | **Linux** x86_64 (Arch, Fedora, Ubuntu 24.04+…), PipeWire | Download `das-meter-<version>-linux-x86_64.tar.gz`, unpack it and run `./das-meter`. There's no Send Plugin for Linux yet. |
 | **Windows** 10 and 11, x64 | Download `Das-Meter-<version>-windows-x64-setup.exe` and run it. It installs the app and the Send Plugin (CLAP and VST3). |
 
+Das-Meter is free. If it helps your music, you can
+[support it with a donation](https://paypal.me/forpunktmidi).
+
 The [install guide](INSTALL.md) has every step, including the Send Plugin,
 updates, uninstalling and building from source. The
 [docs](https://daswerk.github.io/Das-Meter/) explain every Meter and setting.
@@ -249,7 +252,8 @@ audio. To redo them after a visual change, build the app and run
 ## Credits
 
 Designed by **Punktmidi**. Feedback is welcome: open an
-[issue](https://github.com/daswerk/Das-Meter/issues).
+[issue](https://github.com/daswerk/Das-Meter/issues). Donations are welcome
+too: [paypal.me/forpunktmidi](https://paypal.me/forpunktmidi).
 
 ## Licence
 

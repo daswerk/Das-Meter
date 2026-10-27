@@ -3767,6 +3767,10 @@ fn app_settings(ui: &mut egui::Ui, scene: &Scene, actions: &mut Actions) {
         .small()
         .weak(),
     );
+    ui.hyperlink_to(
+        RichText::new("Like Das-Meter? Support it with a donation").small(),
+        dasmeter_core::DONATE_URL,
+    );
 }
 
 /// Every setting of one Meter, and its colours.
