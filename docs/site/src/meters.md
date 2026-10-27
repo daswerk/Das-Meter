@@ -1,7 +1,9 @@
 # Meters
 
-Das-Meter has eight kinds of Meter. Right-click one for its settings; the settings
-panel has the same settings for every Meter.
+Das-Meter has thirteen kinds of Meter. Right-click one for its settings; the
+settings panel has the same settings for every Meter, and a few more.
+Step-by-step guides: [Tonal Balance and A/B](tonal-balance.md) and
+[Kick and bass in the Phase Scope](kick-and-bass.md).
 
 ## Waveform
 
@@ -9,7 +11,13 @@ panel has the same settings for every Meter.
 
 The audio over time, coloured by frequency band (low, mid, high). Settings:
 **Channels** (mono, Left/Right, or Mid/Side), time span (1–30 s), display gain
-and the two band crossovers.
+and the two band crossovers. **Boost quiet input** brings a quiet signal up to
+a good height (by up to +30 dB on top of the gain): it rises slowly and comes
+down at once, so a loud hit is never cut off.
+
+The Waveform stays put in time and a camera glides over it: each slice of
+the audio is drawn once, where it belongs, and only the view moves. So it
+scrolls smoothly, by fractions of a pixel, without any part of it shimmering.
 
 ## Spectrum
 
@@ -20,8 +28,11 @@ How loud each frequency is. Settings: **Channels**, **FFT size**, window,
 **Style** (a line, or bars at 3, 6 or 12 per octave), attack and release,
 **Peak hold**, **Peak line**, and the shown frequency and level ranges. With
 **Peak line** on, the loudest peak's level, frequency and note stay at the top
-right, and a thin line runs from the peak to them.
-Turn on **Mouse readout** to read any frequency and its note under the mouse.
+right, and a thin line runs from the peak to them. The peak is the music's
+loudest as it is, usually the kick or the bass, not as the slope tilts it:
+changing the slope moves the curve, never which peak the line follows.
+**Mouse readout** (on by default) reads any frequency and its note under the
+mouse.
 Drag a box over the Spectrum to zoom into it: a zoom window opens in the
 other half of the Meter, showing the box's frequencies and levels larger, with
 its own scale and a finer frequency resolution (the largest FFT size). Its ×
@@ -63,10 +74,10 @@ average over the last **3 s**, **10 s** or **30 s**, or over everything since
 you last reset it (**Whole**). Silence is left out, so a pause doesn't pull it
 down. **Reset long-term average** in the Meter's menu starts it over.
 
-Type a name and press **Save as Reference curve** to keep the long-term
-average as a **Reference curve**, say of a reference track you just played.
-Pick a curve under **Reference curve** and it's drawn dashed behind the live
-trace, with the Spectrum's slope, so you can compare your mix with it. Each
+**Reference curves** are in the Spectrum's settings (**Settings…** in its
+menu): with the long-term average on, play a reference track, type a name
+and press **Save curve** to keep that average as a curve. Pick one under
+**Show** and it's drawn dashed behind the live trace, with the Spectrum's slope, so you can compare your mix with it. Each
 Spectrum remembers its curve in the Preset, and an exported Preset takes its
 curves along. Curves are files in the curves folder:
 
@@ -122,6 +133,21 @@ under it (+1: mono, 0: unrelated, −1: out of phase) and an optional **Balance
 bar**. Settings: the view, **Scale** (auto or fixed gain), persistence and
 the correlation's averaging time. The scope stretches to whatever shape the
 Meter has; in a wide, low Meter the bars stand upright beside it.
+
+## Goniometer
+
+![The Goniometer](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/meter-goniometer.png)
+
+The stereo image as on the old studio meters: Left against Right as a cloud
+of glowing points, in a square with the **L** and **R** axes dotted across
+it. Mono stands upright in the middle, wide stereo spreads out sideways, and
+something out of phase lies flat. Where many points land the cloud burns
+towards white, so the densest part of the image glows hottest. A quiet
+signal is scaled up to fill the square, and **Scale** at the top says by how
+much (**Scale** in the settings: auto or a fixed gain). Below it, the phase
+**correlation** (+1 mono, −1 out of phase). Settings: **Persistence** (how
+long a point glows), **Correlation bar** and the correlation's averaging
+time. It uses the Stereometer's colours.
 
 ## Cepstrum
 
@@ -265,14 +291,12 @@ or **Add Meter ▸ Needle Meter**.
 
 How alike Left and Right are in each of ten octave bands, from 31 Hz to
 16 kHz: is the low end mono, and where is the width? Each band's **band
-correlation** is a bar up toward +1 (alike) or down toward −1 (opposite
-polarity), in the Correlation colours. It's the Stereometer's Correlation
-measured on that band alone, named apart so the two aren't confused.
-
-Under it, when there's room and **Show width** is on, each band's **width**:
-how much of the band is Side, from mono (empty) through unrelated channels
-(half-way, the line) to opposite polarity (full). A silent band is left
-empty. **Averaging** sets how calmly the readings move (300 ms by default).
+correlation** is drawn as the Stereometer draws its Correlation: a bar
+from −1 (opposite polarity) to +1 (alike), filled from 0 with a marker at
+the reading, in the Correlation colours. It's the Stereometer's
+Correlation measured on that band alone, named apart so the two aren't
+confused. A silent band is left empty. **Averaging** sets how calmly the
+readings move (300 ms by default).
 
 A common aim for electronic music: band correlation near +1 below about
 120 Hz, so the low end stays punchy and survives mono playback. Tonal
@@ -319,8 +343,14 @@ over about a third of an octave, as the ear hears balance.
   **Low-mid** (120–300), **Mid** (300 Hz–2 kHz) and **High**, each a bar
   showing how far the mix is from the Target, inside its range or not.
 - **Auto** (the default) shows Fine in a window and Broad in the Bar.
-- **Low end zoom** shows only 20–300 Hz, with a grid line on every note and
-  the keys' root notes marked, so a bass that's too much on one note shows.
+- **Low end zoom** (the **Low end** button on the Meter) shows only
+  20–300 Hz, with a grid line on every note and the keys' root notes marked,
+  so a bass that's too much on one note shows.
+
+The view keeps its level range steady as the music moves: it widens at once
+when the curves would leave it, and narrows, smoothly, only when there's
+plenty of room. Point at the curves to see the frequency and note there, and
+how far the mix sits from the Target at that point.
 
 Under the curves, the low end's figures: the loudest **Sub** and **Bass**
 notes ("Sub A1 55.0 Hz"), **Low mono** (how alike Left and Right are below
@@ -331,34 +361,71 @@ Bass (peak over average, in dB: how punchy they are) against the Target's.
 **Average** sets how far back the mix's curve reaches: **3 s**, **10 s**
 (the default), **30 s** or **Whole** (everything since **Reset average**).
 **Freeze** keeps the curve as it is now as a ghost, to compare before and
-after a change. **Compare file…** compares a bounce of your mix instead of
-the live Source.
+after a change. **Add files… ▸ A bounce of your mix, to compare…** compares a
+bounce of your mix instead of the live Source; **Stop comparing** goes back.
+
+### Listening A/B
+
+When the song you compare with came from a file, **A** and **B** appear on
+the Meter: **A** is your mix, **B** plays the song, turned up or down to
+your mix's loudness so the louder one doesn't sound better just for being
+louder. The song keeps running while you hear A, so switching back picks up
+where it is; it loops at its end. While B plays, the mix's average pauses.
+
+A Spectrum can show B too: with a song loaded for A/B, **Show B** in the
+Spectrum's menu draws B's spectrum as a grey layer, gain-matched to your mix,
+while you hear either. Compare the two traces as you switch.
+
+Under the curves, the song's waveform shows where B is. Drag across it to
+choose the part B plays, say the drop, and it loops just that part; click
+to play from a point to the end, double-click for the whole song again.
+
+While B plays you hear the song alone:
+
+- **On Send Plugins**, the Das-Meter Send the Meter listens to goes quiet
+  (it fades out and back in).
+- **On System Capture**, everything else on the computer goes quiet, your
+  DAW too; only Das-Meter plays. The Meters still see the mix (on macOS),
+  so switching back is instant. Switch to A and it all plays again, as it
+  does if Das-Meter quits. On macOS this uses the same permission as System
+  Capture; on Windows each other app's sound is muted and unmuted after
+  (an app you'd muted yourself stays muted). On Linux it can't yet, so put
+  a Das-Meter Send on your DAW's master bus, or stop playback, to hear the
+  song alone.
 
 ### Targets
 
-Make a Target from songs that sound the way you want, your own references:
+Make a Target from songs that sound the way you want, your own references.
+Songs are shown by their file's name (or the name you gave a learned one).
+The Meter compares with one of them, picked at the top left of the Meter
+(the song you just added, at first); **Average of all** compares with all of
+them together instead.
 
-- **Learn a song…**, play a song from start to end, name it and the Target,
-  then **Add**.
-- **Add files…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
+- **Learn a song…**, play a song from start to end, give it a name (or
+  leave it as "Song 1"), then **Add**.
+- **Add files… ▸ Reference songs for the Target…** analyses audio files (WAV, AIFF, FLAC, MP3, Ogg, AAC/M4A,
   ALAC) in the background, far faster than playing them. You can also drop
   files or whole folders on the Meter. Files that can't be read are listed
   with the reason.
 
 By default only each song's **loud parts** count (its drops and choruses,
 within 4 LU of its loudest moments); **Teach with ▸ Whole song** counts all
-of it. The Target's range is how far its songs differ from each other; with
-one song it's ±2.5 dB. **Songs** lists them, and **×** removes one.
+of it. Averaged, the Target's range is how far its songs differ from each
+other; one song's is ±2.5 dB. **Songs** lists them, and **×** removes one.
 
 Each song's key is detected, and its low end is lined up by key before the
 songs are averaged, so the Target stays note-sharp. When your mix is in
 another key ("Your mix is in F minor, this Target's songs in A minor"),
-**Shift** moves the Target's low end (below 300 Hz) to your key. **Key**
-can also be set by hand instead of detected.
+**Shift** moves the Target's low end (below 300 Hz) to your key, and it
+stays there, whatever the key detection says next, until **Undo shift**.
+The suggestion only comes once the detection has named the same key for
+10 seconds, and then stays.
+**Mix key** can also be set by hand instead of detected.
 
 Targets are files in the targets folder (next to `curves` and `themes`),
-one per Target, holding each song's figures but never any audio. An
-exported Preset takes its Targets along. Das-Meter ships no Targets: make
+one per Target, holding each song's figures and where its file is (for
+A/B), never any audio. An exported Preset takes its Targets along, without
+where the files are. Das-Meter ships no Targets: make
 your own from music you know.
 
 To show it, right-click a Meter and choose **Change Meter ▸ Tonal Balance**,

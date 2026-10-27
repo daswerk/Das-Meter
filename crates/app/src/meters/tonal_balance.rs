@@ -5,11 +5,10 @@
 //! it is and its crest against the Target's.
 
 use dasmeter_analysis::tonal_balance::{Band, FINE_BELOW_HZ, Region, Summary, tonal_grid};
-use dasmeter_core::{Colour, Role, TargetScene, TonalBalanceMeterSettings, TonalView};
+use dasmeter_core::{AbScene, Colour, Role, TargetScene, TonalBalanceMeterSettings, TonalView};
 
 use super::labels::Align;
 use super::shapes::{Area, smooth};
-use super::spectrum::dashed;
 use super::{Canvas, map};
 
 /// What a Tonal Balance Meter draws besides its settings.
@@ -20,6 +19,65 @@ pub struct Drawn<'a> {
     /// The file compared in place of the live Source.
     pub comparing: Option<&'a str>,
     pub target: Option<&'a TargetScene>,
+    /// Where the pointer is, in the same pixels as the Meter, if it's over it.
+    pub pointer: Option<[f32; 2]>,
+    /// A/B listening, when the picked song can be played.
+    pub ab: Option<&'a AbScene>,
+}
+
+/// How far the Fine view's top or bottom may sit from what's drawn before
+/// it moves in (dB): it moves out at once, in only when this much is spare.
+const RANGE_SLACK_DB: f32 = 12.0;
+/// How much of the way to its new range the view moves each frame.
+const RANGE_EASE: f32 = 0.15;
+
+/// The Fine view's dB range, held between frames so the curves don't jump
+/// as the levels move: it widens when something would leave it, narrows
+/// only when plenty is spare, and glides to the new range.
+#[derive(Default)]
+pub struct Steady {
+    /// (bottom, top) as last drawn, and where it's heading.
+    shown: Option<(f32, f32)>,
+    goal: Option<(f32, f32)>,
+    /// The frequency range it was for: a new one starts afresh.
+    range: Option<(f32, f32)>,
+}
+
+impl Steady {
+    /// The range to draw, given the one that fits what's drawn now.
+    fn next(&mut self, fit: (f32, f32), range: (f32, f32)) -> (f32, f32) {
+        let (Some(shown), Some(goal)) = (self.shown, self.goal) else {
+            return self.start(fit, range);
+        };
+        if self.range != Some(range) {
+            return self.start(fit, range);
+        }
+        let (mut bottom, mut top) = goal;
+        if fit.1 > top || fit.1 < top - RANGE_SLACK_DB {
+            top = fit.1;
+        }
+        if fit.0 < bottom || fit.0 > bottom + RANGE_SLACK_DB {
+            bottom = fit.0;
+        }
+        bottom = bottom.clamp(top - FINE_SPAN_DB.1, top - FINE_SPAN_DB.0);
+        let goal = (bottom, top);
+        let step = |from: f32, to: f32| {
+            let next = from + (to - from) * RANGE_EASE;
+            if (to - next).abs() < 0.05 { to } else { next }
+        };
+        let next = (step(shown.0, goal.0), step(shown.1, goal.1));
+        self.shown = Some(next);
+        self.goal = Some(goal);
+        next
+    }
+
+    /// Starts afresh at `fit`: the first frame, or a new frequency range.
+    fn start(&mut self, fit: (f32, f32), range: (f32, f32)) -> (f32, f32) {
+        self.range = Some(range);
+        self.shown = Some(fit);
+        self.goal = Some(fit);
+        fit
+    }
 }
 
 /// The low end zoom's range.
@@ -35,6 +93,109 @@ const VERDICT_OCTAVES: f32 = 1.0 / 3.0;
 const BROAD_SPAN_DB: f32 = 12.0;
 /// Below this the low end counts as not mono enough.
 const MONO_WARNING: f32 = 0.8;
+/// The Target's band is drawn smoothed over this many octaves, so it reads
+/// as a shape rather than every point's wobble.
+const TARGET_OCTAVES: f32 = 1.0 / 6.0;
+/// Taller than this (logical px), a Meter shows its readouts and controls.
+const ROOMY_HEIGHT: f32 = 110.0;
+/// Narrower than this (logical px), the controls are left out.
+const CONTROLS_MIN_WIDTH: f32 = 260.0;
+/// The on-Meter controls' sizes, in logical px.
+const TARGET_PICKER_WIDTH: f32 = 150.0;
+const LOW_END_WIDTH: f32 = 64.0;
+const AB_WIDTH: f32 = 56.0;
+const CONTROLS_HEIGHT: f32 = 18.0;
+const CONTROLS_GAP: f32 = 8.0;
+/// B's waveform strip under the curves (logical px), shown from this tall a Meter.
+const STRIP_HEIGHT: f32 = 34.0;
+const STRIP_GAP: f32 = 6.0;
+const STRIP_MIN_HEIGHT: f32 = 190.0;
+
+/// Where the controls over a Tonal Balance Meter go (egui draws them on
+/// the title line): the Target picker at its left; at its right A/B when
+/// the picked song can be played, and Low end zoom while the curves show.
+#[derive(Clone, Copy, Debug)]
+pub struct Controls {
+    pub target: Area,
+    pub low_end: Option<Area>,
+    pub ab: Option<Area>,
+    /// B's waveform, to choose the part it plays: under the curves.
+    pub strip: Option<Area>,
+}
+
+impl Controls {
+    /// Where the title line's text on the right has to end.
+    fn right_text_end(&self, fallback: f32, gap: f32) -> f32 {
+        [self.ab, self.low_end]
+            .into_iter()
+            .flatten()
+            .map(|a| a.x - gap)
+            .fold(fallback, f32::min)
+    }
+}
+
+/// The controls for a Meter drawn in `inner` (its area inside the padding),
+/// whose units are `scale` per logical px, with the Theme's `text_scale`;
+/// `None` when there's no room. `ab`: the picked song can be listened to.
+pub fn controls(
+    inner: Area,
+    (scale, text_scale): (f32, f32),
+    settings: &TonalBalanceMeterSettings,
+    bar: bool,
+    ab: bool,
+) -> Option<Controls> {
+    if inner.height <= ROOMY_HEIGHT * scale || inner.width < CONTROLS_MIN_WIDTH * scale {
+        return None;
+    }
+    let height = CONTROLS_HEIGHT * scale;
+    let y = inner.y - scale;
+    let target = Area {
+        x: inner.x,
+        y,
+        width: TARGET_PICKER_WIDTH * scale,
+        height,
+    };
+    let low_end = (!is_broad(settings, bar)).then(|| Area {
+        x: inner.right() - LOW_END_WIDTH * scale,
+        y,
+        width: LOW_END_WIDTH * scale,
+        height,
+    });
+    let ab_area = ab.then(|| {
+        let right = low_end.map_or(inner.right(), |l| l.x - CONTROLS_GAP * scale);
+        Area {
+            x: right - AB_WIDTH * scale,
+            y,
+            width: AB_WIDTH * scale,
+            height,
+        }
+    });
+    // Above the readouts' line, at the bottom of the curves.
+    let readouts = 14.0 * scale * text_scale + 4.0 * scale;
+    let strip = ab
+        .then_some(())
+        .filter(|_| inner.height > STRIP_MIN_HEIGHT * scale)
+        .map(|_| Area {
+            x: inner.x,
+            y: inner.bottom() - readouts - STRIP_HEIGHT * scale,
+            width: inner.width,
+            height: STRIP_HEIGHT * scale,
+        });
+    Some(Controls {
+        target,
+        low_end,
+        ab: ab_area,
+        strip,
+    })
+}
+
+fn is_broad(settings: &TonalBalanceMeterSettings, bar: bool) -> bool {
+    match settings.view {
+        TonalView::Broad => true,
+        TonalView::Fine => false,
+        TonalView::Auto => bar,
+    }
+}
 
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -57,15 +218,15 @@ fn verdict_colour(c: &Canvas, outside: f32, inside: Role) -> Colour {
 }
 
 /// `values` at the grid's `frequencies`, each the average of those within
-/// half of [`VERDICT_OCTAVES`] either side.
-fn smoothed(values: &[f32], frequencies: &[f32]) -> Vec<f32> {
+/// half of `octaves` either side.
+fn smoothed(values: &[f32], frequencies: &[f32], octaves: f32) -> Vec<f32> {
     frequencies
         .iter()
         .map(|&f| {
             let (sum, count) = frequencies
                 .iter()
                 .zip(values)
-                .filter(|&(&g, _)| (g / f).log2().abs() <= VERDICT_OCTAVES / 2.0)
+                .filter(|&(&g, _)| (g / f).log2().abs() <= octaves / 2.0)
                 .fold((0.0, 0), |(sum, count), (_, &v)| (sum + v, count + 1));
             sum / count.max(1) as f32
         })
@@ -79,11 +240,14 @@ pub fn draw(
     settings: &TonalBalanceMeterSettings,
     drawn: Drawn,
     bar: bool,
+    steady: &mut Steady,
 ) {
     let line = c.px(14.0) * c.styling.text_scale;
-    let roomy = area.height > c.px(110.0);
-    let (title, rest) = area.split_top(line + c.px(4.0));
-    title_line(c, title, &drawn);
+    let roomy = area.height > c.px(ROOMY_HEIGHT);
+    let ab = drawn.target.is_some_and(|t| t.song_file.is_some());
+    let controls = controls(area, (c.scale, c.styling.text_scale), settings, bar, ab);
+    let (title, rest) = area.split_top(line.max(c.px(CONTROLS_HEIGHT)) + c.px(4.0));
+    title_line(c, title, &drawn, controls);
     let (plot, readouts) = if roomy {
         rest.split_bottom(line + c.px(4.0))
     } else {
@@ -95,17 +259,18 @@ pub fn draw(
             },
         )
     };
-    let broad = match settings.view {
-        TonalView::Broad => true,
-        TonalView::Fine => false,
-        TonalView::Auto => bar,
+    // Room for B's waveform strip, which the egui layer draws.
+    let plot = match controls.and_then(|k| k.strip) {
+        Some(strip) => plot.split_bottom(strip.height + c.px(STRIP_GAP)).0,
+        None => plot,
     };
+    let broad = is_broad(settings, bar);
     if drawn.mix.is_none() && drawn.target.is_none_or(|t| t.curve.is_empty()) {
         let dim = c.dim();
-        let text = if drawn.target.is_some() {
-            "Play something to compare with the Target"
-        } else {
-            "Play something, then pick or teach a Target in the menu"
+        let text = match (drawn.target.is_some(), controls.is_some()) {
+            (true, _) => "Play something to compare with the Target",
+            (false, true) => "Play something, then pick a Target above or teach one in the menu",
+            (false, false) => "Play something, then pick or teach a Target in the menu",
         };
         c.text(text, plot.x, plot.y + c.px(4.0), 11.0, dim, Align::Left);
         return;
@@ -113,7 +278,7 @@ pub fn draw(
     if broad {
         draw_broad(c, plot, &drawn);
     } else {
-        draw_fine(c, plot, settings, &drawn);
+        draw_fine(c, plot, settings, &drawn, steady);
     }
     if roomy {
         readout_line(c, readouts, &drawn);
@@ -121,48 +286,81 @@ pub fn draw(
 }
 
 /// The Target's name and key (or what's missing), the mix's key, and
-/// whether a song is being learned.
-fn title_line(c: &mut Canvas, area: Area, drawn: &Drawn) {
+/// whether a song is being learned. With `controls`, the Target picker
+/// shows the name, and the rest sits between the controls.
+fn title_line(c: &mut Canvas, area: Area, drawn: &Drawn, controls: Option<Controls>) {
     let (text, dim, accent) = (c.colour(Role::Text), c.dim(), c.colour(Role::Accent));
-    let mut left = match drawn.target {
-        None => "No Target".to_owned(),
-        Some(t) if t.missing => format!("{} (missing)", t.name),
-        Some(t) if t.songs.is_empty() => format!("{} (no songs yet)", t.name),
-        Some(t) => match t.key {
-            Some(key) => format!("{} · {}", t.name, key.name()),
-            None => t.name.clone(),
-        },
-    };
-    if let Some(seconds) = drawn.learning {
-        left = format!("Learning {}  ·  {left}", seconds_text(seconds));
-    }
+    let mut parts: Vec<String> = Vec::new();
     if let Some(file) = drawn.comparing {
-        left = format!("{file} vs {left}");
+        parts.push(format!("{file} vs"));
     }
+    match (drawn.target, controls.is_some()) {
+        (None, false) => parts.push("No Target".to_owned()),
+        (None, true) => {}
+        (Some(t), with_picker) => {
+            let state = if t.missing {
+                Some("(missing)".to_owned())
+            } else if t.songs.is_empty() {
+                Some("(no songs yet)".to_owned())
+            } else {
+                t.key.map(|key| key.name())
+            };
+            match (with_picker, state) {
+                (false, Some(state)) if t.songs.is_empty() => parts.push(state),
+                (false, Some(state)) if t.missing => {
+                    parts.push(format!("{} {state}", t.label()));
+                }
+                (false, Some(key)) => parts.push(format!("{} · {key}", t.label())),
+                (false, None) => parts.push(t.label()),
+                (true, Some(state)) => parts.push(state),
+                (true, None) => {}
+            }
+        }
+    }
+    if let Some(seconds) = drawn.learning {
+        parts.insert(0, format!("Learning {}", seconds_text(seconds)));
+    }
+    let left = parts.join("  ·  ");
     let colour = if drawn.learning.is_some() {
         accent
     } else {
         text
     };
-    c.text(&left, area.x, area.y, 11.0, colour, Align::Left);
-    let mut right = String::new();
+    let y = area.y + (c.px(CONTROLS_HEIGHT) - c.px(14.0) * c.styling.text_scale).max(0.0) / 2.0;
+    let x = controls.map_or(area.x, |k| k.target.right() + c.px(CONTROLS_GAP));
+    c.text(&left, x, y, 11.0, colour, Align::Left);
+    let right_x = controls.map_or(area.right(), |k| {
+        k.right_text_end(area.right(), c.px(CONTROLS_GAP))
+    });
+    // B: what's heard is the song, at the gain that matches the mix.
+    if let Some(ab) = drawn.ab.filter(|ab| ab.b) {
+        let right = format!("Hearing B  {:+.1} dB", ab.gain_db);
+        c.text(&right, right_x, y, 10.0, accent, Align::Right);
+        return;
+    }
+    if let Some(key) = drawn.target.and_then(|t| t.suggest_shift) {
+        let right = format!("Shift Target to {}?", key.name());
+        c.text(&right, right_x, y, 10.0, accent, Align::Right);
+        return;
+    }
     if let Some(key) = drawn
         .mix
         .and_then(|m| m.key)
         .filter(|k| k.confidence >= dasmeter_analysis::tonal_balance::KEY_CONFIDENCE)
     {
-        right = format!("Mix: {}", key.key.name());
+        let right = format!("Mix: {}", key.key.name());
+        c.text(&right, right_x, y, 10.0, dim, Align::Right);
     }
-    if let Some(key) = drawn.target.and_then(|t| t.suggest_shift) {
-        right = format!("Shift Target to {}?", key.name());
-        c.text(&right, area.right(), area.y, 10.0, accent, Align::Right);
-        return;
-    }
-    c.text(&right, area.right(), area.y, 10.0, dim, Align::Right);
 }
 
 /// The curves across the frequency range.
-fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, drawn: &Drawn) {
+fn draw_fine(
+    c: &mut Canvas,
+    area: Area,
+    settings: &TonalBalanceMeterSettings,
+    drawn: &Drawn,
+    steady: &mut Steady,
+) {
     let range = if settings.low_end_zoom { LOW_END } else { FULL };
     let grid_frequencies = tonal_grid();
     let shown: Vec<usize> = (0..grid_frequencies.len())
@@ -194,7 +392,7 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
         }
         _ => (0.0, -FINE_SPAN_DB.0),
     };
-    let db = (bottom, top);
+    let db = steady.next((bottom, top), range);
     let (low, high) = (range.0.ln(), range.1.ln());
     let x_of = |f: f32| map(f.ln(), (low, high), area.x, area.right());
     let y_of = |level: f32| map(level, db, area.bottom(), area.y);
@@ -211,29 +409,7 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
     );
 
     if let Some(target) = target {
-        let range_colour = c.colour(Role::TonalBalanceRange);
-        for pair in shown.windows(2) {
-            let (i, j) = (pair[0], pair[1]);
-            let (a, b) = (target.curve[i], target.curve[j]);
-            let (x0, x1) = (x_of(grid_frequencies[i]), x_of(grid_frequencies[j]));
-            c.shapes.quad(
-                [
-                    [x0, y_of(a.average + a.range)],
-                    [x1, y_of(b.average + b.range)],
-                    [x0, y_of(a.average - a.range)],
-                    [x1, y_of(b.average - b.range)],
-                ],
-                range_colour.faded(0.28),
-                range_colour.faded(0.28),
-            );
-        }
-        let average: Vec<[f32; 2]> = shown
-            .iter()
-            .map(|&i| [x_of(grid_frequencies[i]), y_of(target.curve[i].average)])
-            .collect();
-        let (dash, gap) = (c.px(5.0), c.px(4.0));
-        let width = c.stroke(1.2);
-        dashed(c, &average, dash, gap, width, range_colour.faded(0.9));
+        draw_target(c, target, &shown, &grid_frequencies, &x_of, &y_of);
     }
 
     if let Some(frozen) = drawn.frozen.filter(|f| f.len() == grid_frequencies.len()) {
@@ -246,6 +422,10 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
         c.shapes.polyline(&line, c.stroke(1.5), colour);
     }
 
+    if let Some(pointer) = drawn.pointer {
+        pointer_readout(c, area, range, drawn, &grid_frequencies, pointer, &x_of);
+    }
+
     let Some(mix) = drawn
         .mix
         .filter(|m| m.curve.len() == grid_frequencies.len())
@@ -256,18 +436,16 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
         .iter()
         .map(|&i| [x_of(grid_frequencies[i]), y_of(mix.curve[i])])
         .collect();
-    let mix_colour = c.colour(Role::TonalBalanceMix);
-    c.glow(&points, mix_colour);
     // Each stretch in the colour of its verdict: inside the range, too
     // much or too little, judged on the curves smoothed to 1/3 octave.
     let outside: Vec<f32> = match target {
         Some(t) => {
-            let mix = smoothed(&mix.curve, &grid_frequencies);
+            let mix = smoothed(&mix.curve, &grid_frequencies, VERDICT_OCTAVES);
             let averages: Vec<f32> = t.curve.iter().map(|b| b.average).collect();
             let ranges: Vec<f32> = t.curve.iter().map(|b| b.range).collect();
             let (averages, ranges) = (
-                smoothed(&averages, &grid_frequencies),
-                smoothed(&ranges, &grid_frequencies),
+                smoothed(&averages, &grid_frequencies, VERDICT_OCTAVES),
+                smoothed(&ranges, &grid_frequencies, VERDICT_OCTAVES),
             );
             shown
                 .iter()
@@ -282,16 +460,157 @@ fn draw_fine(c: &mut Canvas, area: Area, settings: &TonalBalanceMeterSettings, d
         }
         None => vec![0.0; shown.len()],
     };
-    let width = c.stroke(2.0);
-    for (k, pair) in points.windows(2).enumerate() {
-        let worse = if outside[k].abs() > outside[k + 1].abs() {
-            outside[k]
-        } else {
-            outside[k + 1]
+    // The smoothed curve in runs of one colour, each segment taking the
+    // worse verdict of the grid points either side of it; each run glows in
+    // its own colour.
+    let curve = smooth(&points, c.px(2.0));
+    let mut runs: Vec<(Colour, Vec<[f32; 2]>)> = Vec::new();
+    let mut segment = 0;
+    for &point in &curve {
+        while segment + 2 < points.len() && point[0] > points[segment + 1][0] {
+            segment += 1;
+        }
+        let k = segment.min(outside.len().saturating_sub(2));
+        let worse = match (outside.get(k), outside.get(k + 1)) {
+            (Some(&a), Some(&b)) if a.abs() > b.abs() => a,
+            (_, Some(&b)) => b,
+            (Some(&a), None) => a,
+            (None, None) => 0.0,
         };
         let colour = verdict_colour(c, worse, Role::TonalBalanceMix);
-        c.shapes.line(pair[0], pair[1], width, colour);
+        match runs.last_mut() {
+            Some((run_colour, run)) if *run_colour == colour => run.push(point),
+            last => {
+                // Each run starts where the one before ends.
+                if let Some((_, run)) = last {
+                    run.push(point);
+                }
+                runs.push((colour, vec![point]));
+            }
+        }
     }
+    for (colour, run) in &runs {
+        c.glow_ribbon(run, *colour);
+    }
+    let width = c.stroke(2.0);
+    for (colour, run) in &runs {
+        c.shapes.polyline(run, width, *colour);
+    }
+}
+
+/// A line under the pointer with the frequency and note there, and how far
+/// the mix sits from the Target's average at that point.
+fn pointer_readout(
+    c: &mut Canvas,
+    area: Area,
+    range: (f32, f32),
+    drawn: &Drawn,
+    frequencies: &[f32],
+    [x, y]: [f32; 2],
+    x_of: &dyn Fn(f32) -> f32,
+) {
+    if x < area.x || x > area.right() || y < area.y || y > area.bottom() {
+        return;
+    }
+    let (low, high) = (range.0.ln(), range.1.ln());
+    let frequency = (low + (x - area.x) / area.width * (high - low)).exp();
+    let thin = c.px(1.0).max(1.0);
+    let line = c.colour(Role::Text).faded(0.45);
+    c.shapes.rect(
+        Area {
+            x: x - thin / 2.0,
+            width: thin,
+            ..area
+        },
+        line,
+    );
+    let mut readout = if frequency < 1_000.0 {
+        format!("{frequency:.0} Hz")
+    } else {
+        format!("{:.2} kHz", frequency / 1_000.0)
+    };
+    if let Some(note) = dasmeter_analysis::spectrum::note_name(frequency) {
+        readout += &format!("  {note} {:+.0}¢", note.cents);
+    }
+    // The grid point nearest the pointer, for the mix against the Target.
+    let nearest = (0..frequencies.len()).min_by(|&a, &b| {
+        (x_of(frequencies[a]) - x)
+            .abs()
+            .total_cmp(&(x_of(frequencies[b]) - x).abs())
+    });
+    let mix = nearest.and_then(|i| drawn.mix.and_then(|m| m.curve.get(i).copied()));
+    let target = nearest.and_then(|i| drawn.target.and_then(|t| t.curve.get(i).copied()));
+    if let (Some(mix), Some(band)) = (mix, target)
+        && mix.is_finite()
+    {
+        readout += &format!("  mix {:+.1} dB", mix - band.average);
+    }
+    let size = 11.0;
+    let width = c.px(size * 0.6) * c.styling.text_scale * readout.chars().count() as f32;
+    let right = x + c.px(4.0);
+    let start = if right + width <= area.right() {
+        right
+    } else {
+        (x - c.px(4.0) - width).max(area.x)
+    };
+    let top = area.y + c.px(4.0);
+    let pad = c.px(3.0);
+    c.backdrop(Area {
+        x: start - pad,
+        y: top - pad,
+        width: width + 2.0 * pad,
+        height: c.px(size) * c.styling.text_scale + 2.0 * pad,
+    });
+    let text = c.colour(Role::Text);
+    c.text(&readout, start, top, size, text, Align::Left);
+}
+
+/// The Target's range as a soft band, strongest along its average and
+/// fading toward its edges, smoothed so it reads as a shape; its average
+/// as a thin line through it.
+fn draw_target(
+    c: &mut Canvas,
+    target: &TargetScene,
+    shown: &[usize],
+    frequencies: &[f32],
+    x_of: &dyn Fn(f32) -> f32,
+    y_of: &dyn Fn(f32) -> f32,
+) {
+    let averages: Vec<f32> = target.curve.iter().map(|b| b.average).collect();
+    let ranges: Vec<f32> = target.curve.iter().map(|b| b.range).collect();
+    let (averages, ranges) = (
+        smoothed(&averages, frequencies, TARGET_OCTAVES),
+        smoothed(&ranges, frequencies, TARGET_OCTAVES),
+    );
+    let at = |level: &dyn Fn(usize) -> f32| -> Vec<[f32; 2]> {
+        let points: Vec<[f32; 2]> = shown
+            .iter()
+            .map(|&i| [x_of(frequencies[i]), y_of(level(i))])
+            .collect();
+        smooth(&points, c.px(2.0))
+    };
+    let top = at(&|i| averages[i] + ranges[i]);
+    let middle = at(&|i| averages[i]);
+    let bottom = at(&|i| averages[i] - ranges[i]);
+    let colour = c.colour(Role::TonalBalanceRange);
+    let (edge, centre) = (colour.faded(0.08), colour.faded(0.3));
+    for k in 0..middle
+        .len()
+        .min(top.len())
+        .min(bottom.len())
+        .saturating_sub(1)
+    {
+        let (a, b) = (k, k + 1);
+        c.shapes
+            .quad([top[a], top[b], middle[a], middle[b]], edge, centre);
+        c.shapes
+            .quad([middle[a], middle[b], bottom[a], bottom[b]], centre, edge);
+    }
+    let thin = c.stroke(0.8);
+    c.shapes.polyline(&top, thin, colour.faded(0.3));
+    c.shapes.polyline(&bottom, thin, colour.faded(0.3));
+    c.shapes
+        .polyline(&middle, c.stroke(1.2), colour.faded(0.75));
 }
 
 /// Grid lines with labels: decades across the whole range, or every

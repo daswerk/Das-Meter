@@ -9,7 +9,7 @@ use dasmeter_analysis::signals::{both, silence, sine};
 use dasmeter_analysis::tonal_balance::{Key, Parts, tonal_grid};
 use dasmeter_core::{
     AppCore, Event, KeyChoice, MeterScene, MeterSettings, MeterState, MeterView, Scene, Target,
-    TargetScene, TargetSong, ThemeFile, TonalBalanceMeterSettings,
+    TargetPick, TargetScene, TargetSong, ThemeFile, TonalBalanceMeterSettings,
 };
 
 const RATE: u32 = 48_000;
@@ -20,6 +20,10 @@ const A_MINOR: Key = Key {
 };
 const F_MINOR: Key = Key {
     tonic: 5,
+    minor: true,
+};
+const D_MINOR: Key = Key {
+    tonic: 2,
     minor: true,
 };
 
@@ -166,6 +170,7 @@ fn song(name: &str, key: Key, peak_hz: f32) -> TargetSong {
         low_end_mono: Some(0.98),
         regions: [-12.0, -10.0, -14.0, -18.0, -24.0],
         curve,
+        file: None,
     }
 }
 
@@ -257,12 +262,31 @@ fn the_target_is_drawn_in_its_songs_key_and_shifting_moves_it_to_the_mix() {
     assert_eq!(suggesting.curve, at_home.curve, "not moved until asked");
 
     app.set(TonalBalanceMeterSettings {
-        shift_to_key: true,
+        shift_to: Some(F_MINOR),
         ..fixed
     });
     let shifted = app.target().unwrap();
     assert_eq!(shifted.key, Some(F_MINOR));
+    assert_eq!(shifted.shifted_to, Some(F_MINOR));
     assert_eq!(shifted.suggest_shift, None);
+
+    // The mix's key moves on: the shift stays where it was put.
+    app.set(TonalBalanceMeterSettings {
+        key: KeyChoice::Fixed(D_MINOR),
+        ..app.settings()
+    });
+    let still = app.target().unwrap();
+    assert_eq!(still.key, Some(F_MINOR), "a shift stays until undone");
+    assert_eq!(still.curve, shifted.curve);
+    // Undone: back in the songs' key, and a shift suggested again.
+    app.set(TonalBalanceMeterSettings {
+        shift_to: None,
+        ..app.settings()
+    });
+    let undone = app.target().unwrap();
+    assert_eq!(undone.key, Some(A_MINOR));
+    assert_eq!(undone.curve, at_home.curve);
+    assert_eq!(undone.suggest_shift, Some(D_MINOR));
     let loudest = |t: &TargetScene| {
         let grid = tonal_grid();
         let (i, _) = t
@@ -292,6 +316,10 @@ fn removing_a_song_recomputes_the_target() {
         },
         app.now,
     );
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Average,
+        ..app.settings()
+    });
     app.play(0.6, 110.0);
     assert_eq!(app.target().unwrap().regions.unwrap()[0].average, -16.0);
     app.core.handle(
@@ -365,7 +393,7 @@ fn the_average_is_never_off_and_the_cutoff_stays_in_range() {
 #[test]
 fn an_exported_preset_carries_its_target_to_another_install() {
     let mut app = App::launch();
-    let songs = [song("One", A_MINOR, 55.0)];
+    let songs = [song("One", A_MINOR, 55.0).with_file("/Users/me/Music/One.wav")];
     app.core.handle(
         Event::AddTargetSongs {
             meter: METER,
@@ -378,6 +406,10 @@ fn an_exported_preset_carries_its_target_to_another_install() {
     let (_, file) = app.core.export().expect("a Preset is open");
     assert!(file.contains("[[targets]]"));
     assert!(!file.contains("[[curves]]"));
+    assert!(
+        !file.contains("/Users/me"),
+        "no file paths leave the machine"
+    );
 
     let mut other = App::launch();
     other.core.handle(Event::ImportPreset(&file), other.now);
@@ -465,4 +497,284 @@ fn upload_progress_shows_on_the_meter_until_it_is_over() {
         app.now,
     );
     assert_eq!(app.meter().tonal_balance.unwrap().upload, None);
+}
+
+#[test]
+fn the_drawn_curve_glides_to_a_new_frame_instead_of_jumping() {
+    let mut app = App::launch();
+    app.set(TonalBalanceMeterSettings {
+        averaging: LongTerm::Seconds(3.0),
+        ..TonalBalanceMeterSettings::default()
+    });
+    let curve = |app: &mut App| match app.meter().state {
+        MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) => mix.curve.clone(),
+        other => panic!("no mix yet: {other:?}"),
+    };
+    app.play(4.0, 55.0);
+    let before = curve(&mut app);
+    // Another note: its frame arrives within half a second, and the curve
+    // is only part of the way there just after.
+    app.play(0.55, 82.4);
+    let soon = curve(&mut app);
+    app.feed(&silence(4 * RATE as usize));
+    let settled = curve(&mut app);
+    let moved = |a: &[f32], b: &[f32]| {
+        a.iter()
+            .zip(b)
+            .filter(|(x, y)| x.is_finite() && y.is_finite())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max)
+    };
+    let (first, rest) = (moved(&before, &soon), moved(&soon, &settled));
+    assert!(first > 0.0, "the curve moved toward the new note");
+    assert!(rest > 0.0, "it was still on its way: {first} then {rest}");
+    // Silence adds no frames, so the curve settles where the average is.
+    let later = {
+        app.feed(&silence(4 * RATE as usize));
+        curve(&mut app)
+    };
+    assert_eq!(later, settled, "settled curves stop moving");
+}
+
+#[test]
+fn it_compares_with_one_song_unless_the_average_is_picked() {
+    let mut app = App::launch();
+    let mut loud = song("Loud", A_MINOR, 55.0);
+    loud.regions = [-6.0; 5];
+    let mut quiet = song("Quiet", A_MINOR, 55.0);
+    quiet.regions = [-18.0; 5];
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &[loud, quiet],
+        },
+        app.now,
+    );
+    // The first song added, alone: its own levels, named after it.
+    let first = app.target().unwrap();
+    assert_eq!(first.pick, TargetPick::Song(0));
+    assert_eq!(first.label(), "Loud");
+    assert_eq!(first.regions.unwrap()[0].average, -6.0);
+
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(1),
+        ..app.settings()
+    });
+    assert_eq!(app.target().unwrap().regions.unwrap()[0].average, -18.0);
+
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Average,
+        ..app.settings()
+    });
+    let average = app.target().unwrap();
+    assert_eq!(average.regions.unwrap()[0].average, -12.0);
+    assert_eq!(
+        average.label(),
+        "Average of 2 songs",
+        "no Target name shown"
+    );
+
+    // Songs added later are what it compares with next.
+    let mut third = song("Third", A_MINOR, 55.0);
+    third.regions = [-9.0; 5];
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &[third],
+        },
+        app.now,
+    );
+    let added = app.target().unwrap();
+    assert_eq!(added.pick, TargetPick::Song(2));
+    assert_eq!(added.label(), "Third");
+
+    // Removing an earlier song keeps the one picked.
+    app.core.handle(
+        Event::RemoveTargetSong {
+            target: "Club",
+            song: 0,
+        },
+        app.now,
+    );
+    assert_eq!(app.target().unwrap().label(), "Third");
+}
+
+#[test]
+fn listening_to_b_pauses_the_average_and_matches_the_mixs_loudness() {
+    let mut app = App::launch();
+    let mut with_file = song("Ref", A_MINOR, 55.0).with_file("/music/ref.wav");
+    with_file.loudness = -8.0;
+    let taught = song("Taught", A_MINOR, 55.0);
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &[with_file, taught],
+        },
+        app.now,
+    );
+    app.play(3.0, 110.0);
+    let ab = |app: &mut App| app.meter().tonal_balance.unwrap().ab;
+    let a = ab(&mut app).expect("the song has a file to play");
+    assert!(!a.b);
+    assert_eq!(a.file, "/music/ref.wav");
+    let mix = app.mix_loudness();
+    assert!(
+        (a.gain_db - (mix - -8.0)).abs() < 0.11,
+        "{} vs {mix}",
+        a.gain_db
+    );
+
+    // B: the song plays, and what comes in isn't added to the average.
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: true,
+        },
+        app.now,
+    );
+    assert!(ab(&mut app).unwrap().b);
+    // Once the drawn curve has caught up with the average:
+    app.play(1.0, 440.0);
+    let before = app.curve();
+    app.play(2.0, 440.0);
+    assert_eq!(app.curve(), before, "paused while B plays");
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: false,
+        },
+        app.now,
+    );
+    app.play(2.0, 440.0);
+    assert_ne!(app.curve(), before, "A: it averages again");
+
+    // A song without a file (taught by playing) has no B; picking it ends B.
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: true,
+        },
+        app.now,
+    );
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(1),
+        ..app.settings()
+    });
+    assert_eq!(ab(&mut app), None);
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(0),
+        ..app.settings()
+    });
+    assert!(!ab(&mut app).unwrap().b, "B ended with the pick");
+}
+
+impl App {
+    /// The mix's average curve as the Meter shows it.
+    fn curve(&mut self) -> Vec<f32> {
+        match self.meter().state {
+            MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) => mix.curve.clone(),
+            other => panic!("no mix: {other:?}"),
+        }
+    }
+
+    fn mix_loudness(&mut self) -> f32 {
+        match self.meter().state {
+            MeterState::Live(MeterView::TonalBalance { mix: Some(mix), .. }) => mix.loudness,
+            other => panic!("no mix: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn b_loops_the_chosen_part_of_its_song() {
+    let mut app = App::launch();
+    let songs = [
+        song("Ref", A_MINOR, 55.0).with_file("/music/ref.wav"),
+        song("Other", A_MINOR, 55.0).with_file("/music/other.wav"),
+    ];
+    app.core.handle(
+        Event::AddTargetSongs {
+            meter: METER,
+            target: "Club",
+            songs: &songs,
+        },
+        app.now,
+    );
+    let overview = dasmeter_core::SongOverview {
+        seconds: 200.0,
+        peaks: vec![0.5; dasmeter_core::OVERVIEW_POINTS],
+    };
+    app.core.handle(
+        Event::AbOverview {
+            file: "/music/ref.wav",
+            overview: &overview,
+        },
+        app.now,
+    );
+    let ab = |app: &mut App| app.meter().tonal_balance.unwrap().ab.unwrap();
+    assert_eq!(ab(&mut app).overview.unwrap().seconds, 200.0);
+    assert_eq!(ab(&mut app).region, None, "the whole song at first");
+
+    // Chosen backwards and past the end: put in order, kept inside the song.
+    app.core.handle(
+        Event::AbRegion {
+            meter: METER,
+            region: Some((260.0, 60.0)),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).region, Some((60.0, 200.0)));
+    // Too short to loop: the whole song.
+    app.core.handle(
+        Event::AbRegion {
+            meter: METER,
+            region: Some((10.0, 10.2)),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).region, None);
+
+    // The playhead shows while B plays.
+    app.core.handle(
+        Event::AbRegion {
+            meter: METER,
+            region: Some((30.0, 45.0)),
+        },
+        app.now,
+    );
+    app.core.handle(
+        Event::AbPosition {
+            meter: METER,
+            seconds: Some(31.234),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).position, None, "not while A is heard");
+    app.core.handle(
+        Event::ListenB {
+            meter: METER,
+            b: true,
+        },
+        app.now,
+    );
+    app.core.handle(
+        Event::AbPosition {
+            meter: METER,
+            seconds: Some(31.234),
+        },
+        app.now,
+    );
+    assert_eq!(ab(&mut app).position, Some(31.23));
+
+    // Another song: its own region (none yet).
+    app.set(TonalBalanceMeterSettings {
+        pick: TargetPick::Song(1),
+        ..app.settings()
+    });
+    let other = ab(&mut app);
+    assert_eq!(other.file, "/music/other.wav");
+    assert_eq!(other.region, None);
 }

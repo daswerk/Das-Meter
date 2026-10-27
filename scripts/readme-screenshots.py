@@ -112,15 +112,19 @@ def desktop(size):
 def main():
     os.makedirs(OUT, exist_ok=True)
 
-    # The overview, in both Looks.
-    save(flat(shot("showcase")), "smooth.png", 1600)
-    save(flat(shot("showcase", classic=True)), "classic.png", 1600)
-    save(flat(shot("showcase-bar")), "bar.png", 1600)
+    # The built-in Presets as they open (Producing Top-Bar, Mixing/Producing,
+    # Mastering): the overview in both Looks, the Bar, and Mastering.
+    mixing, bar, mastering = "preset-1", "preset-0", "preset-2"
+    save(flat(shot(mixing)), "smooth.png", 1600)
+    save(flat(shot(mixing, style="look=classic")), "classic.png", 1600)
+    save(flat(shot(bar)), "bar.png", 1600)
+    save(flat(shot(mastering)), "mastering.png", 1600)
     save(flat(shot("zoom")).crop((0, 0, 2400, 716)), "spectrum-zoom.png", 1600)
 
     # Every Meter alone.
     for kind in ["waveform", "spectrum", "spectrogram", "loudness", "stereometer",
-                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands", "needle"]:
+                 "phase-scope", "cepstrum", "oscilloscope", "tuner", "stereo-bands", "needle",
+                 "goniometer"]:
         save(flat(shot(f"solo-{kind}")), f"meter-{kind}.png", 960)
 
     # A Spectrum with an Overlay Source, and where the two collide.
@@ -135,18 +139,18 @@ def main():
     # The Tonal Balance Meter against a Target: Fine, and Broad beside the
     # low end zoom with the Target's key and the mix's.
     save(flat(shot("tonal-balance")), "meter-tonal-balance.png", 960)
+    save(flat(shot("tonal-balance-ab")), "tonal-balance-ab.png", 960)
+    save(flat(shot("spectrum-b")), "spectrum-b.png", 960)
     save(labelled([flat(shot("tonal-balance-broad")), flat(shot("tonal-balance-shift"))],
                   ["Broad", "Low end zoom, keys differing"], columns=2, tile_width=760),
          "tonal-balance-views.png", 1600)
 
-    # Every built-in Theme, plus one made from scratch.
-    themes = ["Nocturne", "Dark", "Light", "High contrast", "Midnight Purple",
-              "Deep Turquoise", "Graphite"]
-    tiles = [flat(shot("showcase", theme=t)) for t in themes]
-    tiles.append(flat(shot("showcase", theme="Nocturne",
-                           style="gap=14,radius=22,glow=1,vignette=0.8,gradient=1")))
-    save(labelled(tiles, themes + ["Your own\n(edited Nocturne)"], columns=2,
-                  tile_width=760), "themes.png", 1600)
+    # Every built-in Theme: the built-in Presets' first, then the palettes.
+    themes = ["Mixing/Producing 1.0", "Mastering 1.0", "Producing Top-Bar 1.0", "Dark",
+              "Light", "High contrast", "Midnight Purple", "Deep Turquoise", "Graphite",
+              "Nocturne"]
+    tiles = [flat(shot(mixing, theme=t)) for t in themes]
+    save(labelled(tiles, themes, columns=2, tile_width=760), "themes.png", 1600)
 
     # The Theme editor.
     save(flat(shot("theme-settings")), "theme-editor.png", 1400)
@@ -156,7 +160,7 @@ def main():
     save(labelled([flat(shot(spectrum)), flat(shot(spectrum, style="look=classic"))],
                   ["Look: Smooth", "Look: Classic"], tile_width=760), "setting-look.png", 1600)
     save(labelled([flat(shot(spectrum, style=f"glow={g}")) for g in (0, 0.6, 1)],
-                  ["Glow 0", "Glow 0.6\n(default)", "Glow 1"], tile_width=520),
+                  ["Glow 0\n(default)", "Glow 0.6", "Glow 1"], tile_width=520),
          "setting-glow.png", 1600)
     save(labelled([flat(shot(spectrum, style=f"fade={f}")) for f in (0, 0.4)],
                   ["Grid fade 0", "Grid fade 0.4"], tile_width=760), "setting-grid-fade.png", 1600)
@@ -168,23 +172,24 @@ def main():
     # Close up, where the difference shows.
     save(labelled([flat(shot(osc, style=f"line={l}")).crop((260, 60, 760, 460))
                    for l in ("thin", "normal", "thick")],
-                  ["Lines: Thin", "Normal", "Thick"]), "setting-lines.png", 1600)
+                  ["Lines: Thin (default)", "Normal", "Thick"]), "setting-lines.png", 1600)
     loud = "solo-loudness"
     save(labelled([flat(shot(loud, style=f"text={t}")) for t in (0.9, 1.5)],
                   ["Text size 0.9", "Text size 1.5"], tile_width=760), "setting-text-size.png", 1600)
-    save(labelled([flat(shot("showcase", style="gap=0,radius=0")),
-                   flat(shot("showcase", style="gap=16,radius=24"))],
+    save(labelled([flat(shot(mixing, style="gap=0,radius=0")),
+                   flat(shot(mixing, style="gap=16,radius=24"))],
                   ["Gap 0, corner radius 0", "Gap 16, corner radius 24"], tile_width=760),
          "setting-gap-radius.png", 1600)
     # See-through: the Bar over a desktop picture.
-    bars = []
+    bars, bar_preset = [], bar
     for opacity in (1.0, 0.15):
-        bar = shot("showcase-bar", style=f"opacity={opacity}")
+        bar = shot(bar_preset, style=f"opacity={opacity}")
         backdrop = desktop(bar.size).convert("RGBA")
         bars.append(Image.alpha_composite(backdrop, bar).convert("RGB"))
     save(labelled(bars, ["Background opacity 1", "Background opacity 0.15"], columns=1,
                   tile_width=1560), "setting-opacity.png", 1600)
     # One Meter's own colours over its Theme's.
+    # The override goes on the first Meter: the showcase's Waveform.
     save(labelled([flat(shot("showcase")),
                    flat(shot("showcase", override="waveform_low=#3ddc97,waveform_mid=#4dc3ff,waveform_high=#ffffff"))],
                   ["Theme colours", "The Waveform with its own colours"], tile_width=760),

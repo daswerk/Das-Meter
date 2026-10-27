@@ -1,7 +1,7 @@
 //! Audio files for the Tonal Balance Meter: decoded with Symphonia and
 //! analysed into a summary far faster than real time, on a thread of their
-//! own, for a Target's songs (Add files…, or files dropped on the Meter) or
-//! a mix to compare (Compare file…).
+//! own, for a Target's songs (Add files… ▸ Reference songs, or files dropped
+//! on the Meter) or a mix to compare (Add files… ▸ A bounce of your mix).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,19 +47,6 @@ pub fn audio_files_in(paths: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
-/// The name for a Target made from `paths` (as picked or dropped): the
-/// folder dropped, or the folder the first file is in.
-pub fn target_name(paths: &[PathBuf]) -> String {
-    let folder = paths.first().and_then(|first| {
-        if first.is_dir() {
-            first.file_name()
-        } else {
-            first.parent().and_then(Path::file_name)
-        }
-    });
-    folder.map_or_else(|| "Target".to_owned(), |f| f.to_string_lossy().into_owned())
-}
-
 /// A file's name without its folder or extension: a song's name.
 pub fn song_name(path: &Path) -> String {
     path.file_stem()
@@ -69,6 +56,14 @@ pub fn song_name(path: &Path) -> String {
 /// Decodes `path`, handing `each` its audio as interleaved stereo (mono
 /// doubled, beyond two channels the first two) with its sample rate.
 pub fn decode(path: &Path, mut each: impl FnMut(&[f32], u32)) -> Result<(), String> {
+    decode_while(path, |audio, rate| {
+        each(audio, rate);
+        true
+    })
+}
+
+/// As [`decode`], stopping early when `each` returns false.
+pub fn decode_while(path: &Path, mut each: impl FnMut(&[f32], u32) -> bool) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let stream = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
@@ -130,7 +125,9 @@ pub fn decode(path: &Path, mut each: impl FnMut(&[f32], u32)) -> Result<(), Stri
         if frames as f64 > MAX_SECONDS * f64::from(rate) {
             return Err("longer than two hours".into());
         }
-        each(&stereo, rate);
+        if !each(&stereo, rate) {
+            return Ok(());
+        }
     }
     if frames == 0 {
         return Err("no audio in it".into());
@@ -152,6 +149,48 @@ pub fn analyse(path: &Path, mono_cutoff: f32, parts: Parts) -> Result<Summary, S
         frames.extend(analyser.take_frames());
     })?;
     summarise(&frames, parts).ok_or_else(|| "only silence".to_owned())
+}
+
+/// A song's waveform for A/B: its length and the peak level in each of
+/// [`dasmeter_core::OVERVIEW_POINTS`] equal stretches.
+pub fn overview(path: &Path) -> Result<dasmeter_core::SongOverview, String> {
+    // Peaks of short stretches first: the length isn't known until the end.
+    const STRETCH: usize = 256;
+    let (mut peaks, mut current, mut in_stretch) = (Vec::new(), 0.0f32, 0usize);
+    let (mut frames, mut rate) = (0u64, 0u32);
+    decode(path, |audio, from| {
+        rate = from;
+        for frame in audio.as_chunks::<2>().0 {
+            current = current.max(frame[0].abs()).max(frame[1].abs());
+            in_stretch += 1;
+            if in_stretch == STRETCH {
+                peaks.push(current);
+                (current, in_stretch) = (0.0, 0);
+            }
+        }
+        frames += (audio.len() / 2) as u64;
+    })?;
+    if in_stretch > 0 {
+        peaks.push(current);
+    }
+    let points = dasmeter_core::OVERVIEW_POINTS;
+    let overview = (0..points)
+        .map(|k| {
+            let (a, b) = (
+                k * peaks.len() / points,
+                ((k + 1) * peaks.len() / points).max(k * peaks.len() / points + 1),
+            );
+            peaks[a.min(peaks.len().saturating_sub(1))..b.min(peaks.len())]
+                .iter()
+                .copied()
+                .fold(0.0f32, f32::max)
+                .min(1.0)
+        })
+        .collect();
+    Ok(dasmeter_core::SongOverview {
+        seconds: frames as f32 / rate.max(1) as f32,
+        peaks: overview,
+    })
 }
 
 /// What a batch of files is for.
@@ -181,6 +220,8 @@ pub enum Report {
         purpose: Purpose,
         parts: Parts,
         name: String,
+        /// The file, for listening to it later (A/B).
+        path: PathBuf,
         result: Result<Box<Summary>, String>,
     },
     /// The batch is done.
@@ -208,6 +249,7 @@ impl Uploads {
                             purpose: job.purpose.clone(),
                             parts: job.parts,
                             name: song_name(path),
+                            path: path.clone(),
                             result,
                         });
                         wake();

@@ -2,14 +2,23 @@
 
 A **Theme** is a named set of colours and styling: background opacity, line
 thickness, spacing, corner radius, text size and its **Look**. Das-Meter
-comes with **Nocturne** (deep blue-violet black with gold, cyan and green), **Dark**,
+comes with the built-in Presets' Themes (**Mixing/Producing 1.0**, the
+standard one, **Mastering 1.0** and **Producing Top-Bar 1.0**), **Nocturne**
+(deep blue-violet black with gold, cyan and green), **Dark**,
 **Light** and **High contrast** (a colour-blind-safe palette, with shape cues
 besides colour), and three darker ones with a near-black body and dark grey
 panels: **Midnight Purple**, **Deep Turquoise** and **Graphite** (neutral
 greys with light grey and white).
 
-By default a Preset uses the Nocturne and Light pair and **follows the system's
-light/dark setting**. Turn that off to pick one Theme.
+By default a Preset uses the **Mixing/Producing 1.0** Theme and Light as a pair
+and **follows the system's light/dark setting**. Turn that off to pick one
+Theme. Every built-in starts from the same styling: the Smooth Look without
+glow, gradient or vignette, thin lines, a light grid fade, a 2.3 px gap and
+square corners.
+
+**Edit ▸ Undo** (⌘Z, Ctrl+Z on Windows) takes back the last change to a Theme
+or Preset, such as a Theme picked, a colour or a slider; **Redo** (⇧⌘Z) makes
+it again. A slider dragged counts as one step.
 
 ![Settings ▸ Theme: the Look, its sliders, layout and colours with a live preview](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/theme-editor.png)
 
@@ -24,7 +33,7 @@ files in the themes folder, so you can share them:
 
 A lower background opacity makes the Meters see-through.
 
-![All built-in Themes, and an edited Nocturne](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/themes.png)
+![All built-in Themes](https://raw.githubusercontent.com/daswerk/Das-Meter/main/docs/images/themes.png)
 
 ## Look
 

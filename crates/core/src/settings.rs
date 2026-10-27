@@ -12,10 +12,10 @@ use dasmeter_analysis::{
 };
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, NeedleMeterSettings,
-    OscilloscopeMeterSettings, PhaseScopeMeterSettings, SpectrogramMeterSettings,
-    SpectrumMeterSettings, StereoBandsMeterSettings, StereometerMeterSettings, TunerMeterSettings,
-    WaveformMeterSettings,
+    CepstrumMeterSettings, GoniometerMeterSettings, LoudnessMeterSettings, MeterSettings,
+    NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrumMeterSettings, StereoBandsMeterSettings,
+    StereometerMeterSettings, TunerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -34,7 +34,11 @@ pub const MIN_FRAME_RATE_CAP: u32 = 30;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
-    /// Most frames drawn per second. Default 60, at most the display's refresh rate.
+    /// Keep in step with the display: present on every refresh and bring new
+    /// content on every k-th one (k refreshes nearest the frame-rate cap), so
+    /// scrolling Meters move evenly. Default on. Off: frames on a plain timer.
+    pub match_display: bool,
+    /// Most new frames per second. Default 60, at most the display's refresh rate.
     pub frame_rate_cap: u32,
     /// Look for a new version once a day. Default on.
     pub check_for_updates: bool,
@@ -43,6 +47,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
+            match_display: true,
             frame_rate_cap: DEFAULT_FRAME_RATE_CAP,
             check_for_updates: true,
         }
@@ -50,9 +55,30 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// The shortest time between two draws.
-    pub fn frame_interval(&self) -> Duration {
+    /// The shortest time between two new frames on a display refreshing
+    /// `refresh` times a second (if known). Matching the display, it's the
+    /// whole number of refreshes nearest the cap, less 0.4 of one (room for
+    /// waking a little late; a quarter while the display's rate is unknown):
+    /// frames are presented on every refresh (each waits for it), so a new
+    /// one comes on exactly every k-th.
+    pub fn frame_interval(&self, refresh: Option<u32>) -> Duration {
+        if self.match_display {
+            let rate = refresh.unwrap_or(DEFAULT_FRAME_RATE_CAP).max(1);
+            let period = 1.0 / f64::from(rate);
+            let k = (f64::from(rate) / f64::from(self.frame_rate_cap.max(1)))
+                .round()
+                .max(1.0);
+            // Unknown, nothing holds frames to a refresh: a quarter is enough.
+            let margin = if refresh.is_some() { 0.4 } else { 0.25 };
+            return Duration::from_secs_f64((k - margin) * period);
+        }
         Duration::from_nanos(1_000_000_000 / u64::from(self.frame_rate_cap.max(1)))
+    }
+
+    /// How long after a new frame the display keeps being presented on
+    /// every refresh (matching the display), so the next new frame is in step.
+    pub fn present_for(&self, refresh: Option<u32>) -> Option<Duration> {
+        self.match_display.then(|| self.frame_interval(refresh) * 3)
     }
 }
 
@@ -194,8 +220,8 @@ impl MeterSettings {
             }),
             MeterSettings::StereoBands(s) => MeterSettings::StereoBands(StereoBandsMeterSettings {
                 time: clamp_duration(s.time, CORRELATION_TIME),
-                ..s
             }),
+            MeterSettings::Goniometer(s) => MeterSettings::Goniometer(s.clamped()),
         }
     }
 }
@@ -389,6 +415,20 @@ impl StereometerMeterSettings {
             (-1.0, 1.0),
             defaults.correlation_threshold,
         );
+        let a = &mut self.analysis;
+        a.correlation_time = clamp_duration(a.correlation_time, CORRELATION_TIME);
+        if let StereoScaling::Fixed { gain } = a.scaling {
+            a.scaling = StereoScaling::Fixed {
+                gain: clamp_f32(gain, STEREO_GAIN, 1.0),
+            };
+        }
+        self
+    }
+}
+
+impl GoniometerMeterSettings {
+    fn clamped(mut self) -> Self {
+        self.persistence = clamp_duration(self.persistence, STEREO_PERSISTENCE);
         let a = &mut self.analysis;
         a.correlation_time = clamp_duration(a.correlation_time, CORRELATION_TIME);
         if let StereoScaling::Fixed { gain } = a.scaling {

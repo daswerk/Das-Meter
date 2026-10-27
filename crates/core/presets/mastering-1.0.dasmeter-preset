@@ -1,0 +1,277 @@
+format = "dasmeter-preset"
+version = 1
+
+[preset]
+version = 1
+name = "Mastering 1.0"
+mode = "Window"
+listen_to = "SystemCapture"
+
+[preset.theme]
+light = "Mastering 1.0"
+dark = "Mastering 1.0"
+
+[preset.bar]
+edge = "Bottom"
+thickness = 135.4336
+span = [0.0, 1.0]
+screen = "FloatOnTop"
+show_over_fullscreen = false
+meters = [[0, 0.1304486], [1, 0.5391866], [2, 0.21518987], [3, 0.11517501]]
+pop_outs = []
+
+[preset.window]
+on_top = false
+
+[preset.window.frame]
+x = 69.0
+y = 38.0
+width = 1279.0
+height = 817.0
+
+[preset.window.tree.Split]
+direction = "Stacked"
+ratio = 0.75301695
+
+[preset.window.tree.Split.first.Split]
+direction = "Stacked"
+ratio = 0.5
+
+[preset.window.tree.Split.first.Split.first]
+Pane = 4
+
+[preset.window.tree.Split.first.Split.second]
+Pane = 7
+
+[preset.window.tree.Split.second.Split]
+direction = "SideBySide"
+ratio = 0.5965995
+
+[preset.window.tree.Split.second.Split.first.Split]
+direction = "SideBySide"
+ratio = 0.5
+
+[preset.window.tree.Split.second.Split.first.Split.first]
+Pane = 0
+
+[preset.window.tree.Split.second.Split.first.Split.second]
+Pane = 5
+
+[preset.window.tree.Split.second.Split.second.Split]
+direction = "SideBySide"
+ratio = 0.6725923
+
+[preset.window.tree.Split.second.Split.second.Split.first]
+Pane = 3
+
+[preset.window.tree.Split.second.Split.second.Split.second]
+Pane = 2
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.StereoBands]
+time = 1.4
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Spectrum]
+show_peak_hold = true
+show_peak_line = true
+show_cursor = true
+slow_on_hover = true
+colouring = "Plain"
+collision_floor = -50.0
+collision_within = 6.0
+show_b = false
+
+[preset.meters.settings.Spectrum.analysis]
+channel_view = "Mono"
+slope = 4.5
+fft_size = 8192
+window = "Hann"
+frequency_range = [20.0, 20000.0]
+db_range = [-90.0, 0.0]
+attack = 0.0
+release = 0.3
+smoothing_octaves = 0.0
+long_term = "Off"
+
+[preset.meters.settings.Spectrum.analysis.peak_hold]
+For = 2.0
+
+[preset.meters.settings.Spectrum.analysis.style.Line]
+points = 512
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Goniometer]
+persistence = 0.016
+show_correlation = false
+
+[preset.meters.settings.Goniometer.analysis]
+correlation_time = 0.3
+scaling = "Auto"
+points = 2048
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Loudness]
+target = -7.0
+lufs_bar = "ShortTerm"
+bar_range = [-60.0, 0.0]
+show_true_peak = true
+show_range = true
+show_peak_to_loudness = true
+show_history = true
+history_span = 30.0
+show_bars = false
+big_reading = "ShortTerm"
+show_thin_bars = false
+show_counters = true
+
+[preset.meters.settings.Loudness.analysis]
+rms_window = 0.3
+rms_mode = "Aes17"
+ceiling = -1.0
+scale = "Peak"
+vu_reference = -18.0
+
+[preset.meters.settings.Loudness.analysis.peak_hold]
+For = 2.0
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Spectrum]
+show_peak_hold = true
+show_peak_line = true
+show_cursor = true
+slow_on_hover = true
+colouring = "SteadyHarmonics"
+collision_floor = -50.0
+collision_within = 6.0
+show_b = false
+
+[preset.meters.settings.Spectrum.analysis]
+channel_view = "Mono"
+slope = 4.5
+fft_size = 8192
+window = "Hann"
+frequency_range = [20.0, 20000.0]
+db_range = [-90.0, 0.0]
+attack = 0.0
+release = 0.3
+smoothing_octaves = 0.0
+long_term = "Off"
+
+[preset.meters.settings.Spectrum.analysis.peak_hold]
+For = 2.0
+
+[preset.meters.settings.Spectrum.analysis.style.Line]
+points = 512
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Waveform]
+colouring = "Rgb"
+auto_gain = false
+
+[preset.meters.settings.Waveform.analysis]
+span = 2.1
+channel_view = "Mono"
+scale = "Linear"
+gain = 1.0
+low_crossover = 200.0
+high_crossover = 2000.0
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Spectrogram]
+show_scale = true
+
+[preset.meters.settings.Spectrogram.analysis]
+fft_size = 4096
+window = "Hann"
+slope = 4.5
+frequency_range = [20.0, 20000.0]
+db_range = [-90.0, 0.0]
+span = 10.0
+
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.TonalBalance]
+view = "Auto"
+low_end_zoom = false
+parts = "Loud"
+key = "Auto"
+mono_cutoff = 120.0
+
+[preset.meters.settings.TonalBalance.averaging]
+Seconds = 10.0
+
+[preset.meters.settings.TonalBalance.pick]
+Song = 0
+
+[[themes]]
+toml = """
+name = "Mastering 1.0"
+version = 1
+
+[colours]
+accent = "#4cccf2"
+background = "#0d0c14"
+cepstrum_trace = "#d27bff"
+correlation_negative = "#ff4d6a"
+correlation_positive = "#c73ddc"
+grid = "#4e4d54"
+loudness_bar = "#3ddc84"
+loudness_counter = "#ff4d6a"
+loudness_over_target = "#ff4d6a"
+loudness_peak = "#ece9f5"
+oscilloscope_second = "#5ed8ff"
+oscilloscope_trace = "#8cffc8"
+panel = "#151516"
+phase_scope_cancel = "#ff4d6a"
+phase_scope_grid = "#34324a"
+phase_scope_sum = "#f2f0fa"
+phase_scope_trace = "#f2c94c"
+spectrum_collision = "#ff4d6a"
+spectrum_fill = "#711c8a"
+spectrum_harmonics = "#c792ff"
+spectrum_line = "#7b41bc"
+spectrum_peak_dots = "#ff8af9"
+spectrum_peak_hold = "#ece9f5"
+spectrum_second = "#4fd8ff"
+stereometer_trace = "#4fd8ff"
+text = "#e4e2ee"
+tonal_balance_mix = "#bc99cd"
+tonal_balance_over = "#ff4d6a"
+tonal_balance_range = "#864cb9"
+tonal_balance_under = "#4fd8ff"
+tuner_in_tune = "#3ddc84"
+tuner_off = "#f2c94c"
+waveform_high = "#4fd8ff"
+waveform_low = "#ff6b81"
+waveform_mid = "#f2c94c"
+
+[styling]
+background_opacity = 1.0
+corner_radius = 0.0
+dim_when_silent = true
+gap = 2.3
+glow = 0.0
+gradient = 0.0
+grid_fade = 0.09
+line = "thin"
+look = "smooth"
+shape_cues = false
+text_scale = 1.0
+vignette = 0.0
+"""

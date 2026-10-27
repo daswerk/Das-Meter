@@ -131,6 +131,7 @@ fn every_default_matches_the_spec() {
     assert_eq!(
         scene.app,
         AppSettings {
+            match_display: true,
             frame_rate_cap: 60,
             check_for_updates: true
         }
@@ -285,6 +286,7 @@ fn each_setting_changes_the_meter_and_its_scene() {
             MeterView::Tuner { settings, .. } => MeterSettings::Tuner(*settings),
             MeterView::StereoBands { settings, .. } => MeterSettings::StereoBands(*settings),
             MeterView::Needle { settings, .. } => MeterSettings::Needle(*settings),
+            MeterView::Goniometer { settings, .. } => MeterSettings::Goniometer(*settings),
         };
         assert_eq!(drawn, wanted[meter], "meter {meter} draws its new settings");
     }
@@ -409,11 +411,36 @@ fn reset_from_the_menu_does_the_same() {
 }
 
 #[test]
+fn in_step_with_the_display_new_frames_come_on_every_kth_refresh() {
+    let mut app = App::playing();
+    app.draw();
+    assert!(app.core.app_settings().match_display, "the default");
+    app.send(Event::DisplayRefreshRate(120));
+    app.draw();
+    // Cap 60 on a 120 Hz display: a new frame on every second refresh. It
+    // may come from a quarter refresh before that (14.6 ms) on.
+    let drawn = app.now;
+    let audio = both(&sine(RATE, 1_000.0, -6.0, 0.0, 480));
+    app.core.handle(Event::Audio(&audio), drawn);
+    let at = |ms: f64| drawn + Duration::from_secs_f64(ms / 1_000.0);
+    assert!(matches!(app.core.decide(at(8.4)), Decision::Sleep { .. }));
+    assert!(
+        app.core.keeps_presenting(at(8.4)),
+        "the last frame again on the refresh between"
+    );
+    assert!(matches!(app.core.decide(at(12.6)), Decision::Sleep { .. }));
+    assert_eq!(app.core.decide(at(16.7)), Decision::Draw);
+    // Silent and settled long after: nothing to present.
+    assert!(!app.core.keeps_presenting(at(1_000.0)));
+}
+
+#[test]
 fn the_frame_rate_cap_goes_up_to_the_displays_refresh_rate() {
     let mut app = App::playing();
     app.draw();
     // Before the display is known, 60 is the most.
     app.send(Event::SetApp(AppSettings {
+        match_display: false,
         frame_rate_cap: 120,
         check_for_updates: false,
     }));
@@ -424,6 +451,7 @@ fn the_frame_rate_cap_goes_up_to_the_displays_refresh_rate() {
 
     app.send(Event::DisplayRefreshRate(120));
     app.send(Event::SetApp(AppSettings {
+        match_display: false,
         frame_rate_cap: 120,
         check_for_updates: false,
     }));

@@ -137,14 +137,22 @@ fn the_built_ins_are_listed_and_read_only() {
             "Midnight Purple",
             "Deep Turquoise",
             "Graphite",
-            "Nocturne"
+            "Nocturne",
+            "Producing Top-Bar 1.0",
+            "Mixing/Producing 1.0",
+            "Mastering 1.0"
         ]
     );
     assert!(scene.theme.themes.iter().all(|t| t.built_in));
-    // Default: follow the system with Light and Nocturne; the system starts dark.
-    assert_eq!(scene.theme.name, "Nocturne");
+    // Default: follow the system with Light and Mixing/Producing; the
+    // system starts dark.
+    assert_eq!(scene.theme.name, "Mixing/Producing 1.0");
     assert!(scene.theme.follows_system());
-    assert_eq!(scene.palette, Palette::nocturne());
+    let mixing = Theme::built_ins()
+        .into_iter()
+        .find(|t| t.name == "Mixing/Producing 1.0")
+        .unwrap();
+    assert_eq!(scene.palette, mixing.palette);
 }
 
 #[test]
@@ -225,7 +233,9 @@ fn a_theme_file_from_before_looks_loads_smooth_with_defaults() {
 fn the_darker_built_ins_have_a_near_black_body() {
     let luma =
         |c: Colour| 0.2126 * f32::from(c.r) + 0.7152 * f32::from(c.g) + 0.0722 * f32::from(c.b);
-    for theme in &Theme::built_ins()[3..] {
+    // The palettes after Dark, Light and High contrast; the standard
+    // Presets' Themes are their author's own.
+    for theme in &Theme::built_ins()[3..7] {
         if theme.name == "Nocturne" {
             continue;
         }
@@ -298,7 +308,11 @@ fn themes_are_read_from_the_folder() {
     app.rescan();
     let scene = app.scene();
     let listed: Vec<&str> = scene.theme.themes.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(listed[7..], ["Ocean"], "after the built-ins");
+    assert_eq!(
+        listed[Theme::built_ins().len()..],
+        ["Ocean"],
+        "after the built-ins"
+    );
     let ocean_index = app.index_of("Ocean");
     app.send(Event::ChooseTheme {
         light: ocean_index,
@@ -319,7 +333,7 @@ fn a_users_theme_named_like_a_new_built_in_is_kept_as_a_copy() {
     app.rescan();
     let scene = app.scene();
     let listed: Vec<&str> = scene.theme.themes.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(listed[7..], ["Graphite copy"]);
+    assert_eq!(listed[Theme::built_ins().len()..], ["Graphite copy"]);
 }
 
 #[test]
@@ -452,5 +466,9 @@ fn a_folder_theme_can_be_renamed_and_the_choice_follows() {
         .iter()
         .map(|t| t.name.clone())
         .collect();
-    assert_eq!(names[7..], ["Light (2)"], "after the built-ins");
+    assert_eq!(
+        names[Theme::built_ins().len()..],
+        ["Light (2)"],
+        "after the built-ins"
+    );
 }

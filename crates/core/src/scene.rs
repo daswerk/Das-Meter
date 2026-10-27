@@ -22,6 +22,8 @@ pub struct Scene {
     pub reference_curves: Vec<String>,
     /// The Targets in the targets folder, by name, for menus.
     pub targets: Vec<String>,
+    /// Each of those Targets' songs, by name, in the same order.
+    pub target_songs: Vec<Vec<String>>,
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
     /// The Theme in use's colours; a Meter's own overrides go over them.
@@ -261,6 +263,9 @@ impl Note {
             Note::OutputChanged => "Output changed: reset",
             Note::ImportFailed => "That file isn't a Das-Meter Preset: nothing was imported",
             Note::SendPluginUpdated => "Send Plugin updated: restart your DAW to use it",
+            Note::UpdateAvailable if cfg!(windows) => {
+                "A new Das-Meter is out: Update in the settings (App)"
+            }
             Note::UpdateAvailable => "A new Das-Meter is out: Das-Meter ▸ Update",
             Note::UpdateFailed => "The update didn't work: Das-Meter is unchanged",
         }

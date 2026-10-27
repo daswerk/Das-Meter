@@ -32,6 +32,9 @@ pub enum WaveformColouring {
 pub struct WaveformMeterSettings {
     pub analysis: WaveformSettings,
     pub colouring: WaveformColouring,
+    /// Brings quiet input up to a good height (on top of the gain, by up
+    /// to +30 dB; it eases up and comes down at once). Default off.
+    pub auto_gain: bool,
 }
 
 /// How the Spectrum is coloured.
@@ -54,7 +57,7 @@ pub struct SpectrumMeterSettings {
     /// Whether a line marks the loudest peak, with its frequency and note. Default on.
     pub show_peak_line: bool,
     /// Whether a line and readout follow the mouse over the Spectrum.
-    /// Default off: the peak line's readout is enough.
+    /// Default on.
     pub show_cursor: bool,
     /// Whether the Spectrum slows down and keeps its peaks while the
     /// pointer is over it, the held peaks marked with their notes. Default on.
@@ -65,6 +68,9 @@ pub struct SpectrumMeterSettings {
     pub collision_floor: f32,
     /// …and within this many dB of each other do. Default 6.
     pub collision_within: f32,
+    /// While a Tonal Balance Meter has a song for A/B: B's spectrum as a
+    /// grey layer, gain-matched to the mix. Default off.
+    pub show_b: bool,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -73,11 +79,12 @@ impl Default for SpectrumMeterSettings {
             analysis: SpectrumSettings::default(),
             show_peak_hold: true,
             show_peak_line: true,
-            show_cursor: false,
+            show_cursor: true,
             slow_on_hover: true,
             colouring: SpectrumColouring::Plain,
             collision_floor: -50.0,
             collision_within: 6.0,
+            show_b: false,
         }
     }
 }
@@ -174,10 +181,14 @@ const HELD_PEAK_SPACING_OCTAVES: f32 = 1.0 / 6.0;
 /// enough to bridge the gaps between audio blocks, so it scrolls the same
 /// distance every frame instead of jumping a block at a time.
 const PLAYHEAD_LAG: f64 = 0.04;
+/// The furthest behind a playhead stays for late audio, in seconds.
+const PLAYHEAD_MAX_LAG: f64 = 0.15;
+/// How fast that comes back down once the audio is steady: seconds of lag a second.
+const PLAYHEAD_SLACK_EASE: f64 = 0.01;
 /// A playhead further than this from where it should be jumps there, in seconds.
 const PLAYHEAD_JUMP: f64 = 0.25;
 /// The share of its drift a playhead corrects each frame.
-const PLAYHEAD_CORRECTION: f64 = 0.08;
+const PLAYHEAD_CORRECTION: f64 = 0.03;
 
 /// The zoom window's place for a box: the half of the plot the box's centre
 /// isn't in, so the box stays in view.
@@ -299,6 +310,31 @@ impl Default for StereometerMeterSettings {
     }
 }
 
+/// The Goniometer: L against R as a cloud of glowing points in a square
+/// turned 45°, as on the old studio meters: mono stands upright, wide
+/// stereo spreads out, out of phase lies flat.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GoniometerMeterSettings {
+    /// Analysis settings. `points` is derived from `persistence` and the sample rate.
+    pub analysis: StereometerSettings,
+    /// How long a point glows, fading as it ages. Default 120 ms.
+    #[serde(with = "dasmeter_analysis::seconds")]
+    pub persistence: Duration,
+    /// Whether the correlation bar is shown below. Default on.
+    pub show_correlation: bool,
+}
+
+impl Default for GoniometerMeterSettings {
+    fn default() -> Self {
+        GoniometerMeterSettings {
+            analysis: StereometerSettings::default(),
+            persistence: Duration::from_millis(120),
+            show_correlation: true,
+        }
+    }
+}
+
 /// The Cepstrum Meter: the cepstrum of the mono sum and the pitch it finds.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -346,22 +382,19 @@ pub struct NeedleDisplay {
     pub over: bool,
 }
 
-/// Stereo Bands: band correlation and width per octave band.
+/// Stereo Bands: band correlation per octave band.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct StereoBandsMeterSettings {
     /// The averaging's time constant. Default 300 ms, as the Stereometer.
     #[serde(with = "dasmeter_analysis::seconds")]
     pub time: Duration,
-    /// Whether each band's width is shown beside its correlation. Default on.
-    pub show_width: bool,
 }
 
 impl Default for StereoBandsMeterSettings {
     fn default() -> Self {
         StereoBandsMeterSettings {
             time: Duration::from_millis(300),
-            show_width: true,
         }
     }
 }
@@ -522,6 +555,7 @@ pub enum MeterSettings {
     Tuner(TunerMeterSettings),
     StereoBands(StereoBandsMeterSettings),
     Needle(NeedleMeterSettings),
+    Goniometer(GoniometerMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -539,10 +573,11 @@ pub enum MeterKind {
     Tuner,
     StereoBands,
     Needle,
+    Goniometer,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 12] = [
+    pub const ALL: [MeterKind; 13] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
@@ -555,6 +590,7 @@ impl MeterKind {
         MeterKind::Tuner,
         MeterKind::StereoBands,
         MeterKind::Needle,
+        MeterKind::Goniometer,
     ];
 }
 
@@ -584,6 +620,7 @@ impl MeterSettings {
                 MeterSettings::StereoBands(StereoBandsMeterSettings::default())
             }
             MeterKind::Needle => MeterSettings::Needle(NeedleMeterSettings::default()),
+            MeterKind::Goniometer => MeterSettings::Goniometer(GoniometerMeterSettings::default()),
         }
     }
 
@@ -601,6 +638,7 @@ impl MeterSettings {
             MeterSettings::Tuner(_) => MeterKind::Tuner,
             MeterSettings::StereoBands(_) => MeterKind::StereoBands,
             MeterSettings::Needle(_) => MeterKind::Needle,
+            MeterSettings::Goniometer(_) => MeterKind::Goniometer,
         }
     }
 
@@ -619,6 +657,7 @@ impl MeterSettings {
             MeterSettings::Tuner(_) => "Tuner",
             MeterSettings::StereoBands(_) => "Stereo Bands",
             MeterSettings::Needle(_) => "Needle Meter",
+            MeterSettings::Goniometer(_) => "Goniometer",
         }
     }
 }
@@ -670,10 +709,22 @@ pub enum MeterView {
         held_peaks: Vec<CursorReadout>,
         /// The Overlay Source on the same graph, with the collisions.
         overlay: Option<Box<SpectrumOverlay>>,
+        /// B's song (A/B), when shown: its levels at the Spectrum's points,
+        /// to 0.1 dB, clamped to the floor.
+        b_layer: Option<Vec<f32>>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
         display: LoudnessDisplay,
+    },
+    Goniometer {
+        settings: GoniometerMeterSettings,
+        /// Correlation rounded to 0.01.
+        readings: StereoReadings,
+        /// Points in −1..1 (Lissajous: mono up), oldest first.
+        points: Vec<[f32; 2]>,
+        /// How far the points are scaled up to fill the scope, in dB to 0.5.
+        scale_db: f32,
     },
     Stereometer {
         settings: StereometerMeterSettings,
@@ -729,6 +780,9 @@ pub enum MeterView {
         mix: Option<Box<Summary>>,
         /// The mix's curve when frozen: a ghost to compare before and after.
         frozen: Option<Vec<f32>>,
+        /// Where the pointer is over the Meter (0–1 each way across its
+        /// frame), if it is: the curves show the frequency and note under it.
+        pointer: Option<[f32; 2]>,
     },
     Tuner {
         settings: TunerMeterSettings,
@@ -749,27 +803,99 @@ pub enum MeterView {
 
 /// Paces columns that arrive in bursts (audio comes a block at a time) onto
 /// the frames' clock: a scrolling Meter draws [`PLAYHEAD_LAG`] behind its
-/// newest column and moves on at the columns' rate, nudged back whenever
-/// it drifts.
+/// newest column and moves on at the columns' rate, nudged back gently
+/// whenever it drifts. With the display's refresh rate known, the time
+/// between frames counts in whole refreshes: a frame is prepared a little
+/// early or late (as the app wakes) but shown on a refresh, so each moves
+/// the same distance and the scrolling doesn't stutter.
 #[derive(Default)]
 struct Playhead {
     /// Columns shown (fractional), and when.
     shown: Option<(f64, Duration)>,
+    /// The newest column count seen, and when it last grew.
+    arrived: Option<(u64, Duration)>,
+    /// The longest recent wait for new columns, in seconds: the playhead
+    /// stays this far behind (at least [`PLAYHEAD_LAG`]), so late audio
+    /// doesn't make it catch up, stop and jump. It shrinks back slowly.
+    slack: f64,
+    /// Moved only as frames are drawn ([`Playhead::drive`]): building a
+    /// scene then just reads where it is. Moving it at both, each rounding
+    /// its share of a frame's time to whole refreshes, made some frames
+    /// move a refresh too far or too short.
+    driven: bool,
 }
 
 impl Playhead {
     /// How many columns behind the newest to draw at `now`.
-    fn lag(&mut self, now: Duration, completed: u64, per_second: f64) -> f32 {
+    /// How many columns behind the newest to draw at `now`, as a scene is
+    /// built: where it was last moved to, once frames drive it.
+    fn lag(&mut self, now: Duration, completed: u64, per_second: f64, refresh: Option<u32>) -> f32 {
+        match self.shown {
+            Some((shown, _)) if self.driven => {
+                let newest = completed as f64;
+                (((newest - shown.clamp(0.0, newest)) * 100.0).round() / 100.0) as f32
+            }
+            _ => self.advance(now, completed, per_second, refresh),
+        }
+    }
+
+    /// Moves it to `now`, as a frame is about to be drawn; from then on only
+    /// frames move it.
+    fn drive(
+        &mut self,
+        now: Duration,
+        completed: u64,
+        per_second: f64,
+        refresh: Option<u32>,
+    ) -> f32 {
+        self.driven = true;
+        self.advance(now, completed, per_second, refresh)
+    }
+
+    fn advance(
+        &mut self,
+        now: Duration,
+        completed: u64,
+        per_second: f64,
+        refresh: Option<u32>,
+    ) -> f32 {
         let newest = completed as f64;
-        let target = newest - PLAYHEAD_LAG * per_second;
+        let period = refresh.filter(|&r| r > 0).map(|r| 1.0 / f64::from(r));
+        let since = self
+            .shown
+            .map(|(_, at)| now.saturating_sub(at).as_secs_f64());
+        // Drawn again on the refresh it was moved to (another window, a
+        // repaint): it stays put. Moving it by a frame's rounding would send
+        // it back a little, then forward in a jump.
+        if let (Some((shown, _)), Some(since), Some(period)) = (self.shown, since, period)
+            && (since / period).round() == 0.0
+        {
+            return (((newest - shown.clamp(0.0, newest)) * 100.0).round() / 100.0) as f32;
+        }
+        self.slack = (self.slack - since.unwrap_or(0.0) * PLAYHEAD_SLACK_EASE).max(PLAYHEAD_LAG);
+        match self.arrived {
+            Some((count, at)) if completed > count => {
+                let gap = now.saturating_sub(at).as_secs_f64();
+                self.slack = self.slack.max(gap * 1.2).min(PLAYHEAD_MAX_LAG);
+                self.arrived = Some((completed, now));
+            }
+            Some(_) => {}
+            None => self.arrived = Some((completed, now)),
+        }
+        let target = newest - self.slack * per_second;
         let shown = match self.shown {
             Some((shown, at)) => {
-                let predicted = shown + now.saturating_sub(at).as_secs_f64() * per_second;
+                let mut elapsed = now.saturating_sub(at).as_secs_f64();
+                if let Some(period) = period {
+                    elapsed = (elapsed / period).round() * period;
+                }
+                let predicted = shown + elapsed * per_second;
                 let drift = target - predicted;
                 if drift.abs() > PLAYHEAD_JUMP * per_second {
                     target
                 } else {
-                    predicted + drift * PLAYHEAD_CORRECTION
+                    // Slowed to keep in step, never sent back.
+                    (predicted + drift * PLAYHEAD_CORRECTION).max(shown)
                 }
             }
             None => target,
@@ -781,7 +907,7 @@ impl Playhead {
     }
 
     fn reset(&mut self) {
-        self.shown = None;
+        *self = Playhead::default();
     }
 }
 
@@ -814,7 +940,14 @@ pub(crate) struct Meter {
     marked: MarkedPeaks,
     /// A Spectrum's Overlay Source's analyser, while it takes one.
     overlay_spectrum: Option<Box<SpectrumAnalyser>>,
+    /// A Spectrum's B layer: the analyser for B's song, and when it was
+    /// last fed (it's dropped once B stops coming).
+    b_spectrum: Option<Box<SpectrumAnalyser>>,
+    b_fed_at: Option<Duration>,
 }
+
+/// B's layer goes once B's song hasn't come for this long.
+const B_LAYER_STALE: Duration = Duration::from_millis(500);
 
 /// The analysis an Overlay Source gets: the Spectrum's, on the mono sum,
 /// without a long-term average.
@@ -907,6 +1040,8 @@ impl Meter {
             playhead: Playhead::default(),
             marked: MarkedPeaks::default(),
             overlay_spectrum: None,
+            b_spectrum: None,
+            b_fed_at: None,
         }
     }
 
@@ -923,6 +1058,7 @@ impl Meter {
         self.analyser = Some(analyser(sample_rate, &self.settings));
         // A fresh analyser takes its Overlay Source afresh (the app core re-routes it).
         self.overlay_spectrum = None;
+        self.b_spectrum = None;
         self.view = None;
         self.start_zoom();
     }
@@ -1091,6 +1227,14 @@ impl Meter {
         }
     }
 
+    /// A Tonal Balance Meter's mix key, once the detection has settled on it.
+    pub fn settled_key(&self) -> Option<dasmeter_analysis::tonal_balance::Key> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.settled_key(),
+            _ => None,
+        }
+    }
+
     /// A Tonal Balance Meter's live average, once it has heard something.
     pub fn tonal_summary(&self) -> Option<&Summary> {
         match &self.analyser {
@@ -1157,6 +1301,12 @@ impl Meter {
         let summary = self.tonal_balance()?.take_learned(settings.parts)?;
         self.view = None;
         Some(summary)
+    }
+
+    /// A/B on a Tonal Balance Meter: B pauses its average. Returns whether
+    /// it changed.
+    pub fn set_listening_b(&mut self, b: bool) -> bool {
+        self.tonal_balance().is_some_and(|a| a.set_paused(b))
     }
 
     /// Freezes a Tonal Balance Meter's curve as a ghost, or lets it go;
@@ -1226,10 +1376,20 @@ impl Meter {
                 {
                     overlay.set_settings(overlay_analysis(&s));
                 }
+                if !s.show_b {
+                    self.b_spectrum = None;
+                } else if let Some(b) = &mut self.b_spectrum
+                    && *b.settings() != overlay_analysis(&s)
+                {
+                    b.set_settings(overlay_analysis(&s));
+                }
             }
             (Some(Analyser::Loudness(a)), MeterSettings::Loudness(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Stereometer(a)), MeterSettings::Stereometer(s)) => {
                 a.set_settings(stereo_analysis(sample_rate, &s))
+            }
+            (Some(Analyser::Stereometer(a)), MeterSettings::Goniometer(s)) => {
+                a.set_settings(goniometer_analysis(sample_rate, &s))
             }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Tuner(a)), MeterSettings::Tuner(s)) => a.set_settings(s.analysis),
@@ -1306,7 +1466,8 @@ impl Meter {
             Some(Analyser::Needle(a)) => a.process(frames),
             Some(Analyser::Oscilloscope(a)) => a.process(frames),
             Some(Analyser::TonalBalance(a)) => {
-                // It only looks different once a frame is added.
+                // It only looks different once a frame is added, and while
+                // the drawn curve eases toward it.
                 if !a.process(frames) {
                     return;
                 }
@@ -1365,6 +1526,27 @@ impl Meter {
         )
     }
 
+    /// B's song as it plays (A/B), gain-matched, at `sample_rate`: a
+    /// Spectrum showing B takes it as its grey layer.
+    pub fn process_b(&mut self, frames: &[f32], sample_rate: u32, now: Duration) {
+        let MeterSettings::Spectrum(settings) = &self.settings else {
+            return;
+        };
+        if !settings.show_b {
+            return;
+        }
+        let b = match &mut self.b_spectrum {
+            Some(b) if b.sample_rate() == sample_rate => b,
+            _ => self.b_spectrum.insert(Box::new(SpectrumAnalyser::new(
+                sample_rate,
+                overlay_analysis(settings),
+            ))),
+        };
+        b.process(frames);
+        self.b_fed_at = Some(now);
+        self.view = None;
+    }
+
     /// The Overlay Source's audio, for a Phase Scope.
     pub fn process_overlay(&mut self, frames: &[f32], timing: Option<Timing>) {
         if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
@@ -1375,12 +1557,14 @@ impl Meter {
         }
     }
 
-    /// The cursor moved over this Meter (or left it): only the Spectrum and
-    /// the Cepstrum show it.
+    /// The cursor moved over this Meter (or left it): only the Spectrum,
+    /// the Cepstrum and Tonal Balance show it.
     pub fn pointer_changed(&mut self) {
         if matches!(
             self.settings,
-            MeterSettings::Spectrum(_) | MeterSettings::Cepstrum(_)
+            MeterSettings::Spectrum(_)
+                | MeterSettings::Cepstrum(_)
+                | MeterSettings::TonalBalance(_)
         ) {
             self.view = None;
         }
@@ -1389,7 +1573,38 @@ impl Meter {
     /// What the Meter shows now, or `None` before a Source starts.
     /// `pointer` is the cursor's position inside the Meter (0–1 each way), if it's over it.
     /// `now` paces the scrolling Meters.
-    pub fn view(&mut self, pointer: Option<[f32; 2]>, now: Duration) -> Option<&MeterView> {
+    /// A scrolling Meter's columns a second (the Waveform's, the Spectrogram's).
+    fn columns_per_second(&self) -> Option<f64> {
+        match self.analyser.as_ref()? {
+            Analyser::Waveform(_) => {
+                Some(f64::from(dasmeter_analysis::waveform::COLUMNS_PER_SECOND))
+            }
+            Analyser::Spectrogram(a) => Some(a.columns_per_second()),
+            _ => None,
+        }
+    }
+
+    /// Where a scrolling Meter's camera is at `now` (just before its frame
+    /// is drawn), for a view of `completed` columns: how far behind the
+    /// newest to draw.
+    pub fn scroll_lag(
+        &mut self,
+        completed: u64,
+        now: Duration,
+        refresh: Option<u32>,
+    ) -> Option<f32> {
+        let per_second = self.columns_per_second()?;
+        (completed > 0).then(|| self.playhead.drive(now, completed, per_second, refresh))
+    }
+
+    /// `refresh` is the display's refresh rate, when known: scrolling Meters
+    /// move on its clock.
+    pub fn view(
+        &mut self,
+        pointer: Option<[f32; 2]>,
+        now: Duration,
+        refresh: Option<u32>,
+    ) -> Option<&MeterView> {
         if self.view.is_none() {
             let mut view = build_view(self.analyser.as_mut()?, &self.settings, pointer);
             if let MeterView::Spectrum {
@@ -1399,6 +1614,7 @@ impl Meter {
                 held_peaks,
                 spectrum,
                 overlay,
+                b_layer,
                 ..
             } = &mut view
             {
@@ -1406,6 +1622,26 @@ impl Meter {
                     .overlay_spectrum
                     .as_mut()
                     .map(|a| Box::new(overlay_view(a, spectrum, settings)));
+                // B's layer while B's song comes; gone once it stops.
+                if self
+                    .b_fed_at
+                    .is_none_or(|at| now.saturating_sub(at) > B_LAYER_STALE)
+                {
+                    self.b_spectrum = None;
+                }
+                *b_layer = self.b_spectrum.as_mut().map(|b| {
+                    let floor = spectrum.db_range.0;
+                    b.update()
+                        .traces
+                        .first()
+                        .map(|t| {
+                            t.levels
+                                .iter()
+                                .map(|l| round_to(l.max(floor), 0.1))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                });
                 *selecting = self.selecting;
                 let slow = pointer.is_some() && settings.slow_on_hover;
                 *held_peaks = self.marked.update(slow.then(|| std::mem::take(held_peaks)));
@@ -1420,10 +1656,8 @@ impl Meter {
             }
             self.view = Some(view);
         }
-        let per_second = match self.analyser.as_ref()? {
-            Analyser::Waveform(_) => f64::from(dasmeter_analysis::waveform::COLUMNS_PER_SECOND),
-            Analyser::Spectrogram(a) => a.columns_per_second(),
-            _ => return self.view.as_ref(),
+        let Some(per_second) = self.columns_per_second() else {
+            return self.view.as_ref();
         };
         if let Some(
             MeterView::Waveform { completed, lag, .. }
@@ -1434,7 +1668,7 @@ impl Meter {
                 self.playhead.reset();
                 0.0
             } else {
-                self.playhead.lag(now, *completed, per_second)
+                self.playhead.lag(now, *completed, per_second, refresh)
             };
         }
         if let (
@@ -1450,7 +1684,7 @@ impl Meter {
                     0.0
                 } else {
                     zoom.playhead
-                        .lag(now, view.completed, a.columns_per_second())
+                        .lag(now, view.completed, a.columns_per_second(), refresh)
                 };
             }
         }
@@ -1508,6 +1742,17 @@ fn stereo_analysis(sample_rate: u32, settings: &StereometerMeterSettings) -> Ste
     }
 }
 
+fn goniometer_analysis(
+    sample_rate: u32,
+    settings: &GoniometerMeterSettings,
+) -> StereometerSettings {
+    let points = (settings.persistence.as_secs_f64() * f64::from(sample_rate)).round() as usize;
+    StereometerSettings {
+        points: points.clamp(1, MAX_STEREO_POINTS),
+        ..settings.analysis
+    }
+}
+
 fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
     match settings {
         MeterSettings::Waveform(s) => {
@@ -1522,6 +1767,11 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
         MeterSettings::Stereometer(s) => Analyser::Stereometer(Box::new(StereometerAnalyser::new(
             sample_rate,
             stereo_analysis(sample_rate, s),
+        ))),
+        // The Goniometer looks at the same thing the Stereometer does.
+        MeterSettings::Goniometer(s) => Analyser::Stereometer(Box::new(StereometerAnalyser::new(
+            sample_rate,
+            goniometer_analysis(sample_rate, s),
         ))),
         MeterSettings::Cepstrum(s) => {
             Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
@@ -1638,6 +1888,7 @@ fn build_view(
                 pointer,
                 held_peaks,
                 overlay: None,
+                b_layer: None,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {
@@ -1660,6 +1911,18 @@ fn build_view(
                 settings,
                 readings,
                 points,
+            }
+        }
+        (Analyser::Stereometer(a), MeterSettings::Goniometer(settings)) => {
+            let mut readings = a.readings();
+            readings.correlation = round_to(readings.correlation, 0.01);
+            let mut points = Vec::new();
+            a.points(StereoView::Lissajous, &mut points);
+            MeterView::Goniometer {
+                settings,
+                readings,
+                points,
+                scale_db: round_to(20.0 * a.gain().max(1e-6).log10(), 0.5),
             }
         }
         (Analyser::Needle(a), MeterSettings::Needle(settings)) => MeterView::Needle {
@@ -1755,7 +2018,7 @@ fn build_view(
             }
         }
         (Analyser::TonalBalance(a), MeterSettings::TonalBalance(settings)) => {
-            let mix = a.summary().map(|summary| {
+            let mix = a.shown().map(|summary| {
                 let mut mix = summary.clone();
                 for level in mix.curve.iter_mut().chain(&mut mix.regions) {
                     *level = round_to(*level, 0.1);
@@ -1768,6 +2031,7 @@ fn build_view(
                 frozen: a
                     .frozen()
                     .map(|curve| curve.iter().map(|&l| round_to(l, 0.1)).collect()),
+                pointer,
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),
@@ -1924,4 +2188,124 @@ fn history(a: &LoudnessAnalyser, settings: &LoudnessMeterSettings) -> Vec<Level>
             Level::from_db(lufs, crate::scene::LUFS_FLOOR)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Columns a playhead moves each frame at 120 Hz, the frames prepared
+    /// a little early or late (as the event loop wakes), the audio coming
+    /// in 512-frame blocks at 48 kHz.
+    fn steps(refresh: Option<u32>) -> Vec<f64> {
+        let per_second = 200.0;
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let shown_at = f64::from(frame) / 120.0;
+            // ±2 ms of wake-up jitter.
+            let jitter = [0.0, 0.002, -0.0015, 0.001, -0.002][frame as usize % 5];
+            let now = Duration::from_secs_f64(1.0 + shown_at + jitter);
+            let audio = (1.0 + shown_at) * 48_000.0;
+            let completed = ((audio / 512.0).floor() * 512.0 / 240.0) as u64;
+            let lag = playhead.lag(now, completed, per_second, refresh);
+            shown.push(completed as f64 - f64::from(lag));
+        }
+        shown.windows(2).skip(240).map(|w| w[1] - w[0]).collect()
+    }
+
+    #[test]
+    fn building_a_scene_between_frames_doesnt_move_it() {
+        // Frames on a 120 Hz refresh, each scene built a varying time before
+        // its frame is ready.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let ready = 1.0 + f64::from(frame) / 120.0;
+            let built = ready - [0.001, 0.004, 0.0075, 0.002, 0.006][frame as usize % 5];
+            let completed = |t: f64| ((t * 48_000.0 / 512.0).floor() * 512.0 / 240.0) as u64;
+            playhead.lag(
+                Duration::from_secs_f64(built),
+                completed(built),
+                200.0,
+                Some(120),
+            );
+            let c = completed(ready);
+            let lag = playhead.drive(Duration::from_secs_f64(ready), c, 200.0, Some(120));
+            shown.push(c as f64 - f64::from(lag));
+        }
+        let even = 200.0 / 120.0;
+        let worst = shown
+            .windows(2)
+            .skip(240)
+            .map(|w| (w[1] - w[0] - even).abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.1, "steps vary by {worst} columns");
+    }
+
+    #[test]
+    fn a_second_window_drawn_on_the_same_refresh_doesnt_move_it() {
+        // Each refresh drawn by two windows (the Meters and Settings), the
+        // second a fraction of a ms after the first: both show the camera
+        // where it is on that refresh, and it moves the same every refresh.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let ready = 1.0 + f64::from(frame) / 120.0;
+            let completed = |t: f64| ((t * 48_000.0 / 512.0).floor() * 512.0 / 240.0) as u64;
+            let mut lags = Vec::new();
+            for after in [0.0, 0.0004] {
+                let at = ready + after;
+                let c = completed(at);
+                let lag = playhead.drive(Duration::from_secs_f64(at), c, 200.0, Some(120));
+                lags.push(c as f64 - f64::from(lag));
+            }
+            assert!(
+                (lags[1] - lags[0]).abs() < 0.011,
+                "frame {frame}: the second window shows {} columns on",
+                lags[1] - lags[0]
+            );
+            shown.push(lags[0]);
+        }
+        let even = 200.0 / 120.0;
+        let worst = shown
+            .windows(2)
+            .skip(240)
+            .map(|w| (w[1] - w[0] - even).abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.1, "steps vary by {worst} columns");
+    }
+
+    #[test]
+    fn late_audio_doesnt_stop_the_scrolling() {
+        // Audio in 10.7 ms blocks, but every two seconds one comes 90 ms late
+        // (then all at once), as a busy system sometimes delivers it.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        let mut delivered = 0.0f64;
+        for frame in 0..1200u32 {
+            let t = f64::from(frame) / 120.0;
+            let late = (t % 2.0) > 1.0 && (t % 2.0) < 1.09;
+            if !late {
+                delivered = (t * 48_000.0 / 512.0).floor() * 512.0 / 240.0;
+            }
+            let now = Duration::from_secs_f64(1.0 + t);
+            let lag = playhead.lag(now, delivered as u64, 200.0, Some(120));
+            shown.push(delivered.floor() - f64::from(lag));
+        }
+        // After the first gap it has learned to stay far enough behind.
+        let steps: Vec<f64> = shown.windows(2).skip(400).map(|w| w[1] - w[0]).collect();
+        let slowest = steps.iter().copied().fold(f64::MAX, f64::min);
+        assert!(slowest > 0.8, "it stalled: a step of {slowest} columns");
+    }
+
+    #[test]
+    fn on_the_displays_clock_every_frame_moves_the_same() {
+        let even = 200.0 / 120.0;
+        let worst = |steps: &[f64]| steps.iter().map(|s| (s - even).abs()).fold(0.0, f64::max);
+        let snapped = steps(Some(120));
+        assert!(worst(&snapped) < 0.1, "steps vary by {}", worst(&snapped));
+        let unsnapped = steps(None);
+        assert!(worst(&unsnapped) > worst(&snapped), "the clock must help");
+    }
 }

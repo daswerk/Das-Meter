@@ -6,7 +6,7 @@ Get the latest release from
 [GitHub Releases](https://github.com/daswerk/Das-Meter/releases/latest):
 
 - **macOS** (14.6 or newer, Apple silicon and Intel): `Das-Meter-<version>.dmg`.
-- **Windows** (10 and 11): the installer. *Coming with the Windows release.*
+- **Windows** (10 and 11, x64): `Das-Meter-<version>-windows-x64-setup.exe`.
 - **Linux** (x86_64, e.g. Arch): `das-meter-<version>-linux-x86_64.tar.gz`.
   Unpack it and run `./das-meter`. System Capture needs PipeWire (the default
   on Arch, Fedora and current Ubuntu). The Bar is an ordinary always-on-top
@@ -16,6 +16,15 @@ Get the latest release from
 ## Install on macOS
 
 Open the DMG and drag **Das-Meter** to **Applications**.
+
+## Install on Windows
+
+Run the installer and allow it to make changes (it installs for everyone on
+the PC). Untick **CLAP** or **VST3** if your DAW doesn't need that Send Plugin
+format. Double-clicking a `.dasmeter-preset` file afterwards imports it.
+
+Until the installer is code-signed, Windows SmartScreen asks once: choose
+**More info ▸ Run anyway**.
 
 ## Open Anyway
 
@@ -37,7 +46,8 @@ Das-Meter copies the Send Plugin into your plug-in folders itself (see
 
 ## First launch
 
-Das-Meter opens as a **Bar** docked to the edge of your screen, with a welcome
+Das-Meter opens as a **Bar** docked to the top of your screen (the
+**Producing Top-Bar 1.0** Preset), with a welcome
 card next to it:
 
 - **Start listening** starts [System Capture](listen-to.md). On macOS, this is

@@ -1,7 +1,7 @@
 //! The Theme library: the built-ins and the themes folder's files, which Theme
 //! (or light/dark pair) is chosen, and the files edits write.
 
-use crate::theme::{Colour, LIGHT, NOCTURNE, Role, Styling, Theme};
+use crate::theme::{Colour, LIGHT, MIXING_PRODUCING, Role, Styling, Theme};
 
 /// A file in the themes folder, as the shell read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +78,7 @@ impl Default for Themes {
 }
 
 impl Themes {
-    /// The built-ins, following the system with Light and Dark.
+    /// The built-ins, following the system with Light and Mixing/Producing.
     pub fn new() -> Themes {
         Themes {
             entries: Theme::built_ins()
@@ -90,7 +90,7 @@ impl Themes {
                 })
                 .collect(),
             light: LIGHT.to_owned(),
-            dark: NOCTURNE.to_owned(),
+            dark: MIXING_PRODUCING.to_owned(),
             appearance: Appearance::Dark,
             writes: Vec::new(),
         }
@@ -347,6 +347,20 @@ impl Themes {
 
     pub fn set_styling(&mut self, index: usize, styling: Styling) -> bool {
         self.edit(index, |theme| theme.styling = styling.clamped())
+    }
+
+    /// The folder's Theme called `theme.name` back to `theme`'s colours and
+    /// styling (an Undo). A built-in, or a Theme that's gone, stays as it is.
+    pub fn restore(&mut self, theme: &Theme) {
+        if let Some(index) = self
+            .find(&theme.name)
+            .filter(|&i| !self.entries[i].built_in)
+        {
+            self.edit(index, |t| {
+                t.palette = theme.palette.clone();
+                t.styling = theme.styling;
+            });
+        }
     }
 
     /// The files to write since the last call.

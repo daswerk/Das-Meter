@@ -21,7 +21,10 @@ No password is needed. Then rescan plug-ins in your DAW (or restart it) and
 add **Das-Meter Send** to a track. When Das-Meter updates, it updates the
 installed plug-ins too, and tells you to restart your DAW.
 
-**Windows:** the installer puts the Send Plugin in the standard folders.
+**Windows:** the installer puts the Send Plugin in the standard folders,
+`C:\Program Files\Common Files\CLAP` and `…\VST3`, with a checkbox for each
+format. Updating Das-Meter updates them too; if a DAW has the plug-in open,
+the new one takes its place when you next restart Windows.
 
 ## Naming
 

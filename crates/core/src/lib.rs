@@ -9,6 +9,12 @@
 //! drive the core with a fake clock.
 
 mod activity;
+
+/// Who designed Das-Meter, as the app's About and settings say.
+pub const DESIGNED_BY: &str = "Designed by Punktmidi";
+/// Where people can give something for Das-Meter, if they like it.
+pub const DONATE_URL: &str = "https://paypal.me/forpunktmidi";
+
 pub mod curves;
 pub mod displays;
 pub mod docs;
@@ -27,6 +33,7 @@ pub mod targets;
 pub mod theme;
 pub mod themes;
 pub mod tonal_balance;
+mod undo;
 
 use std::time::Duration;
 
@@ -37,8 +44,8 @@ pub use layout::{
 };
 pub use meters::{
     BandDisplay, BigReading, CepstrumMeterSettings, CursorReadout, CycleLength,
-    LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView, NeedleDisplay,
-    NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    GoniometerMeterSettings, LoudnessMeterSettings, LufsBar, MeterKind, MeterSettings, MeterView,
+    NeedleDisplay, NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
     SpectrogramMeterSettings, SpectrogramZoom, SpectrumColouring, SpectrumMeterSettings,
     SpectrumOverlay, SpectrumZoom, Steadiness, StereoBandsMeterSettings, StereoDrawing,
     StereometerMeterSettings, TunerDisplay, TunerMeterSettings, WaveformColouring,
@@ -61,8 +68,8 @@ pub use targets::{Target, TargetSong, Targets};
 pub use theme::{Colour, LineWeight, Look, Palette, Role, Styling, Theme};
 pub use themes::{Appearance, FileWrite, ThemeFile, ThemeInfo, ThemeScene};
 pub use tonal_balance::{
-    KeyChoice, TargetScene, TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene,
-    TonalView, UploadScene,
+    AB_MIN_REGION, AbScene, KeyChoice, OVERVIEW_POINTS, SongOverview, TargetPick, TargetScene,
+    TargetSongInfo, TonalBalanceMeterSettings, TonalBalanceScene, TonalView, UploadScene,
 };
 
 use meters::Meter;
@@ -333,6 +340,33 @@ pub enum Event<'a> {
     FreezeTonalBalance {
         meter: usize,
     },
+    /// A/B listening on a Tonal Balance Meter: B plays its picked song (the
+    /// shell plays it) and pauses its average; A is the mix again.
+    ListenB {
+        meter: usize,
+        b: bool,
+    },
+    /// The part of B's song to loop, in seconds, or (`None`) all of it.
+    AbRegion {
+        meter: usize,
+        region: Option<(f32, f32)>,
+    },
+    /// A song's waveform, read from its file (by the shell).
+    AbOverview {
+        file: &'a str,
+        overview: &'a SongOverview,
+    },
+    /// B's song as the player plays it, gain-matched to the mix (interleaved
+    /// stereo at `sample_rate`), for Spectrums showing B.
+    BAudio {
+        frames: &'a [f32],
+        sample_rate: u32,
+    },
+    /// Where B is in its song, in seconds, while it plays (from the shell).
+    AbPosition {
+        meter: usize,
+        seconds: Option<f32>,
+    },
     /// How the files being analysed for a Tonal Balance Meter are getting
     /// on, or (`None`) that it's over.
     UploadProgress {
@@ -367,6 +401,10 @@ pub enum Event<'a> {
     },
     /// Back to the current Preset as it was opened.
     RevertPreset,
+    /// ⌘Z: the last change to the Preset or its Themes taken back.
+    Undo,
+    /// ⇧⌘Z: the last change taken back made again.
+    Redo,
     /// The current state as a new Preset, which becomes current.
     SavePresetAsNew,
     DuplicatePreset {
@@ -457,6 +495,13 @@ struct MeterSlot {
     overlay: Option<Pick>,
     /// The ID of the Overlay Source whose audio the Phase Scope takes.
     overlay_showing: Option<u64>,
+    /// A/B on a Tonal Balance Meter: its song plays (B). Not saved.
+    listening_b: bool,
+    /// A/B: the song the region and position below are for, the part of it
+    /// B loops (seconds), and where B is in it.
+    ab_song: Option<String>,
+    ab_region: Option<(f32, f32)>,
+    ab_position: Option<f32>,
     /// How lit it is: dims in silence in the Smooth Look.
     activity: activity::Activity,
 }
@@ -508,6 +553,8 @@ pub struct AppCore {
     themes: themes::Themes,
     curves: curves::Curves,
     targets: targets::Targets,
+    /// A/B: each song's waveform read so far, by file.
+    ab_overviews: std::collections::HashMap<String, std::sync::Arc<SongOverview>>,
     /// Files being analysed for Tonal Balance Meters, by Meter.
     uploads: Vec<(usize, UploadScene)>,
     presets: Presets,
@@ -521,7 +568,12 @@ pub struct AppCore {
     /// The scene last handed to the shell, and when.
     drawn: Option<Scene>,
     drawn_at: Option<Duration>,
+    /// The scene drawn last is new and its frame isn't drawn yet: when it
+    /// is, [`AppCore::retime`] counts the next frame from then.
+    fresh: bool,
     taps: phase_scope::Taps,
+    /// Undo and Redo.
+    history: undo::History,
 }
 
 impl Default for AppCore {
@@ -575,6 +627,10 @@ impl AppCore {
                     showing: None,
                     overlay: None,
                     overlay_showing: None,
+                    listening_b: false,
+                    ab_song: None,
+                    ab_region: None,
+                    ab_position: None,
                     activity: activity::Activity::default(),
                 })
                 .collect(),
@@ -592,6 +648,7 @@ impl AppCore {
             themes: themes::Themes::new(),
             curves: curves::Curves::default(),
             targets: targets::Targets::default(),
+            ab_overviews: std::collections::HashMap::new(),
             uploads: Vec::new(),
             presets: Presets::default(),
             capture_rate: None,
@@ -600,8 +657,10 @@ impl AppCore {
             changed: true,
             drawn: None,
             drawn_at: None,
+            fresh: false,
             onboarding: Onboarding::default(),
             taps: phase_scope::Taps::default(),
+            history: undo::History::default(),
         }
     }
 
@@ -871,6 +930,25 @@ impl AppCore {
         self.presets.settings.last_update_check
     }
 
+    /// The shortest time between two new frames, as the app settings and
+    /// the display's refresh rate say.
+    pub fn frame_interval(&self) -> Duration {
+        self.app.frame_interval(self.refresh_rate)
+    }
+
+    /// Whether the shell should present the last frame again on the coming
+    /// refresh: matching the display while frames are coming, so the next
+    /// new one lands on its refresh.
+    pub fn keeps_presenting(&self, now: Duration) -> bool {
+        let Some(within) = self.app.present_for(self.refresh_rate) else {
+            return false;
+        };
+        self.visible
+            && self
+                .drawn_at
+                .is_some_and(|at| now.saturating_sub(at) < within)
+    }
+
     /// The highest frame-rate cap the settings offer: the display's refresh
     /// rate, and never below the default.
     pub fn max_frame_rate_cap(&self) -> u32 {
@@ -916,16 +994,24 @@ impl AppCore {
 
     pub fn handle(&mut self, event: Event, now: Duration) {
         use Event::*;
+        let mut record = None;
         match event {
+            Undo | Redo => {
+                self.step(matches!(event, Redo), now);
+                self.changed = true;
+                return;
+            }
             PresetFiles { files, settings } => {
                 let open = self.presets.load(files, settings);
                 self.onboarding.loaded(&self.presets.settings.first_launch);
                 let stored = &self.presets.settings;
                 self.app.frame_rate_cap = stored.frame_rate_cap;
+                self.app.match_display = stored.match_display;
                 self.app.check_for_updates = stored.check_for_updates;
                 self.clamp_frame_rate_cap();
                 if let Some(data) = open {
                     self.apply(data, now);
+                    self.history.reset(self.snapshot());
                 }
                 self.changed = true;
                 return;
@@ -953,6 +1039,11 @@ impl AppCore {
             | CaptureStarted { .. }
             | CaptureFailed(_)
             | DisplayRefreshRate(_)
+            | ListenB { .. }
+            | AbRegion { .. }
+            | AbOverview { .. }
+            | AbPosition { .. }
+            | BAudio { .. }
             | Display(_)
             | ThemeFiles(_)
             | CurveFiles(_)
@@ -982,19 +1073,112 @@ impl AppCore {
             _ if self.presets.current_index().is_some() => {
                 self.save_after = Some(now + AUTOSAVE_DELAY);
                 self.touched = true;
+                record = Some(undo::kind(&event));
             }
             _ => {}
         }
+        let theme_files = matches!(event, ThemeFiles(_));
         if let CaptureStarted { sample_rate } = event {
             self.capture_rate = Some(sample_rate);
         }
         if let SetApp(app) = event {
             let stored = &mut self.presets.settings;
             stored.frame_rate_cap = app.frame_rate_cap;
+            stored.match_display = app.match_display;
             stored.check_for_updates = app.check_for_updates;
             self.presets.save_settings();
         }
         self.handle_event(event, now);
+        if let Some(kind) = record {
+            let current = self.snapshot();
+            self.history.changed(kind, current, now);
+        } else if theme_files {
+            // The folder's Themes as they are now, not a change to undo.
+            let current = self.snapshot();
+            self.history.settle(current);
+        }
+    }
+
+    /// What Undo and Redo bring back: the Preset's state, its window left
+    /// where it is, and the folder Themes it uses.
+    fn snapshot(&self) -> undo::Snapshot {
+        let mut data = self.current_data();
+        data.window.frame = None;
+        data.window.display = None;
+        let mut themes: Vec<Theme> = Vec::new();
+        for name in [&data.theme.light, &data.theme.dark] {
+            if let Some((theme, false)) = self.themes.get(name)
+                && !themes.iter().any(|t| t.name == theme.name)
+            {
+                themes.push(theme.clone());
+            }
+        }
+        undo::Snapshot { data, themes }
+    }
+
+    /// Undo (or Redo, `forward`): back to the state before the last change.
+    fn step(&mut self, forward: bool, now: Duration) {
+        let current = self.snapshot();
+        let state = if forward {
+            self.history.redo(current)
+        } else {
+            self.history.undo(current)
+        };
+        let Some(state) = state else {
+            return;
+        };
+        self.restore(state, now);
+        if self.presets.current_index().is_some() {
+            self.save_after = Some(now + AUTOSAVE_DELAY);
+            self.touched = true;
+        }
+    }
+
+    /// Puts a step's state back. Meters whose settings didn't change keep
+    /// running as they are; only a different set of Meters starts over.
+    fn restore(&mut self, state: undo::Snapshot, now: Duration) {
+        for theme in &state.themes {
+            self.themes.restore(theme);
+        }
+        let mut data = state.data.sanitised();
+        data.window.frame = self.window.frame;
+        data.window.display = self.window.display.clone();
+        let same_meters = data.meters.len() == self.meters.len()
+            && data
+                .meters
+                .iter()
+                .zip(&self.meters)
+                .all(|(m, slot)| m.settings.kind() == slot.meter.settings().kind());
+        if !same_meters {
+            self.apply(data, now);
+            return;
+        }
+        let mut reroute = false;
+        for (slot, m) in self.meters.iter_mut().zip(data.meters) {
+            if slot.meter.settings() != m.settings {
+                slot.meter.set_settings(m.settings.clamped());
+            }
+            reroute |= slot.pick != m.send_plugin || slot.overlay != m.overlay;
+            slot.pick = m.send_plugin;
+            slot.overlay = m.overlay;
+            slot.show_source_label = m.show_source_label;
+            slot.overrides = m.overrides.iter().map(|o| (o.role, o.colour)).collect();
+            slot.reference = m.reference;
+        }
+        self.layout = data.bar;
+        if self.layout.screen == ScreenMode::ReserveSpace && self.platform == Platform::MacOs {
+            self.layout.screen = ScreenMode::FloatOnTop;
+        }
+        self.window = data.window;
+        self.mode = data.mode;
+        self.themes
+            .choose_names(&data.theme.light, &data.theme.dark);
+        if data.listen_to != self.listen_to {
+            self.handle_event(Event::SetListenTo(data.listen_to), now);
+        } else if reroute && self.listen_to == ListenTo::SendPlugins {
+            self.route(now);
+        }
+        self.changed = true;
     }
 
     fn handle_preset(&mut self, event: Event, now: Duration) {
@@ -1027,6 +1211,7 @@ impl AppCore {
         };
         if let Some(data) = open {
             self.apply(data, now);
+            self.history.reset(self.snapshot());
             // Reverting saves the opened state back.
             if matches!(event, Event::RevertPreset) {
                 self.touched = true;
@@ -1162,10 +1347,30 @@ impl AppCore {
         };
         let target = slot.reference.clone().map(|name| {
             let target = self.targets.get(&name);
-            TargetScene::new(name, target, &settings, slot.meter.tonal_summary())
+            TargetScene::new(name, target, &settings, slot.meter.settled_key())
         });
+        let ab = target
+            .as_ref()
+            .and_then(|t| t.song_file.clone())
+            .map(|(file, loudness)| AbScene {
+                b: slot.listening_b,
+                region: slot
+                    .ab_region
+                    .filter(|_| slot.ab_song.as_ref() == Some(&file)),
+                overview: self.ab_overviews.get(&file).cloned(),
+                position: slot.ab_position.filter(|_| slot.listening_b),
+                file,
+                gain_db: slot.meter.tonal_summary().map_or(0.0, |mix| {
+                    let gain = (mix.loudness - loudness).clamp(
+                        tonal_balance::AB_GAIN_RANGE.0,
+                        tonal_balance::AB_GAIN_RANGE.1,
+                    );
+                    (gain * 10.0).round() / 10.0
+                }),
+            });
         Some(TonalBalanceScene {
             target,
+            ab,
             learning: slot.meter.learning_seconds(),
             frozen: slot.meter.is_frozen(),
             comparing: slot.meter.comparing().map(str::to_owned),
@@ -1175,6 +1380,43 @@ impl AppCore {
                 .find(|(m, _)| *m == meter)
                 .map(|(_, u)| u.clone()),
         })
+    }
+
+    /// The audio file a Tonal Balance Meter's A/B plays, if its pick has one.
+    fn ab_file(&self, meter: usize) -> Option<String> {
+        let slot = self.meters.get(meter)?;
+        let MeterSettings::TonalBalance(settings) = slot.meter.settings() else {
+            return None;
+        };
+        let name = slot.reference.clone()?;
+        TargetScene::new(
+            name,
+            self.targets.get(slot.reference.as_ref()?),
+            &settings,
+            None,
+        )
+        .song_file
+        .map(|(file, _)| file)
+    }
+
+    /// A/B ends on a Meter whose pick no longer has a file to play, and a
+    /// region is forgotten once another song is picked.
+    fn end_unplayable_b(&mut self) {
+        for meter in 0..self.meters.len() {
+            let file = self.ab_file(meter);
+            let slot = &mut self.meters[meter];
+            if slot.listening_b && file.is_none() {
+                slot.listening_b = false;
+                slot.meter.set_listening_b(false);
+            }
+            if slot.ab_song.is_some() && slot.ab_song != file {
+                slot.ab_song = None;
+                slot.ab_region = None;
+            }
+            if !slot.listening_b {
+                slot.ab_position = None;
+            }
+        }
     }
 
     fn show_note(&mut self, note: Note, now: Duration) {
@@ -1255,6 +1497,10 @@ impl AppCore {
                 showing: None,
                 overlay: m.overlay.clone(),
                 overlay_showing: None,
+                listening_b: false,
+                ab_song: None,
+                ab_region: None,
+                ab_position: None,
                 activity: activity::Activity::default(),
             })
             .collect();
@@ -1828,7 +2074,10 @@ impl AppCore {
                     return;
                 };
                 let target = match target.trim() {
-                    "" => slot.reference.clone().unwrap_or_default(),
+                    "" => slot
+                        .reference
+                        .clone()
+                        .unwrap_or_else(|| targets::SONGS.to_owned()),
                     name => name.to_owned(),
                 };
                 let count = self.targets.get(&target).map_or(0, |t| t.songs.len());
@@ -1837,7 +2086,15 @@ impl AppCore {
                     name => name.to_owned(),
                 };
                 let song = TargetSong::new(&song, settings.parts, &summary);
-                slot.reference = Some(self.targets.add_song(&target, song));
+                let target = self.targets.add_song(&target, song);
+                // The song just taught is what the Meter compares with.
+                let added = self.targets.get(&target).map_or(0, |t| t.songs.len() - 1);
+                slot.meter
+                    .set_settings(MeterSettings::TonalBalance(TonalBalanceMeterSettings {
+                        pick: TargetPick::Song(added),
+                        ..settings
+                    }));
+                slot.reference = Some(target);
             }
             Event::AddTargetSongs {
                 meter,
@@ -1848,20 +2105,53 @@ impl AppCore {
                     return;
                 }
                 let mut name = target.to_owned();
+                let before = self.targets.get(target).map_or(0, |t| t.songs.len());
                 for song in songs {
                     name = self.targets.add_song(&name, song.clone());
                 }
+                // A file added again keeps its place in the list.
+                let first = songs[0]
+                    .file
+                    .as_deref()
+                    .and_then(|file| self.targets.song_from(&name, file))
+                    .unwrap_or(before);
                 if let Some(slot) = self
                     .meters
                     .get_mut(meter)
                     .filter(|s| s.meter.is_tonal_balance())
                 {
+                    // The first song added is what the Meter compares with.
+                    if let MeterSettings::TonalBalance(settings) = slot.meter.settings() {
+                        slot.meter.set_settings(MeterSettings::TonalBalance(
+                            TonalBalanceMeterSettings {
+                                pick: TargetPick::Song(first),
+                                ..settings
+                            },
+                        ));
+                    }
                     slot.reference = Some(name);
                 }
             }
             Event::RemoveTargetSong { target, song } => {
                 if !self.targets.remove_song(target, song) {
                     return;
+                }
+                // Meters on a later song of it keep that song.
+                for slot in &mut self.meters {
+                    if slot.reference.as_deref() != Some(target) {
+                        continue;
+                    }
+                    if let MeterSettings::TonalBalance(settings) = slot.meter.settings()
+                        && let TargetPick::Song(i) = settings.pick
+                        && i > song
+                    {
+                        slot.meter.set_settings(MeterSettings::TonalBalance(
+                            TonalBalanceMeterSettings {
+                                pick: TargetPick::Song(i - 1),
+                                ..settings
+                            },
+                        ));
+                    }
                 }
             }
             Event::UploadProgress { meter, progress } => {
@@ -1883,6 +2173,71 @@ impl AppCore {
                 {
                     return;
                 }
+            }
+            Event::ListenB { meter, b } => {
+                let playable = self.ab_file(meter).is_some();
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let b = b && playable;
+                if slot.listening_b == b {
+                    return;
+                }
+                slot.listening_b = b;
+                slot.meter.set_listening_b(b);
+            }
+            Event::AbRegion { meter, region } => {
+                let Some(file) = self.ab_file(meter) else {
+                    return;
+                };
+                let length = self.ab_overviews.get(&file).map(|o| o.seconds);
+                let region = region.and_then(|(a, b)| {
+                    let (start, end) = (a.min(b).max(0.0), a.max(b));
+                    let end = length.map_or(end, |l| end.min(l));
+                    (end - start >= tonal_balance::AB_MIN_REGION).then_some((start, end))
+                });
+                let slot = &mut self.meters[meter];
+                if slot.ab_region == region && slot.ab_song.as_ref() == Some(&file) {
+                    return;
+                }
+                slot.ab_song = Some(file);
+                slot.ab_region = region;
+            }
+            Event::AbOverview { file, overview } => {
+                if self
+                    .ab_overviews
+                    .get(file)
+                    .is_some_and(|o| **o == *overview)
+                {
+                    return;
+                }
+                self.ab_overviews
+                    .insert(file.to_owned(), std::sync::Arc::new(overview.clone()));
+            }
+            Event::BAudio {
+                frames,
+                sample_rate,
+            } => {
+                let mut shown = false;
+                for slot in &mut self.meters {
+                    if matches!(slot.meter.settings(), MeterSettings::Spectrum(s) if s.show_b) {
+                        slot.meter.process_b(frames, sample_rate, now);
+                        shown = true;
+                    }
+                }
+                if !shown {
+                    return;
+                }
+            }
+            Event::AbPosition { meter, seconds } => {
+                let Some(slot) = self.meters.get_mut(meter) else {
+                    return;
+                };
+                let seconds = seconds.map(|s| (s * 100.0).round() / 100.0);
+                if slot.ab_position == seconds {
+                    return;
+                }
+                slot.ab_position = seconds;
             }
             Event::FreezeTonalBalance { meter } => {
                 if !self
@@ -1921,7 +2276,9 @@ impl AppCore {
             | Event::DeletePreset { .. }
             | Event::MovePreset { .. }
             | Event::ResetPreset { .. }
-            | Event::ImportPreset(_) => return,
+            | Event::ImportPreset(_)
+            | Event::Undo
+            | Event::Redo => return,
             Event::Screens(screens) => {
                 if self.screens == screens {
                     return;
@@ -2010,6 +2367,7 @@ impl AppCore {
                 self.clamp_frame_rate_cap();
             }
         }
+        self.end_unplayable_b();
         self.changed = true;
     }
 
@@ -2233,6 +2591,10 @@ impl AppCore {
             showing: None,
             overlay: self.meters[like].overlay.clone(),
             overlay_showing: None,
+            listening_b: false,
+            ab_song: None,
+            ab_region: None,
+            ab_position: None,
             activity: activity::Activity::default(),
         };
         let index = match (0..self.meters.len()).find(|i| !used.contains(i)) {
@@ -2405,7 +2767,7 @@ impl AppCore {
         }
         // Wait for the next frame before building a scene at all.
         if let Some(drawn_at) = self.drawn_at {
-            let next_frame = drawn_at + self.app.frame_interval();
+            let next_frame = drawn_at + self.frame_interval();
             if now < next_frame {
                 return Decision::Sleep {
                     until: Some(next_frame),
@@ -2429,6 +2791,7 @@ impl AppCore {
         }
         self.drawn = Some(scene);
         self.drawn_at = Some(now);
+        self.fresh = true;
         Decision::Draw
     }
 
@@ -2436,6 +2799,34 @@ impl AppCore {
     /// before the first.
     pub fn scene(&self) -> Option<&Scene> {
         self.drawn.as_ref()
+    }
+
+    /// Moves the scrolling Meters' cameras in the scene to `now`: called as
+    /// a frame is about to be drawn (once it's ready, just after a refresh),
+    /// so each frame shows where they are when it's shown, however long it
+    /// waited for the display.
+    ///
+    /// A new scene's frame also sets when the next one is due: counted from
+    /// the refresh it lands on rather than from when it was built, so a late
+    /// wake-up doesn't push every frame after it late too.
+    pub fn retime(&mut self, now: Duration) {
+        if std::mem::take(&mut self.fresh) {
+            self.drawn_at = Some(now);
+        }
+        let (Some(scene), refresh) = (self.drawn.as_mut(), self.refresh_rate) else {
+            return;
+        };
+        for meter in scene.windows.iter_mut().flat_map(|w| &mut w.meters) {
+            if let MeterState::Live(
+                MeterView::Waveform { completed, lag, .. }
+                | MeterView::Spectrogram { completed, lag, .. },
+            ) = &mut meter.state
+                && let Some(slot) = self.meters.get_mut(meter.meter)
+                && let Some(new) = slot.meter.scroll_lag(*completed, now, refresh)
+            {
+                *lag = new;
+            }
+        }
     }
 
     /// Bar mode's windows: the Bar and its Pop-outs, and where each Meter goes.
@@ -2695,6 +3086,17 @@ impl AppCore {
             windows,
             reference_curves: self.curves.names(),
             targets: self.targets.names(),
+            target_songs: self
+                .targets
+                .names()
+                .iter()
+                .map(|name| {
+                    self.targets
+                        .get(name)
+                        .map(|t| t.songs.iter().map(|s| s.name.clone()).collect())
+                        .unwrap_or_default()
+                })
+                .collect(),
             notes: if note { vec![self.note] } else { Vec::new() },
             palette: self.themes.current().palette.clone(),
             theme: self.themes.scene(),
@@ -2727,7 +3129,10 @@ impl AppCore {
         now: Duration,
     ) -> MeterState {
         let pointer = pointer.and_then(|p| frame.locate(p));
-        match self.meters[meter].meter.view(pointer, now) {
+        match self.meters[meter]
+            .meter
+            .view(pointer, now, self.refresh_rate)
+        {
             Some(view) => MeterState::Live(view.clone()),
             None => MeterState::Starting,
         }

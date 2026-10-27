@@ -1,33 +1,38 @@
 # Das-Meter
 
-**Live audio Meters for producers: twelve Meters, two Looks, any colour you
-like.** Das-Meter shows whatever your computer plays, or single tracks from
-your DAW, as Waveform, Spectrum, Spectrogram, Loudness, Stereometer, Phase
-Scope, Cepstrum, Oscilloscope, Tonal Balance, Tuner, Stereo Bands and Needle. Put them in a Bar along the edge of your
-screen or in a window of their own, and make them look the way you want.
-It's free and open source, for macOS and Linux, with Windows on the way.
+**Live audio Meters for producers: thirteen Meters, two Looks, any colour
+you like.** Das-Meter shows whatever your computer plays, or single tracks
+from your DAW, as Waveform, Spectrum, Spectrogram, Loudness, Stereometer,
+Goniometer, Phase Scope, Cepstrum, Oscilloscope, Tonal Balance, Tuner, Stereo
+Bands and Needle. Put them in a Bar along the edge of your screen or in a
+window of their own, and make them look the way you want. It's free and open
+source, for macOS, Windows and Linux.
 
-![Das-Meter in the Smooth Look: Spectrum and Spectrogram on top; Waveform, Phase Scope, Loudness Meter and Stereometer below](docs/images/smooth.png)
+*Designed by Punktmidi.*
+
+![The built-in Mixing/Producing Preset: the Spectrum beside Stereo Bands and Tonal Balance; Waveform, Loudness Meter and Stereometer below](docs/images/smooth.png)
 
 **[Download](https://github.com/daswerk/Das-Meter/releases/latest)** ·
 **[Install guide](INSTALL.md)** ·
-**[Docs](https://daswerk.github.io/Das-Meter/)**
+**[Docs](https://daswerk.github.io/Das-Meter/)** ·
+**[Tonal Balance and A/B](https://daswerk.github.io/Das-Meter/tonal-balance.html)** ·
+**[Kick and bass in the Phase Scope](https://daswerk.github.io/Das-Meter/kick-and-bass.html)**
 
 ## Two Looks
 
 Every Theme is drawn in one of two **Looks**, and switching is one click in
 **Settings ▸ Theme**.
 
-- **Smooth** (the default): floating rounded panels on a soft gradient,
-  grids that fade out toward the edges, a soft glow under the traces, fills
-  that fade to transparent, and Meters that dim gently in silence.
+- **Smooth** (the default): grids that fade out toward the edges, fills that
+  fade to transparent, and Meters that dim gently in silence; a soft glow
+  under the traces, a gradient and rounded panels are there if you want them.
 - **Classic**: the flat, plain look of earlier versions, pixel for pixel.
 
-![The same Meters in the Classic Look, on the Dark Theme](docs/images/classic.png)
+![The same Preset in the Classic Look](docs/images/classic.png)
 
 ## The Meters
 
-Twelve kinds, as many of each as you like. Right-click any Meter for its
+Thirteen kinds, as many of each as you like. Right-click any Meter for its
 settings.
 
 <table>
@@ -76,10 +81,20 @@ settings.
 <td><b>Needle Meter</b>: classic VU or PPM (DIN, Nordic, BBC, EBU) needles with their standard timing, a red zone and an overload lamp. Fits the Bar.</td>
 </tr>
 <tr>
+<td><img src="docs/images/meter-goniometer.png" alt="The Goniometer: the trace standing upright between the dotted L and R axes"></td>
+<td><b>Goniometer</b>: the stereo image as on the old studio meters, a glowing cloud of Left against Right that burns brightest where the image is densest: mono stands upright, wide spreads out, out of phase lies flat. With its scale and the correlation below.</td>
+</tr>
+<tr>
 <td colspan="2"><img src="docs/images/meter-tonal-balance.png" alt="The Tonal Balance Meter: the mix's curve over a Target's range, too much highs marked"></td>
 </tr>
 <tr>
 <td colspan="2"><b>Tonal Balance</b>: your mix's balance against a <b>Target</b> made from your own reference songs (played, or analysed from files), finest in the low end (two points per semitone below 300 Hz), with the Sub and Bass notes, low end mono and punch, and the Target shifted to your mix's key (<a href="https://daswerk.github.io/Das-Meter/meters.html#tonal-balance">more</a>).</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/tonal-balance-ab.png" alt="Tonal Balance on B: the reference song's curve over the Target, its waveform below with the looped part"></td>
+</tr>
+<tr>
+<td colspan="2"><b>A/B</b>: hear your mix (A) and the reference song (B) at the same loudness, switching without a gap. On B everything else goes quiet, your DAW too, so you hear the song alone; drag across its waveform to loop just the drop. A Spectrum can show B as a grey layer under your mix. <a href="https://daswerk.github.io/Das-Meter/tonal-balance.html">The guide</a> goes through it step by step.</td>
 </tr>
 </table>
 
@@ -96,7 +111,7 @@ built-in and it's saved as your own copy, which you can rename. A Preset can
 follow the system's light/dark setting with a pair of Themes, and Themes are
 plain TOML files you can share.
 
-![All built-in Themes: Nocturne, Dark, Light, High contrast, Midnight Purple, Deep Turquoise and Graphite, and an edited Nocturne](docs/images/themes.png)
+![All built-in Themes: Mixing/Producing, Mastering, Producing Top-Bar, Dark, Light, High contrast, Midnight Purple, Deep Turquoise, Graphite and Nocturne](docs/images/themes.png)
 
 Everything is in **Settings ▸ Theme**, with a live preview:
 
@@ -165,14 +180,17 @@ any of them, so one Meter can stand apart from its Theme:
 - **Multiple displays**: each window remembers its display and comes back to
   it.
 
-![The Bar along the bottom of the screen](docs/images/bar.png)
+![The built-in Producing Top-Bar Preset: Waveform, Spectrogram, Loudness Meter, Stereometer and Spectrum in one Bar](docs/images/bar.png)
 
 ## Presets
 
 A **Preset** saves which Meters you see, how they're arranged, their settings
-and their Theme. Changes save on their own, and **Revert Preset** undoes them.
-Switch with ⌘1–⌘9. Built-ins for **Bar**, **Mixing**, **Mastering**,
-**Mastering advanced**, **Producing** and **Compact** get you started.
+and their Theme. Changes save on their own; **Edit ▸ Undo** (⌘Z) takes back the last one, and **Revert Preset** all of them.
+Switch with ⌘1–⌘9. Three built-ins, each with its own Theme, get you
+started: **Producing Top-Bar 1.0**, **Mixing/Producing 1.0** and
+**Mastering 1.0**.
+
+![The built-in Mastering Preset: the Spectrum, Tonal Balance below it, then Stereo Bands, Waveform, Loudness Meter and Goniometer](docs/images/mastering.png)
 **Export Preset…** writes one `.dasmeter-preset` file with its Theme inside,
 for someone else to import.
 
@@ -194,7 +212,10 @@ sleeps in silence, and does its analysis outside your DAW.
 |---|---|
 | **macOS** 14.6+, Apple silicon and Intel | Download `Das-Meter-<version>.dmg`, drag Das-Meter to Applications, then allow it once under **System Settings ▸ Privacy & Security ▸ Open Anyway**. |
 | **Linux** x86_64 (Arch, Fedora, Ubuntu 24.04+…), PipeWire | Download `das-meter-<version>-linux-x86_64.tar.gz`, unpack it and run `./das-meter`. There's no Send Plugin for Linux yet. |
-| **Windows** 10 and 11 | Coming soon. |
+| **Windows** 10 and 11, x64 | Download `Das-Meter-<version>-windows-x64-setup.exe` and run it. It installs the app and the Send Plugin (CLAP and VST3). |
+
+Das-Meter is free. If it helps your music, you can
+[support it with a donation](https://paypal.me/forpunktmidi).
 
 The [install guide](INSTALL.md) has every step, including the Send Plugin,
 updates, uninstalling and building from source. The
@@ -229,6 +250,12 @@ audio. To redo them after a visual change, build the app and run
 | `docs/site` | The [docs site](https://daswerk.github.io/Das-Meter/) (mdBook) |
 | `docs/adr` | Architecture decisions, with the [research](docs/research) behind them |
 | `docs/release-checklist.md` | How to make a release |
+
+## Credits
+
+Designed by **Punktmidi**. Feedback is welcome: open an
+[issue](https://github.com/daswerk/Das-Meter/issues). Donations are welcome
+too: [paypal.me/forpunktmidi](https://paypal.me/forpunktmidi).
 
 ## Licence
 

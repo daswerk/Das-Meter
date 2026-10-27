@@ -300,7 +300,13 @@ fn upright_bar(
 }
 
 /// A horizontal bar from −1 to +1 with `value` filled from the centre and a marker.
-fn bar(c: &mut Canvas, area: Area, value: f32, colour: dasmeter_core::Colour, labels: [&str; 3]) {
+pub(super) fn bar(
+    c: &mut Canvas,
+    area: Area,
+    value: f32,
+    colour: dasmeter_core::Colour,
+    labels: [&str; 3],
+) {
     let dim = c.dim();
     let track_height = c.px(8.0);
     // Less inset when narrow, so the track keeps most of the width.

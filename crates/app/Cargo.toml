@@ -35,11 +35,17 @@ winit = "0.30.13"
 [lints]
 workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# Self-update (ADR 0004): the release signature and GitHub's release JSON.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+# Self-update (ADR 0004, #46): the release signature and GitHub's release JSON.
 minisign-verify = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(any(target_os = "macos", windows))'.dev-dependencies]
+# Signs test data for the update's signature checks.
+minisign = "0.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.20", default-features = false }
 # The menu bar icon (first launch: always there, so the app stays reachable without a Dock icon).
 tray-icon = { version = "0.25", default-features = false }
@@ -47,11 +53,15 @@ objc2 = "0.6"
 # Launch at login (SMAppService, macOS 13+).
 objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSRunningApplication", "NSScreen", "NSWindow", "NSView", "NSResponder", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSGeometry", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSError", "NSFileManager", "NSGeometry", "NSDictionary", "NSString", "NSURL", "NSUUID", "NSValue"] }
+# A/B on System Capture: a muted process tap quiets the other apps.
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-core-audio-types", "objc2-foundation"] }
+objc2-core-audio-types = { version = "0.3", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary"] }
 
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-# Signs test data for the update's signature checks.
-minisign = "0.10"
+[target.'cfg(windows)'.dependencies]
+# A/B on System Capture: mutes the other apps' audio sessions.
+windows = { version = "0.62", features = ["Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # System Capture through PipeWire, which records what plays on the default

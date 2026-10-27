@@ -533,15 +533,26 @@ impl Shapes {
     }
 
     /// Uploads the staged shapes.
+    /// Makes room for this frame's shapes; [`Shapes::upload`] sends them.
     pub fn prepare(&mut self, gpu: &Gpu) {
         let count = (self.staged.len() / FLOATS) as u64;
         if count > self.capacity {
             self.capacity = count.next_power_of_two();
             self.buffer = instance_buffer(gpu, self.capacity);
         }
-        gpu.queue
-            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.staged));
         self.count = count as u32;
+    }
+
+    /// Sends this frame's shapes to the GPU through `belt`, which reuses its
+    /// staging memory (a plain `write_buffer` made and freed a buffer for
+    /// every Meter, every frame).
+    pub fn upload(&self, encoder: &mut wgpu::CommandEncoder, belt: &mut wgpu::util::StagingBelt) {
+        let bytes: &[u8] = bytemuck::cast_slice(&self.staged);
+        let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) else {
+            return;
+        };
+        belt.write_buffer(encoder, &self.buffer, 0, size)
+            .copy_from_slice(bytes);
     }
 
     pub fn render(&self, pass: &mut wgpu::RenderPass) {

@@ -454,9 +454,9 @@ dependencies = [
 
 [[package]]
 name = "clipboard-win"
-version = "5.4.1"
+version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+checksum = "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a"
 dependencies = [
  "error-code",
 ]
@@ -743,7 +743,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "dasmeter-analysis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ebur128",
  "realfft",
@@ -752,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "dasmeter-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -769,6 +769,9 @@ dependencies = [
  "muda",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-service-management",
  "pollster 1.0.1",
@@ -780,12 +783,13 @@ dependencies = [
  "symphonia",
  "tray-icon",
  "wgpu",
+ "windows",
  "winit",
 ]
 
 [[package]]
 name = "dasmeter-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dasmeter-analysis",
  "serde",
@@ -794,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "dasmeter-send"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "baseview",
  "clack-extensions",
@@ -808,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "dasmeter-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",

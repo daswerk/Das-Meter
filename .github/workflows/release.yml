@@ -4,8 +4,8 @@ name: Release
 # DMG, the update tarball and its minisign signature to a draft Release; then
 # a Linux x86_64 executable (built on Ubuntu, for Arch and other current
 # distributions) is added to the same draft
-# (ADR 0004). A tag with a suffix (v0.1.0-test1) makes a pre-release, for
-# dry runs.
+# (ADR 0004), and the Windows installer with its minisign signature (#46).
+# A tag with a suffix (v0.1.0-test1) makes a pre-release, for dry runs.
 #
 # Secrets and variables live in the `release` environment, which needs the
 # owner's approval to run (Settings ▸ Environments ▸ release):
@@ -20,6 +20,14 @@ name: Release
 #   APPLE_DEVELOPER_ID_PASSWORD, APPLE_ID, APPLE_TEAM_ID and
 #   APPLE_APP_PASSWORD exist; the Developer ID then signs instead.
 # Without the certificate the app is signed ad hoc and can't update itself.
+# - Windows signing (SignPath Foundation) switches on once SIGNPATH_API_TOKEN
+#   (secret) and the variables SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG
+#   and SIGNPATH_SIGNING_POLICY_SLUG exist. The SignPath project needs two
+#   artifact configurations: `binaries` (a zip holding das-meter.exe, the
+#   .clap file and the .vst3 folder; sign every PE file in it) and
+#   `installer` (a zip holding the setup .exe; sign it). Until then the
+#   installer ships unsigned and SmartScreen asks once. The app's own Update
+#   checks the installer's minisign signature either way.
 
 on:
   push:
@@ -152,6 +160,10 @@ jobs:
         run: |
           flags=(--draft --title "Das-Meter $VERSION" --generate-notes)
           [[ $PRERELEASE == true ]] && flags+=(--prerelease)
+          # The version's own notes (downloads, what's new, the donation
+          # link) go above GitHub's list of changes.
+          notes="docs/release-notes/$GITHUB_REF_NAME.md"
+          [[ -f $notes ]] && flags+=(--notes-file "$notes")
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/Das-Meter-"$VERSION".*
 
   linux:
@@ -191,3 +203,142 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.file }}" --clobber
+
+  windows:
+    name: Windows installer (x64)
+    needs: macos
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the app and the Send Plugin
+        shell: bash
+        env:
+          DASMETER_MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+        run: |
+          [[ -n $DASMETER_MINISIGN_PUBLIC_KEY ]] || unset DASMETER_MINISIGN_PUBLIC_KEY
+          cargo build --release --locked -p dasmeter-app
+          scripts/bundle-send-plugin.sh
+          version=$(cargo pkgid -p dasmeter-app | sed 's/.*[#@]//')
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+
+      - name: Signing (SignPath, once it's set up)
+        id: signing
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [[ -n $TOKEN ]]; then
+            echo "on=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::warning::no SignPath token: the Windows installer ships unsigned"
+          fi
+      - name: Stage the binaries for signing
+        if: steps.signing.outputs.on == 'true'
+        shell: bash
+        run: |
+          mkdir -p unsigned
+          cp target/release/das-meter.exe unsigned/
+          cp "target/plugins/Das-Meter Send.clap" unsigned/
+          cp -R "target/plugins/Das-Meter Send.vst3" unsigned/
+      - name: Upload the binaries
+        if: steps.signing.outputs.on == 'true'
+        id: binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-unsigned
+          path: unsigned/
+          if-no-files-found: error
+      - name: Sign the binaries
+        if: steps.signing.outputs.on == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: binaries
+          github-artifact-id: ${{ steps.binaries.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+      - name: Put the signed binaries in place
+        if: steps.signing.outputs.on == 'true'
+        shell: bash
+        run: |
+          cp signed/das-meter.exe target/release/
+          cp "signed/Das-Meter Send.clap" target/plugins/
+          rm -rf "target/plugins/Das-Meter Send.vst3"
+          cp -R "signed/Das-Meter Send.vst3" target/plugins/
+
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "/DAppVersion=$env:VERSION" "/DRoot=$PWD" installer\windows\das-meter.iss 2>&1 | Tee-Object -Variable output
+          if ($LASTEXITCODE -ne 0) {
+            # The compiler's error, where the job summary shows it.
+            $output | Select-String -Pattern 'Error|Line \d+' | ForEach-Object { Write-Output "::error::$_" }
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload the installer
+        if: steps.signing.outputs.on == 'true'
+        id: installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-unsigned
+          path: target/installer/*.exe
+          if-no-files-found: error
+      - name: Sign the installer
+        if: steps.signing.outputs.on == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+      - name: Put the signed installer in place
+        if: steps.signing.outputs.on == 'true'
+        shell: bash
+        run: cp signed-installer/*.exe target/installer/
+
+      - name: Add it to the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "target/installer/Das-Meter-$VERSION-windows-x64-setup.exe" --clobber
+
+  windows-signature:
+    # The app's Update checks the installer against the release key, as on
+    # macOS; minisign is at hand on Linux.
+    name: Windows installer's minisign signature
+    needs: windows
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - name: Sign the installer (minisign)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [[ -z $MINISIGN_SECRET_KEY ]]; then
+            echo "::warning::no minisign key: the installer is unsigned and apps won't install it"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*-windows-x64-setup.exe'
+          installer=$(ls *-windows-x64-setup.exe)
+          echo "$MINISIGN_SECRET_KEY" >"$RUNNER_TEMP/minisign.key"
+          minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$installer" -t "Das-Meter ${installer}"
+          rm "$RUNNER_TEMP/minisign.key"
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "$installer.minisig" --clobber

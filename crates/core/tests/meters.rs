@@ -268,8 +268,13 @@ fn a_setting_change_alone_redraws() {
 fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
     let mut app = App::playing();
     app.draw();
-    // Off by default: the mouse alone shows no readout (it slows the
-    // Spectrum and marks its held peaks instead).
+    // Turned off, the mouse alone shows no readout (it slows the Spectrum
+    // and marks its held peaks instead).
+    app.set(SPECTRUM, |s| {
+        if let MeterSettings::Spectrum(s) = s {
+            s.show_cursor = false;
+        }
+    });
     app.send(Event::Pointer(Some((WindowKey::Bar, [0.375, 0.5]))));
     let views = app.draw();
     assert!(matches!(
@@ -280,9 +285,10 @@ fn the_spectrum_shows_frequency_and_note_under_the_cursor() {
             ..
         }
     ));
+    // On by default.
     app.set(SPECTRUM, |s| {
         if let MeterSettings::Spectrum(s) = s {
-            s.show_cursor = true;
+            s.show_cursor = dasmeter_core::SpectrumMeterSettings::default().show_cursor;
         }
     });
     // Halfway across the Spectrum (the second quarter of the window) on a
