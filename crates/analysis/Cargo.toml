@@ -18,6 +18,10 @@ ebur128 = "=0.1.10"
 realfft = "3.5"
 serde = { version = "1", features = ["derive"] }
 
+[features]
+# The Loudness Meter against the EBU test set (tests/ebu_conformance.rs, ADR 0005).
+ebu-conformance = []
+
 [[bench]]
 name = "loudness"
 harness = false

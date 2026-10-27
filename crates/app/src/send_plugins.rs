@@ -8,8 +8,10 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use dasmeter_core::{AppCore, Event, SendPlugin, SendPluginState};
-use dasmeter_transport::{RING_FRAMES, Reader, SlotInfo, SlotRef, SlotState, TABLE_NAME};
+use dasmeter_core::{AppCore, Event, SendPlugin, SendPluginState, Timing};
+use dasmeter_transport::{
+    RING_FRAMES, Reader, SlotInfo, SlotRef, SlotState, TABLE_NAME, TABLE_NAME_V1,
+};
 
 /// How often the Send Plugins are listed (and the app's heartbeat bumped).
 pub const LIST_EVERY: Duration = Duration::from_millis(250);
@@ -19,10 +21,13 @@ struct Listening {
     slot: SlotRef,
     /// Where the next read starts.
     cursor: u64,
+    sample_rate: u32,
 }
 
 pub struct SendPluginInput {
     table: String,
+    /// The table older Send Plugins write, read too.
+    v1_table: Option<String>,
     /// Opened on first use, and again if that failed.
     reader: Option<Reader>,
     slots: Vec<SlotInfo>,
@@ -33,19 +38,30 @@ pub struct SendPluginInput {
 
 impl SendPluginInput {
     pub fn new() -> SendPluginInput {
-        SendPluginInput::with_table(TABLE_NAME)
+        let mut input = SendPluginInput::with_table(TABLE_NAME);
+        input.v1_table = Some(TABLE_NAME_V1.to_owned());
+        input
     }
 
-    /// On a table with another name, for tests.
+    /// On a table with another name (and no v1 table), for tests.
     pub fn with_table(table: &str) -> SendPluginInput {
         SendPluginInput {
             table: table.to_owned(),
+            v1_table: None,
             reader: None,
             slots: Vec::new(),
             listened: HashMap::new(),
             listed_at: None,
             buffer: vec![0.0; 2 * RING_FRAMES],
         }
+    }
+
+    /// On tables with other names, the v1 one too, for tests.
+    #[cfg(test)]
+    fn with_tables(table: &str, v1_table: &str) -> SendPluginInput {
+        let mut input = SendPluginInput::with_table(table);
+        input.v1_table = Some(v1_table.to_owned());
+        input
     }
 
     /// The Send Plugins as last listed.
@@ -62,7 +78,10 @@ impl SendPluginInput {
     /// listen to, and feeds their new audio into the core.
     pub fn pump(&mut self, core: &mut AppCore, now: Duration, instant: Instant) {
         if self.reader.is_none() {
-            self.reader = Reader::open_named(&self.table).ok();
+            self.reader = match &self.v1_table {
+                Some(v1) => Reader::open_named_with_v1(&self.table, v1).ok(),
+                None => Reader::open_named(&self.table).ok(),
+            };
         }
         let Some(reader) = &mut self.reader else {
             return;
@@ -103,20 +122,68 @@ impl SendPluginInput {
                     Listening {
                         slot: info.slot,
                         cursor,
+                        sample_rate: info.details.sample_rate,
                     },
                 );
             }
         }
 
         for (&id, listening) in &mut self.listened {
+            // The DAW can change its sample rate while we listen.
+            if let Some(info) = self.slots.iter().find(|info| info.slot == listening.slot) {
+                listening.sample_rate = info.details.sample_rate;
+            }
             let Some(read) = reader.read(listening.slot, listening.cursor, &mut self.buffer) else {
                 continue;
             };
             listening.cursor = read.next;
             if read.frames > 0 {
                 let frames = &self.buffer[..2 * read.frames];
-                core.handle(Event::SendPluginAudio { id, frames }, now);
+                // Where the DAW was at the first frame read.
+                let first = read.next - read.frames as u64;
+                let timing = reader
+                    .timing(listening.slot)
+                    .map(|said| timing(said.at(first, listening.sample_rate)));
+                core.handle(Event::SendPluginAudio { id, frames, timing }, now);
             }
+        }
+    }
+
+    /// While B plays on System Capture: keeps the Send Plugins listed and the
+    /// app's heartbeat going (they lift their silence once it stops), without
+    /// listening to any of them.
+    pub fn keep_alive(&mut self, instant: Instant) {
+        if self.reader.is_none() {
+            self.reader = match &self.v1_table {
+                Some(v1) => Reader::open_named_with_v1(&self.table, v1).ok(),
+                None => Reader::open_named(&self.table).ok(),
+            };
+        }
+        let Some(reader) = &mut self.reader else {
+            return;
+        };
+        if self
+            .listed_at
+            .is_none_or(|at| instant.duration_since(at) >= LIST_EVERY)
+        {
+            self.listed_at = Some(instant);
+            reader.heartbeat();
+            self.slots = reader.slots(instant);
+        }
+    }
+
+    /// The IDs of the Send Plugins as last listed.
+    pub fn ids(&self) -> Vec<u64> {
+        self.slots.iter().map(|s| s.id).collect()
+    }
+
+    /// A/B: asks the Send Plugin with `id` for silence, or its audio again.
+    pub fn set_muted(&self, id: u64, muted: bool) {
+        let Some(reader) = &self.reader else {
+            return;
+        };
+        if let Some(info) = self.slots.iter().find(|s| s.id == id) {
+            reader.set_muted(info.slot, muted);
         }
     }
 
@@ -134,6 +201,22 @@ impl SendPluginInput {
 impl Drop for SendPluginInput {
     fn drop(&mut self) {
         self.stop();
+        // A/B: nothing stays quiet once the app quits.
+        if let Some(reader) = &self.reader {
+            for info in &self.slots {
+                reader.set_muted(info.slot, false);
+            }
+        }
+    }
+}
+
+fn timing(t: dasmeter_transport::Timing) -> Timing {
+    Timing {
+        tempo: t.tempo,
+        beats: t.beats,
+        bar_start: t.bar_start,
+        signature: t.signature,
+        playing: t.playing,
     }
 }
 
@@ -149,9 +232,9 @@ fn send_plugin(info: &SlotInfo) -> SendPlugin {
             SlotState::Idle => SendPluginState::Idle,
             SlotState::Gone => SendPluginState::Gone,
         },
-        // Only one layout exists so far; an older one would come from a
-        // second table the app also reads (ADR 0003).
+        // The app reads both layouts there are (ADR 0003).
         outdated: false,
+        host_pid: info.host_pid,
     }
 }
 
@@ -159,9 +242,43 @@ fn send_plugin(info: &SlotInfo) -> SendPlugin {
 mod tests {
     use super::*;
     use dasmeter_core::{
-        Level, ListenTo, LoudnessMeterSettings, MeterSettings, MeterState, MeterView,
+        Level, ListenTo, LoudnessMeterSettings, MeterKind, MeterSettings, MeterState, MeterView,
     };
     use dasmeter_transport::{Details, Writer, remove_table};
+
+    /// A/B on System Capture: the app lists the Send Plugins without
+    /// listening, asks one for silence, keeps its heartbeat going so the
+    /// silence holds, and lifts it when it quits.
+    #[test]
+    fn b_on_system_capture_quiets_a_send_plugin_while_the_app_runs() {
+        let table = format!("dmapp-ab-{}", std::process::id());
+        let details = Details {
+            name: "Master".into(),
+            colour: 0x00_ff_00,
+            mono: false,
+            sample_rate: 48_000,
+        };
+        let claimed = Writer::claim_named(&table, None, &details).expect("claim a slot");
+        let mut writer = claimed.writer;
+        let audio = writer.audio();
+        let mut input = SendPluginInput::with_table(&table);
+        let start = Instant::now();
+        input.keep_alive(start);
+        let ids = input.ids();
+        assert_eq!(ids.len(), 1, "listed without listening");
+        input.set_muted(ids[0], true);
+        assert!(audio.muted());
+        // Listening stops (as on System Capture every pump): still quiet.
+        input.stop();
+        assert!(audio.muted(), "stopping listening doesn't lift it");
+        // The app is alive: the Send Plugin keeps the silence.
+        input.keep_alive(start + LIST_EVERY);
+        assert!(writer.app_running(Instant::now()));
+        drop(input);
+        assert!(!audio.muted(), "lifted when the app quits");
+        drop(writer);
+        remove_table(&table);
+    }
 
     /// A transport writer in this process feeds a Loudness Meter end to end:
     /// claim, listen, read, analyse, scene.
@@ -226,6 +343,125 @@ mod tests {
         drop(input);
         drop(audio);
         drop(writer);
+        remove_table(&table);
+    }
+
+    /// An older Send Plugin (v1 table) and a new one feed a Meter each.
+    #[test]
+    fn older_and_newer_send_plugins_both_reach_their_meters() {
+        let table = format!("dmapp-v2-{}", std::process::id());
+        let old_table = format!("dmapp-v1-{}", std::process::id());
+        let details = |name: &str| Details {
+            name: name.into(),
+            colour: 0x00_ff_00,
+            mono: false,
+            sample_rate: 48_000,
+        };
+        let new = Writer::claim_named(&table, Some(1), &details("Kick")).unwrap();
+        let old = Writer::claim_named_v1(&old_table, Some(2), &details("Bass")).unwrap();
+        let (mut new_audio, mut old_audio) = (new.writer.audio(), old.writer.audio());
+
+        let loudness = MeterSettings::Loudness(LoudnessMeterSettings::default());
+        let mut core = AppCore::with_meters(vec![loudness, loudness]);
+        let mut input = SendPluginInput::with_tables(&table, &old_table);
+        let start = Instant::now();
+        core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
+        input.pump(&mut core, Duration::ZERO, start);
+        assert_eq!(input.listed().len(), 2);
+        core.handle(Event::PickSendPlugin { meter: 0, id: 1 }, Duration::ZERO);
+        core.handle(Event::PickSendPlugin { meter: 1, id: 2 }, Duration::ZERO);
+
+        // −20 dBFS into the new one, −30 into the old one.
+        let block = 480;
+        for step in 0..200 {
+            let now = Duration::from_millis(10 * step);
+            new.writer.heartbeat();
+            old.writer.heartbeat();
+            let tone = |level: f64| -> Vec<f32> {
+                (0..block)
+                    .map(|i| {
+                        let t = (step as usize * block + i) as f64 / 48_000.0;
+                        (level * (std::f64::consts::TAU * 1_000.0 * t).sin()) as f32
+                    })
+                    .collect()
+            };
+            let (loud, quiet) = (tone(0.1), tone(0.031_6));
+            new_audio.push(&loud, &loud);
+            old_audio.push(&quiet, &quiet);
+            input.pump(&mut core, now, start + now);
+        }
+        core.decide(Duration::from_secs(3));
+        let scene = core.scene().expect("a scene");
+        let momentary = |meter: usize| {
+            let MeterState::Live(MeterView::Loudness { display, .. }) =
+                &scene.windows[0].meters[meter].state
+            else {
+                panic!("{:?}", scene.windows[0].meters[meter].state);
+            };
+            let Level::Tenths(tenths) = display.momentary else {
+                panic!("meter {meter} is silent");
+            };
+            tenths
+        };
+        assert!((momentary(0) - -200).abs() <= 3, "{}", momentary(0));
+        assert!((momentary(1) - -300).abs() <= 3, "{}", momentary(1));
+
+        drop(input);
+        drop((new_audio, old_audio, new, old));
+        remove_table(&table);
+        remove_table(&old_table);
+    }
+
+    #[test]
+    fn the_daws_tempo_reaches_a_phase_scope() {
+        let table = format!("dmapp-timing-{}", std::process::id());
+        let details = Details {
+            name: "Kick".into(),
+            colour: 0x00_ff_00,
+            mono: false,
+            sample_rate: 48_000,
+        };
+        let kick = Writer::claim_named(&table, Some(1), &details).unwrap();
+        let mut audio = kick.writer.audio();
+        let mut core = AppCore::with_meters(vec![MeterSettings::default_of(MeterKind::PhaseScope)]);
+        let mut input = SendPluginInput::with_table(&table);
+        let start = Instant::now();
+        core.handle(Event::SetListenTo(ListenTo::SendPlugins), Duration::ZERO);
+        input.pump(&mut core, Duration::ZERO, start);
+
+        // 96 BPM, two blocks per pump.
+        let block = 240;
+        let silence = vec![0.0f32; block];
+        for step in 0..300u64 {
+            let now = Duration::from_millis(10 * step);
+            kick.writer.heartbeat();
+            for half in 0..2 {
+                let frame = (step * 2 + half) * block as u64;
+                let beats = frame as f64 / 48_000.0 * 96.0 / 60.0;
+                audio.set_timing(Some(&dasmeter_transport::Timing {
+                    tempo: 96.0,
+                    beats,
+                    bar_start: (beats / 4.0).floor() * 4.0,
+                    signature: (4, 4),
+                    playing: true,
+                }));
+                audio.push(&silence, &silence);
+            }
+            input.pump(&mut core, now, start + now);
+        }
+        core.decide(Duration::from_secs(4));
+        let scene = core.scene().expect("a scene");
+        let MeterState::Live(MeterView::PhaseScope { scope, .. }) =
+            &scene.windows[0].meters[0].state
+        else {
+            panic!("{:?}", scene.windows[0].meters[0].state);
+        };
+        assert!(scope.following_daw);
+        assert_eq!(scope.tempo, 96.0);
+        assert!(scope.note.is_none());
+
+        drop(input);
+        drop((audio, kick));
         remove_table(&table);
     }
 }

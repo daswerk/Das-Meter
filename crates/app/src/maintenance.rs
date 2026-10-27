@@ -1,8 +1,10 @@
-//! The macOS shell's upkeep of its own install (ADR 0004): refreshing the
-//! installed Send Plugin at launch, the daily update check and Update, and
-//! Uninstall. The file work is in [`crate::plugin_install`] and
-//! [`crate::updates`]; this wires it to the menu, dialogs and notes.
+//! The shell's upkeep of its own install: the daily update check and Update
+//! (macOS, ADR 0004; Windows, #46), and on macOS refreshing the installed
+//! Send Plugin at launch and Uninstall (on Windows the installer does those).
+//! The file work is in [`crate::plugin_install`] and [`crate::updates`]; this
+//! wires it to the menu or settings, dialogs and notes.
 
+#[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -11,6 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dasmeter_core::{AppCore, Event, Note};
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 
+#[cfg(target_os = "macos")]
 use crate::plugin_install::{self, Format, Outcome, Places};
 use crate::updates::{self, Release, UpdateError};
 
@@ -23,10 +26,18 @@ enum Message {
         asked: bool,
         failed: Option<String>,
     },
-    /// The update is in place: relaunch this app.
-    Installed(PathBuf),
+    /// The update is in place (macOS: relaunch this app), or the installer
+    /// is set to run once the app quits (Windows).
+    Installed(Relaunch),
     UpdateFailed(UpdateError),
 }
+
+/// What starts the app again after an update: the app on macOS; on Windows
+/// the installer does.
+#[cfg(target_os = "macos")]
+type Relaunch = PathBuf;
+#[cfg(windows)]
+type Relaunch = ();
 
 pub struct Maintenance {
     wake: Arc<dyn Fn() + Send + Sync>,
@@ -57,6 +68,7 @@ impl Maintenance {
         }
     }
 
+    #[cfg(target_os = "macos")]
     /// At launch: replaces any installed Send Plugin format that's older than
     /// the one in this app, and says so once.
     pub fn at_launch(&mut self, core: &mut AppCore, now: Duration) {
@@ -117,8 +129,51 @@ impl Maintenance {
         });
     }
 
+    /// Whether a check or an update is under way, for the settings' buttons.
+    #[cfg(windows)]
+    pub fn busy(&self) -> bool {
+        self.checking || self.installing
+    }
+
+    /// Update… (in the settings): downloads and verifies the installer and
+    /// sets it to run once the app quits, which it does next.
+    #[cfg(windows)]
+    pub fn update(&mut self) {
+        let (Some(release), false) = (self.available.clone(), self.installing) else {
+            return;
+        };
+        let answer = MessageDialog::new()
+            .set_title("Update Das-Meter")
+            .set_description(format!(
+                "Download Das-Meter {} and install it? Windows asks to allow the installer; \
+                 Das-Meter closes and starts again. Your Presets and Themes stay as they are. \
+                 A Send Plugin a DAW has open is updated when you next restart Windows.",
+                release.version
+            ))
+            .set_buttons(MessageButtons::OkCancelCustom(
+                "Update".into(),
+                "Not Now".into(),
+            ))
+            .show();
+        if answer != MessageDialogResult::Custom("Update".into()) {
+            return;
+        }
+        self.installing = true;
+        let sender = self.sender.clone();
+        let wake = self.wake.clone();
+        thread::spawn(move || {
+            let message = match updates::install(&release) {
+                Ok(()) => Message::Installed(()),
+                Err(error) => Message::UpdateFailed(error),
+            };
+            let _ = sender.send(message);
+            wake();
+        });
+    }
+
     /// Update… from the menu: installs the release found, or opens its page
     /// when the app can't replace itself.
+    #[cfg(target_os = "macos")]
     pub fn update(&mut self, open_url: impl Fn(&str)) {
         let (Some(release), false) = (self.available.clone(), self.installing) else {
             return;
@@ -177,10 +232,14 @@ impl Maintenance {
                         self.say_checked(failed);
                     }
                 }
+                #[cfg(target_os = "macos")]
                 Message::Installed(app) => {
                     updates::relaunch(&app);
                     quit = true;
                 }
+                // The installer waits for the app to quit, then starts it again.
+                #[cfg(windows)]
+                Message::Installed(()) => quit = true,
                 Message::UpdateFailed(error) => {
                     self.installing = false;
                     eprintln!("Das-Meter couldn't update: {error}");
@@ -195,10 +254,17 @@ impl Maintenance {
         let (level, description) = match (&self.available, failed) {
             (Some(release), _) => (
                 MessageLevel::Info,
-                format!(
-                    "Das-Meter {} is out. Choose Das-Meter ▸ Update to Das-Meter {}… to install it.",
-                    release.version, release.version
-                ),
+                if cfg!(windows) {
+                    format!(
+                        "Das-Meter {} is out. Choose Update to Das-Meter {}… in the settings (App) to install it.",
+                        release.version, release.version
+                    )
+                } else {
+                    format!(
+                        "Das-Meter {} is out. Choose Das-Meter ▸ Update to Das-Meter {}… to install it.",
+                        release.version, release.version
+                    )
+                },
             ),
             (None, Some(error)) => (
                 MessageLevel::Warning,
@@ -224,6 +290,7 @@ impl Maintenance {
 /// Install Send Plugin…: copies all three formats into the per-user folders
 /// and says how it went. (The first-launch ticket puts a sheet with a choice
 /// of formats on top of this.)
+#[cfg(target_os = "macos")]
 pub fn install_send_plugin() {
     let Some(places) = Places::for_this_app().filter(|p| p.bundled.is_dir()) else {
         MessageDialog::new()
@@ -287,6 +354,7 @@ pub fn install_send_plugin() {
 /// Uninstall Das-Meter…: after confirming, moves the app and the per-user
 /// Send Plugins to the Trash, and the Presets, Themes and `settings.toml`
 /// only when asked. Returns true when the app should quit.
+#[cfg(target_os = "macos")]
 pub fn uninstall() -> bool {
     const KEEP: &str = "Uninstall";
     const ALL: &str = "Uninstall and Delete My Presets and Themes";
@@ -339,6 +407,7 @@ pub fn uninstall() -> bool {
 }
 
 /// Moves `path` to the Trash (so a mistaken uninstall can be undone).
+#[cfg(target_os = "macos")]
 fn trash(path: &Path) -> bool {
     use objc2_foundation::{NSFileManager, NSString, NSURL};
     let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));

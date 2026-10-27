@@ -7,14 +7,47 @@ use std::time::Instant;
 
 use crate::layout::*;
 use crate::process::ProcessWatch;
-use crate::table::{Details, Table};
-use crate::{GONE_AFTER, IDLE_AFTER, TABLE_NAME};
+use crate::table::{Details, Table, Timing};
+use crate::{GONE_AFTER, IDLE_AFTER, TABLE_NAME, TABLE_NAME_V1};
 
 /// One claim of one slot. A slot that is released and claimed again gets a new `SlotRef`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SlotRef {
+    /// Which of the reader's tables (newest layout first).
+    table: usize,
     index: usize,
     generation: u32,
+}
+
+/// Where a Send Plugin's DAW was at one frame of its audio.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlotTiming {
+    /// The frame's position, as [`Read::next`] counts.
+    pub frame: u64,
+    pub timing: Timing,
+}
+
+impl SlotTiming {
+    /// The DAW's position at another frame, assuming it kept its tempo (and
+    /// stood still if it was stopped).
+    pub fn at(&self, frame: u64, sample_rate: u32) -> Timing {
+        let mut timing = self.timing;
+        if timing.playing && sample_rate > 0 {
+            let frames = frame as f64 - self.frame as f64;
+            timing.beats += frames / f64::from(sample_rate) * timing.tempo / 60.0;
+            // Carry the bar start over any bar lines crossed, so it stays the
+            // start of the bar `beats` is in.
+            let (count, unit) = timing.signature;
+            if count > 0 && unit > 0 {
+                let bar = f64::from(count) * 4.0 / f64::from(unit);
+                let bars = ((timing.beats - timing.bar_start) / bar).floor();
+                if bars > 0.0 {
+                    timing.bar_start += bars * bar;
+                }
+            }
+        }
+        timing
+    }
 }
 
 /// How a listed Send Plugin is doing.
@@ -62,22 +95,36 @@ struct Track {
 
 /// Lists Send Plugins, chooses which to listen to, and reads their audio.
 pub struct Reader {
-    table: Table,
-    tracks: [Option<Track>; SLOT_COUNT],
+    /// Newest layout first.
+    tables: Vec<Table>,
+    tracks: Vec<[Option<Track>; SLOT_COUNT]>,
     processes: ProcessWatch,
 }
 
 impl Reader {
-    /// Opens (or creates) the table.
+    /// Opens (or creates) the table, and the v1 table older Send Plugins write.
     pub fn open() -> io::Result<Reader> {
-        Self::open_named(TABLE_NAME)
+        Self::open_named_with_v1(TABLE_NAME, TABLE_NAME_V1)
     }
 
-    /// [`Reader::open`] on a table with another name, for tests and benchmarks.
+    /// [`Reader::open`] on a table with another name and no v1 table, for
+    /// tests, benchmarks and Send Plugins listing each other.
     pub fn open_named(name: &str) -> io::Result<Reader> {
+        Self::open_tables(vec![Table::open(name, V2)?])
+    }
+
+    /// [`Reader::open`] on tables with other names (tests use their own).
+    pub fn open_named_with_v1(name: &str, v1_name: &str) -> io::Result<Reader> {
+        let mut tables = vec![Table::open(name, V2)?];
+        // A broken v1 table only costs the older Send Plugins.
+        tables.extend(Table::open(v1_name, V1).ok());
+        Self::open_tables(tables)
+    }
+
+    fn open_tables(tables: Vec<Table>) -> io::Result<Reader> {
         Ok(Reader {
-            table: Table::open(name)?,
-            tracks: [None; SLOT_COUNT],
+            tracks: vec![[None; SLOT_COUNT]; tables.len()],
+            tables,
             processes: ProcessWatch::default(),
         })
     }
@@ -85,7 +132,9 @@ impl Reader {
     /// Tells Send Plugins the app is running. Call about every
     /// [`HEARTBEAT_INTERVAL`](crate::HEARTBEAT_INTERVAL).
     pub fn heartbeat(&self) {
-        self.table.header().app_heartbeat.fetch_add(1, Relaxed);
+        for table in &self.tables {
+            table.header().app_heartbeat.fetch_add(1, Relaxed);
+        }
     }
 
     /// Every claimed slot with its details and state. Slots with malformed contents are left out.
@@ -94,14 +143,16 @@ impl Reader {
     /// so call this regularly (every few hundred milliseconds) with the current time.
     pub fn slots(&mut self, now: Instant) -> Vec<SlotInfo> {
         let mut listed = Vec::new();
-        for index in 0..SLOT_COUNT {
+        for (table, index) in
+            (0..self.tables.len()).flat_map(|t| (0..SLOT_COUNT).map(move |i| (t, i)))
+        {
             let Some((slot_ref, id, details, host_pid, heartbeat, processed)) =
-                self.snapshot(index)
+                self.snapshot(table, index)
             else {
-                self.tracks[index] = None;
+                self.tracks[table][index] = None;
                 continue;
             };
-            let track = match &mut self.tracks[index] {
+            let track = match &mut self.tracks[table][index] {
                 Some(track) if track.generation == slot_ref.generation => {
                     if track.heartbeat != heartbeat {
                         track.heartbeat = heartbeat;
@@ -144,8 +195,12 @@ impl Reader {
     }
 
     /// A consistent view of one live slot.
-    fn snapshot(&self, index: usize) -> Option<(SlotRef, u64, Details, u32, u64, u64)> {
-        let slot = self.table.slot(index);
+    fn snapshot(
+        &self,
+        table: usize,
+        index: usize,
+    ) -> Option<(SlotRef, u64, Details, u32, u64, u64)> {
+        let slot = self.tables[table].slot(index);
         if slot.state.load(Acquire) != SLOT_LIVE {
             return None;
         }
@@ -158,13 +213,25 @@ impl Reader {
         if slot.state.load(Relaxed) != SLOT_LIVE || slot.generation.load(Relaxed) != generation {
             return None;
         }
-        let slot_ref = SlotRef { index, generation };
+        let slot_ref = SlotRef {
+            table,
+            index,
+            generation,
+        };
         Some((slot_ref, id, details, host_pid, heartbeat, processed))
+    }
+
+    /// Where the Send Plugin's DAW last said it was, if it says (a v2 Send
+    /// Plugin in a host that reports its transport).
+    pub fn timing(&self, slot_ref: SlotRef) -> Option<SlotTiming> {
+        let (frame, timing) = self.tables[slot_ref.table].timing(slot_ref.index)?.read()?;
+        self.is_current(slot_ref)
+            .then_some(SlotTiming { frame, timing })
     }
 
     /// Starts or stops the audio from one Send Plugin. It sends nothing while not listened to.
     pub fn set_listened(&self, slot_ref: SlotRef, listened: bool) {
-        let slot = self.table.slot(slot_ref.index);
+        let slot = self.tables[slot_ref.table].slot(slot_ref.index);
         if listened {
             if self.is_current(slot_ref) {
                 slot.listened.store(slot_ref.generation, Relaxed);
@@ -176,10 +243,25 @@ impl Reader {
         }
     }
 
+    /// Asks one Send Plugin to output silence, or its audio again. It still
+    /// sends what it hears. (Older Send Plugins don't know this and play on.)
+    pub fn set_muted(&self, slot_ref: SlotRef, muted: bool) {
+        let slot = self.tables[slot_ref.table].slot(slot_ref.index);
+        if muted {
+            if self.is_current(slot_ref) {
+                slot.muted.store(slot_ref.generation, Relaxed);
+            }
+        } else {
+            let _ = slot
+                .muted
+                .compare_exchange(slot_ref.generation, 0, Relaxed, Relaxed);
+        }
+    }
+
     /// The position of the newest frame, to start reading from when listening begins
     /// (so audio left over from an earlier listen isn't shown). `None` if the slot was released.
     pub fn cursor(&self, slot_ref: SlotRef) -> Option<u64> {
-        let slot = self.table.slot(slot_ref.index);
+        let slot = self.tables[slot_ref.table].slot(slot_ref.index);
         let position = slot.published.load(Acquire);
         self.is_current(slot_ref).then_some(position)
     }
@@ -191,7 +273,7 @@ impl Reader {
         if !self.is_current(slot_ref) {
             return None;
         }
-        let slot = self.table.slot(slot_ref.index);
+        let slot = self.tables[slot_ref.table].slot(slot_ref.index);
         let end = slot.published.load(Acquire);
         let since = since.min(end);
         let capacity = (out.len() / 2).min(RING_FRAMES) as u64;
@@ -228,8 +310,51 @@ impl Reader {
     }
 
     fn is_current(&self, slot_ref: SlotRef) -> bool {
-        let slot = self.table.slot(slot_ref.index);
+        let slot = self.tables[slot_ref.table].slot(slot_ref.index);
         slot.state.load(Acquire) == SLOT_LIVE
             && slot.generation.load(Acquire) == slot_ref.generation
+    }
+}
+
+#[cfg(test)]
+mod slot_timing_tests {
+    use super::*;
+
+    fn said(beats: f64, bar_start: f64, signature: (u16, u16)) -> SlotTiming {
+        SlotTiming {
+            frame: 0,
+            timing: Timing {
+                tempo: 120.0,
+                beats,
+                bar_start,
+                signature,
+                playing: true,
+            },
+        }
+    }
+
+    #[test]
+    fn moving_past_a_bar_line_carries_the_bar_start() {
+        // 4/4 at 120 BPM: two beats a second. Beat 3.0 of the bar at 0,
+        // then 1.5 s later the song is at beat 6.0, in the bar that began at 4.0.
+        let later = said(3.0, 0.0, (4, 4)).at(72_000, 48_000);
+        assert_eq!(later.beats, 6.0);
+        assert_eq!(later.bar_start, 4.0);
+    }
+
+    #[test]
+    fn bars_in_other_signatures_use_quarter_notes() {
+        // 6/8: a bar is 3 quarter notes. From beat 0, 5 s on is beat 10.0,
+        // in the bar that began at 9.0.
+        let later = said(0.0, 0.0, (6, 8)).at(240_000, 48_000);
+        assert_eq!(later.beats, 10.0);
+        assert_eq!(later.bar_start, 9.0);
+    }
+
+    #[test]
+    fn within_the_bar_the_bar_start_stays() {
+        let later = said(0.0, 0.0, (4, 4)).at(24_000, 48_000);
+        assert_eq!(later.beats, 1.0);
+        assert_eq!(later.bar_start, 0.0);
     }
 }

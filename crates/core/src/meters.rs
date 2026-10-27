@@ -1,14 +1,19 @@
-//! The four Meters: their settings, their analysers and what each puts in the scene.
+//! The Meters: their settings, their analysers and what each puts in the scene.
 
 use std::time::Duration;
 
 use dasmeter_analysis::{
-    CepstrumAnalyser, CepstrumSettings, LoudnessAnalyser, LoudnessSettings, Spectrum,
-    SpectrumAnalyser, SpectrumSettings, StereoReadings, StereoView, StereometerAnalyser,
-    StereometerSettings, WaveformAnalyser, WaveformColumn, WaveformSettings, note_name,
+    CepstrumAnalyser, CepstrumSettings, ChannelView, LoudnessAnalyser, LoudnessSettings,
+    NeedleAnalyser, Oscilloscope, OscilloscopeAnalyser, OscilloscopeSettings, SpectrogramAnalyser,
+    SpectrogramSettings, Spectrum, SpectrumAnalyser, SpectrumSettings, StereoBandsAnalyser,
+    StereoReadings, StereoView, StereometerAnalyser, StereometerSettings, TunerAnalyser,
+    WaveformAnalyser, WaveformColumn, WaveformSettings, note_name, tonal_balance::Summary,
 };
 
+use crate::phase_scope::{PhaseScope, PhaseScopeView};
 use crate::scene::{Level, LoudnessDisplay};
+use crate::sources::Timing;
+use crate::tonal_balance::{TonalBalanceAnalyser, TonalBalanceMeterSettings};
 
 /// How the Waveform is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -27,6 +32,20 @@ pub enum WaveformColouring {
 pub struct WaveformMeterSettings {
     pub analysis: WaveformSettings,
     pub colouring: WaveformColouring,
+    /// Brings quiet input up to a good height (on top of the gain, by up
+    /// to +30 dB; it eases up and comes down at once). Default off.
+    pub auto_gain: bool,
+}
+
+/// How the Spectrum is coloured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum SpectrumColouring {
+    /// The Theme's Spectrum colours. The default.
+    #[default]
+    Plain,
+    /// Harmonics that keep sounding glow brighter, so the dominant ones
+    /// (in the bass, say) stand out in the Spectrum itself.
+    SteadyHarmonics,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -37,6 +56,21 @@ pub struct SpectrumMeterSettings {
     pub show_peak_hold: bool,
     /// Whether a line marks the loudest peak, with its frequency and note. Default on.
     pub show_peak_line: bool,
+    /// Whether a line and readout follow the mouse over the Spectrum.
+    /// Default on.
+    pub show_cursor: bool,
+    /// Whether the Spectrum slows down and keeps its peaks while the
+    /// pointer is over it, the held peaks marked with their notes. Default on.
+    pub slow_on_hover: bool,
+    pub colouring: SpectrumColouring,
+    /// With an Overlay Source: points where both are over this level (dB on
+    /// the Spectrum's scale) can collide. Default −50.
+    pub collision_floor: f32,
+    /// …and within this many dB of each other do. Default 6.
+    pub collision_within: f32,
+    /// While a Tonal Balance Meter has a song for A/B: B's spectrum as a
+    /// grey layer, gain-matched to the mix. Default off.
+    pub show_b: bool,
 }
 
 impl Default for SpectrumMeterSettings {
@@ -45,7 +79,125 @@ impl Default for SpectrumMeterSettings {
             analysis: SpectrumSettings::default(),
             show_peak_hold: true,
             show_peak_line: true,
+            show_cursor: true,
+            slow_on_hover: true,
+            colouring: SpectrumColouring::Plain,
+            collision_floor: -50.0,
+            collision_within: 6.0,
+            show_b: false,
         }
+    }
+}
+
+/// A Spectrum's Overlay Source: its levels (the mono sum, at the Spectrum's
+/// points) and where it collides with the Spectrum's own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpectrumOverlay {
+    /// To 0.1 dB, clamped to the dB range's floor.
+    pub levels: Vec<f32>,
+    /// Per point, 0 (none) to 1, to 0.05.
+    pub collisions: Vec<f32>,
+    /// The Overlay Source's name and colour, filled in by the app core;
+    /// `waiting` while its Send Plugin is gone.
+    pub name: String,
+    pub colour: Option<crate::theme::Colour>,
+    pub waiting: bool,
+}
+
+/// The Spectrum's zoom window: the box dragged over the Spectrum, shown
+/// larger and at a finer resolution in a window inside the Meter.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpectrumZoom {
+    /// The dragged box, as fractions of the plot: left, top, right, bottom.
+    pub selection: [f32; 4],
+    /// Where the zoom window sits, as fractions of the plot: left, top,
+    /// right, bottom.
+    pub panel: [f32; 4],
+    /// The box's frequencies, left to right.
+    pub range: (f32, f32),
+    /// The box's levels at its bottom and top are the spectrum's `db_range`.
+    /// Levels rounded to 0.1 dB and clamped to that range's floor.
+    pub spectrum: Spectrum,
+    /// The box's steadiest peaks, marked as on the Spectrum while it's
+    /// held; `x` is across the zoom window.
+    pub peaks: Vec<CursorReadout>,
+}
+
+/// The Spectrogram's zoom window: the frequencies of the box dragged over
+/// it, at the finest resolution and scrolling slower, so their detail shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpectrogramZoom {
+    /// The dragged box, as fractions of the picture: left, top, right, bottom.
+    pub selection: [f32; 4],
+    /// Where the zoom window sits, as fractions of the picture.
+    pub panel: [f32; 4],
+    /// The box's frequencies, bottom to top.
+    pub range: (f32, f32),
+    /// As the Spectrogram's own.
+    pub columns: Vec<Vec<u8>>,
+    pub completed: u64,
+    pub lag: f32,
+}
+
+/// How many times slower than its Spectrogram the zoom window scrolls.
+pub const ZOOM_SLOWER: u32 = 3;
+/// The longest the zoom window's picture spans.
+pub const ZOOM_MAX_SPAN: Duration = Duration::from_secs(60);
+
+/// How far a Meter's drawing sits inside its frame, in logical px.
+pub const METER_INSET: f32 = 10.0;
+/// The zoom window's title bar, which holds its close button at the right,
+/// in logical px.
+pub const ZOOM_TITLE_HEIGHT: f32 = 20.0;
+
+/// The FFT size the zoom window analyses with: the largest, for the finest
+/// frequency resolution.
+pub const ZOOM_FFT_SIZE: usize = dasmeter_analysis::spectrum::MAX_FFT_SIZE;
+/// Points across the zoom window's line.
+pub const ZOOM_POINTS: usize = 400;
+/// The smallest box that zooms, as fractions of the plot; a smaller drag is
+/// a plain click.
+pub const MIN_ZOOM_BOX: [f32; 2] = [0.02, 0.04];
+
+/// How many held peaks are marked while the pointer is over a Spectrum.
+pub const HELD_PEAKS: usize = 5;
+/// How far a marked peak must stand above the average level around it, in
+/// dB (on levels averaged over a couple of seconds).
+const HELD_PEAK_PROMINENCE_DB: f32 = 9.0;
+/// How far either side that average reaches, in octaves.
+const HELD_PEAK_SURROUNDINGS_OCTAVES: f32 = 1.0 / 3.0;
+/// The quietest a marked peak gets below the peak readout's, in dB.
+const HELD_PEAK_RANGE_DB: f32 = 36.0;
+/// A marked peak stays where it was found while a peak within this many
+/// octaves (a semitone) is still there.
+const HELD_PEAK_STICK_OCTAVES: f32 = 1.0 / 12.0;
+/// How many updates a marked peak outlasts its peak, so one that dips for
+/// a moment isn't replaced.
+const HELD_PEAK_KEEP_UPDATES: u32 = 90;
+/// The least distance between two marked peaks, in octaves.
+const HELD_PEAK_SPACING_OCTAVES: f32 = 1.0 / 6.0;
+
+/// How far behind its newest column a scrolling Meter draws, in seconds:
+/// enough to bridge the gaps between audio blocks, so it scrolls the same
+/// distance every frame instead of jumping a block at a time.
+const PLAYHEAD_LAG: f64 = 0.04;
+/// The furthest behind a playhead stays for late audio, in seconds.
+const PLAYHEAD_MAX_LAG: f64 = 0.15;
+/// How fast that comes back down once the audio is steady: seconds of lag a second.
+const PLAYHEAD_SLACK_EASE: f64 = 0.01;
+/// A playhead further than this from where it should be jumps there, in seconds.
+const PLAYHEAD_JUMP: f64 = 0.25;
+/// The share of its drift a playhead corrects each frame.
+const PLAYHEAD_CORRECTION: f64 = 0.03;
+
+/// The zoom window's place for a box: the half of the plot the box's centre
+/// isn't in, so the box stays in view.
+pub fn zoom_panel(selection: [f32; 4]) -> [f32; 4] {
+    let centre = (selection[0] + selection[2]) / 2.0;
+    if centre > 0.5 {
+        [0.01, 0.03, 0.5, 0.97]
+    } else {
+        [0.5, 0.03, 0.99, 0.97]
     }
 }
 
@@ -55,6 +207,17 @@ pub enum LufsBar {
     #[default]
     ShortTerm,
     Momentary,
+}
+
+/// Which reading the Loudness Meter shows large when it shows numbers only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum BigReading {
+    #[default]
+    ShortTerm,
+    Momentary,
+    Integrated,
+    /// The true-peak maximum since the last reset.
+    TruePeak,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -78,6 +241,16 @@ pub struct LoudnessMeterSettings {
     /// How much time the loudness graph spans. Default 30 s.
     #[serde(with = "dasmeter_analysis::seconds")]
     pub history_span: Duration,
+    /// Whether the L/R and LUFS bars are shown. Default off: the readings as
+    /// numbers, one of them large.
+    pub show_bars: bool,
+    /// The loudness reading shown large while the bars are off, beside the
+    /// sample peak. Default short-term.
+    pub big_reading: BigReading,
+    /// Whether a thin bar stands beside each big number. Default off.
+    pub show_thin_bars: bool,
+    /// Whether the clip and true-peak-over counters are shown. Default on.
+    pub show_counters: bool,
 }
 
 impl Default for LoudnessMeterSettings {
@@ -92,6 +265,10 @@ impl Default for LoudnessMeterSettings {
             show_peak_to_loudness: true,
             show_history: true,
             history_span: Duration::from_secs(30),
+            show_bars: false,
+            big_reading: BigReading::ShortTerm,
+            show_thin_bars: false,
+            show_counters: true,
         }
     }
 }
@@ -133,6 +310,31 @@ impl Default for StereometerMeterSettings {
     }
 }
 
+/// The Goniometer: L against R as a cloud of glowing points in a square
+/// turned 45°, as on the old studio meters: mono stands upright, wide
+/// stereo spreads out, out of phase lies flat.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GoniometerMeterSettings {
+    /// Analysis settings. `points` is derived from `persistence` and the sample rate.
+    pub analysis: StereometerSettings,
+    /// How long a point glows, fading as it ages. Default 120 ms.
+    #[serde(with = "dasmeter_analysis::seconds")]
+    pub persistence: Duration,
+    /// Whether the correlation bar is shown below. Default on.
+    pub show_correlation: bool,
+}
+
+impl Default for GoniometerMeterSettings {
+    fn default() -> Self {
+        GoniometerMeterSettings {
+            analysis: StereometerSettings::default(),
+            persistence: Duration::from_millis(120),
+            show_correlation: true,
+        }
+    }
+}
+
 /// The Cepstrum Meter: the cepstrum of the mono sum and the pitch it finds.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -151,6 +353,190 @@ impl Default for CepstrumMeterSettings {
     }
 }
 
+/// The Needle Meter: a classic needle per channel on a VU or PPM scale.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct NeedleMeterSettings {
+    /// VU (the default) or a PPM.
+    pub scale: dasmeter_analysis::Scale,
+    /// 0 VU: the peak of a sine that reads it, in dBFS. Default −18.
+    pub vu_reference: f64,
+    /// One needle on the mono sum instead of Left and Right. Default off.
+    pub mono: bool,
+}
+
+impl Default for NeedleMeterSettings {
+    fn default() -> Self {
+        NeedleMeterSettings {
+            scale: dasmeter_analysis::Scale::Vu,
+            vu_reference: dasmeter_analysis::scales::DEFAULT_VU_REFERENCE,
+            mono: false,
+        }
+    }
+}
+
+/// One needle as shown: its level (dBFS of a sine's peak) and the overload lamp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NeedleDisplay {
+    pub level: Level,
+    pub over: bool,
+}
+
+/// Stereo Bands: band correlation per octave band.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StereoBandsMeterSettings {
+    /// The averaging's time constant. Default 300 ms, as the Stereometer.
+    #[serde(with = "dasmeter_analysis::seconds")]
+    pub time: Duration,
+}
+
+impl Default for StereoBandsMeterSettings {
+    fn default() -> Self {
+        StereoBandsMeterSettings {
+            time: Duration::from_millis(300),
+        }
+    }
+}
+
+/// One band as shown: correlation and width to 0.01, `None` when silent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandDisplay {
+    pub centre: f32,
+    pub correlation: Option<f32>,
+    pub width: Option<f32>,
+}
+
+/// The Tuner: the pitch the Cepstrum finds, as a note and how many cents
+/// it's off, steadied for reading.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TunerMeterSettings {
+    /// The pitch finding. Default an 8192-sample FFT (for low notes) and
+    /// 30 Hz to 1 kHz.
+    pub analysis: CepstrumSettings,
+    /// The reference pitch: A4 in Hz. Default 440.
+    pub a4: f32,
+}
+
+impl Default for TunerMeterSettings {
+    fn default() -> Self {
+        TunerMeterSettings {
+            analysis: CepstrumSettings {
+                fft_size: 8_192,
+                pitch_range: (30.0, 1_000.0),
+                ..CepstrumSettings::default()
+            },
+            a4: 440.0,
+        }
+    }
+}
+
+/// What the Tuner shows: the note with its cents (to 1) and the pitch (to 0.1 Hz).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TunerDisplay {
+    pub note: dasmeter_analysis::Note,
+    pub frequency: f32,
+    /// The pitch was lost: the last reading, held for a moment.
+    pub held: bool,
+}
+
+/// The Oscilloscope: the wave itself over a few milliseconds, held still on
+/// its rising edge.
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct OscilloscopeMeterSettings {
+    pub analysis: OscilloscopeSettings,
+}
+
+/// The Spectrogram: the Spectrum of the mono sum over time, scrolling left.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SpectrogramMeterSettings {
+    pub analysis: SpectrogramSettings,
+    /// Whether the frequency scale is shown on the left. Default on.
+    pub show_scale: bool,
+}
+
+impl Default for SpectrogramMeterSettings {
+    fn default() -> Self {
+        SpectrogramMeterSettings {
+            analysis: SpectrogramSettings::default(),
+            show_scale: true,
+        }
+    }
+}
+
+/// How long a Phase Scope's Cycle is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum CycleLength {
+    /// One beat. The default.
+    #[default]
+    Beat,
+    /// One bar, with its beats marked.
+    Bar,
+}
+
+/// How a Phase Scope steadies its picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Steadiness {
+    /// The newest Cycle sharp, the few before it fading behind. The default.
+    #[default]
+    Trail,
+    /// The last few Cycles averaged: one-off notes fade, the pattern stays.
+    Average,
+}
+
+/// The Phase Scope: the waveform over one Cycle, held still against the beat.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PhaseScopeMeterSettings {
+    pub cycle: CycleLength,
+    /// The tempo when no DAW says one (System Capture, an older Send
+    /// Plugin), in BPM. Default 120.
+    pub tempo: f32,
+    pub channel_view: ChannelView,
+    /// Whether the trace is filled to the centre line. Default off: a line.
+    pub filled: bool,
+    /// Whether the loudest point fills the Meter. Default on.
+    pub auto_gain: bool,
+    /// The gain without auto gain, in dB. Default 0.
+    pub gain: f32,
+    pub steadiness: Steadiness,
+    /// The correlation's cut-off: it compares the two Sources below this, in Hz.
+    /// Default 150.
+    pub cutoff: f32,
+    /// How far the Overlay Source is moved, in ms: later if positive.
+    pub overlay_offset: f32,
+    /// Whether the sum of the two Sources is drawn over them. Default on.
+    pub show_sum: bool,
+    /// Whether the sum gets its own row under the two Sources rather than
+    /// being drawn over them. Default off.
+    pub split_sum: bool,
+    /// Whether it says what would make the two fit better (flip, move,
+    /// tune). Default off.
+    pub suggestions: bool,
+}
+
+impl Default for PhaseScopeMeterSettings {
+    fn default() -> Self {
+        PhaseScopeMeterSettings {
+            cycle: CycleLength::Beat,
+            tempo: 120.0,
+            channel_view: ChannelView::Mono,
+            filled: false,
+            auto_gain: true,
+            gain: 0.0,
+            steadiness: Steadiness::Trail,
+            cutoff: 150.0,
+            overlay_offset: 0.0,
+            show_sum: true,
+            split_sum: false,
+            suggestions: false,
+        }
+    }
+}
+
 /// Most points the Stereometer keeps, whatever the persistence and rate.
 const MAX_STEREO_POINTS: usize = 16_384;
 
@@ -162,6 +548,14 @@ pub enum MeterSettings {
     Loudness(LoudnessMeterSettings),
     Stereometer(StereometerMeterSettings),
     Cepstrum(CepstrumMeterSettings),
+    Spectrogram(SpectrogramMeterSettings),
+    PhaseScope(PhaseScopeMeterSettings),
+    Oscilloscope(OscilloscopeMeterSettings),
+    TonalBalance(TonalBalanceMeterSettings),
+    Tuner(TunerMeterSettings),
+    StereoBands(StereoBandsMeterSettings),
+    Needle(NeedleMeterSettings),
+    Goniometer(GoniometerMeterSettings),
 }
 
 /// Which kind of Meter a pane shows.
@@ -172,15 +566,31 @@ pub enum MeterKind {
     Loudness,
     Stereometer,
     Cepstrum,
+    Spectrogram,
+    PhaseScope,
+    Oscilloscope,
+    TonalBalance,
+    Tuner,
+    StereoBands,
+    Needle,
+    Goniometer,
 }
 
 impl MeterKind {
-    pub const ALL: [MeterKind; 5] = [
+    pub const ALL: [MeterKind; 13] = [
         MeterKind::Waveform,
         MeterKind::Spectrum,
         MeterKind::Loudness,
         MeterKind::Stereometer,
         MeterKind::Cepstrum,
+        MeterKind::Spectrogram,
+        MeterKind::PhaseScope,
+        MeterKind::Oscilloscope,
+        MeterKind::TonalBalance,
+        MeterKind::Tuner,
+        MeterKind::StereoBands,
+        MeterKind::Needle,
+        MeterKind::Goniometer,
     ];
 }
 
@@ -195,6 +605,22 @@ impl MeterSettings {
                 MeterSettings::Stereometer(StereometerMeterSettings::default())
             }
             MeterKind::Cepstrum => MeterSettings::Cepstrum(CepstrumMeterSettings::default()),
+            MeterKind::Spectrogram => {
+                MeterSettings::Spectrogram(SpectrogramMeterSettings::default())
+            }
+            MeterKind::PhaseScope => MeterSettings::PhaseScope(PhaseScopeMeterSettings::default()),
+            MeterKind::Oscilloscope => {
+                MeterSettings::Oscilloscope(OscilloscopeMeterSettings::default())
+            }
+            MeterKind::TonalBalance => {
+                MeterSettings::TonalBalance(TonalBalanceMeterSettings::default())
+            }
+            MeterKind::Tuner => MeterSettings::Tuner(TunerMeterSettings::default()),
+            MeterKind::StereoBands => {
+                MeterSettings::StereoBands(StereoBandsMeterSettings::default())
+            }
+            MeterKind::Needle => MeterSettings::Needle(NeedleMeterSettings::default()),
+            MeterKind::Goniometer => MeterSettings::Goniometer(GoniometerMeterSettings::default()),
         }
     }
 
@@ -205,6 +631,14 @@ impl MeterSettings {
             MeterSettings::Loudness(_) => MeterKind::Loudness,
             MeterSettings::Stereometer(_) => MeterKind::Stereometer,
             MeterSettings::Cepstrum(_) => MeterKind::Cepstrum,
+            MeterSettings::Spectrogram(_) => MeterKind::Spectrogram,
+            MeterSettings::PhaseScope(_) => MeterKind::PhaseScope,
+            MeterSettings::Oscilloscope(_) => MeterKind::Oscilloscope,
+            MeterSettings::TonalBalance(_) => MeterKind::TonalBalance,
+            MeterSettings::Tuner(_) => MeterKind::Tuner,
+            MeterSettings::StereoBands(_) => MeterKind::StereoBands,
+            MeterSettings::Needle(_) => MeterKind::Needle,
+            MeterSettings::Goniometer(_) => MeterKind::Goniometer,
         }
     }
 
@@ -216,6 +650,14 @@ impl MeterSettings {
             MeterSettings::Loudness(_) => "Loudness Meter",
             MeterSettings::Stereometer(_) => "Stereometer",
             MeterSettings::Cepstrum(_) => "Cepstrum",
+            MeterSettings::Spectrogram(_) => "Spectrogram",
+            MeterSettings::PhaseScope(_) => "Phase Scope",
+            MeterSettings::Oscilloscope(_) => "Oscilloscope",
+            MeterSettings::TonalBalance(_) => "Tonal Balance",
+            MeterSettings::Tuner(_) => "Tuner",
+            MeterSettings::StereoBands(_) => "Stereo Bands",
+            MeterSettings::Needle(_) => "Needle Meter",
+            MeterSettings::Goniometer(_) => "Goniometer",
         }
     }
 }
@@ -227,6 +669,8 @@ pub struct CursorReadout {
     pub x: f32,
     pub frequency: f32,
     pub note: Option<dasmeter_analysis::Note>,
+    /// The level there in dB, to 0.1 dB: set for the Spectrum's loudest peak.
+    pub level: Option<f32>,
 }
 
 /// What a live Meter shows: its settings and its draw data.
@@ -238,6 +682,10 @@ pub enum MeterView {
         traces: Vec<Vec<WaveformColumn>>,
         /// Columns completed since the start: the newest column's number plus one.
         completed: u64,
+        /// How many columns (fractional) the picture is drawn behind its
+        /// newest, which are still to scroll in: it moves steadily between
+        /// audio blocks. 0 in silence.
+        lag: f32,
     },
     Spectrum {
         settings: SpectrumMeterSettings,
@@ -248,10 +696,35 @@ pub enum MeterView {
         cursor: Option<CursorReadout>,
         /// The loudest peak, when the peak line is on and there's sound.
         peak: Option<CursorReadout>,
+        /// The box being dragged, as fractions of the plot: left, top,
+        /// right, bottom.
+        selecting: Option<[f32; 4]>,
+        /// The open zoom window.
+        zoom: Option<Box<SpectrumZoom>>,
+        /// Where the pointer is over the Meter (0–1 each way across its
+        /// frame), if it is: the zoom window shows the pitch under it.
+        pointer: Option<[f32; 2]>,
+        /// While the pointer is over the Spectrum (and it slows on hover):
+        /// the loudest held peaks, with their frequencies, notes and levels.
+        held_peaks: Vec<CursorReadout>,
+        /// The Overlay Source on the same graph, with the collisions.
+        overlay: Option<Box<SpectrumOverlay>>,
+        /// B's song (A/B), when shown: its levels at the Spectrum's points,
+        /// to 0.1 dB, clamped to the floor.
+        b_layer: Option<Vec<f32>>,
     },
     Loudness {
         settings: LoudnessMeterSettings,
         display: LoudnessDisplay,
+    },
+    Goniometer {
+        settings: GoniometerMeterSettings,
+        /// Correlation rounded to 0.01.
+        readings: StereoReadings,
+        /// Points in −1..1 (Lissajous: mono up), oldest first.
+        points: Vec<[f32; 2]>,
+        /// How far the points are scaled up to fill the scope, in dB to 0.5.
+        scale_db: f32,
     },
     Stereometer {
         settings: StereometerMeterSettings,
@@ -270,7 +743,172 @@ pub enum MeterView {
         /// The detected pitch, when it's on and there is one: where its
         /// period sits (0–1 across), its frequency and its note.
         pitch: Option<CursorReadout>,
+        /// While the pointer is over it: the pitch of the period under it.
+        hover: Option<CursorReadout>,
     },
+    Spectrogram {
+        settings: SpectrogramMeterSettings,
+        /// Oldest first, the newest at the right edge; each column's levels
+        /// (0 for the dB range's floor to 255 for its top) from the lowest
+        /// frequency up, at log-spaced frequencies across `range`.
+        columns: Vec<Vec<u8>>,
+        /// Frequencies at the bottom and top (the top is capped at Nyquist).
+        range: (f32, f32),
+        /// Columns added since the start; 0 while all of it is silence, so
+        /// the scene stops changing and the app sleeps.
+        completed: u64,
+        /// As the Waveform's: columns still to scroll in.
+        lag: f32,
+        /// The box being dragged over it, as fractions of the picture.
+        selecting: Option<[f32; 4]>,
+        zoom: Option<SpectrogramZoom>,
+    },
+    PhaseScope {
+        settings: PhaseScopeMeterSettings,
+        scope: Box<PhaseScopeView>,
+    },
+    Oscilloscope {
+        settings: OscilloscopeMeterSettings,
+        /// The traces (one, or two for L/R and M/S), the window, whether it
+        /// is held still and the auto gain.
+        scope: Oscilloscope,
+    },
+    TonalBalance {
+        settings: TonalBalanceMeterSettings,
+        /// The mix's average (its curve and region levels to 0.1 dB), once
+        /// it has heard something.
+        mix: Option<Box<Summary>>,
+        /// The mix's curve when frozen: a ghost to compare before and after.
+        frozen: Option<Vec<f32>>,
+        /// Where the pointer is over the Meter (0–1 each way across its
+        /// frame), if it is: the curves show the frequency and note under it.
+        pointer: Option<[f32; 2]>,
+    },
+    Tuner {
+        settings: TunerMeterSettings,
+        /// `None` while there's no pitch (and none is held).
+        reading: Option<TunerDisplay>,
+    },
+    Needle {
+        settings: NeedleMeterSettings,
+        /// One needle, or Left and Right.
+        needles: Vec<NeedleDisplay>,
+    },
+    StereoBands {
+        settings: StereoBandsMeterSettings,
+        /// Lowest first; bands over Nyquist are left out.
+        bands: Vec<BandDisplay>,
+    },
+}
+
+/// Paces columns that arrive in bursts (audio comes a block at a time) onto
+/// the frames' clock: a scrolling Meter draws [`PLAYHEAD_LAG`] behind its
+/// newest column and moves on at the columns' rate, nudged back gently
+/// whenever it drifts. With the display's refresh rate known, the time
+/// between frames counts in whole refreshes: a frame is prepared a little
+/// early or late (as the app wakes) but shown on a refresh, so each moves
+/// the same distance and the scrolling doesn't stutter.
+#[derive(Default)]
+struct Playhead {
+    /// Columns shown (fractional), and when.
+    shown: Option<(f64, Duration)>,
+    /// The newest column count seen, and when it last grew.
+    arrived: Option<(u64, Duration)>,
+    /// The longest recent wait for new columns, in seconds: the playhead
+    /// stays this far behind (at least [`PLAYHEAD_LAG`]), so late audio
+    /// doesn't make it catch up, stop and jump. It shrinks back slowly.
+    slack: f64,
+    /// Moved only as frames are drawn ([`Playhead::drive`]): building a
+    /// scene then just reads where it is. Moving it at both, each rounding
+    /// its share of a frame's time to whole refreshes, made some frames
+    /// move a refresh too far or too short.
+    driven: bool,
+}
+
+impl Playhead {
+    /// How many columns behind the newest to draw at `now`.
+    /// How many columns behind the newest to draw at `now`, as a scene is
+    /// built: where it was last moved to, once frames drive it.
+    fn lag(&mut self, now: Duration, completed: u64, per_second: f64, refresh: Option<u32>) -> f32 {
+        match self.shown {
+            Some((shown, _)) if self.driven => {
+                let newest = completed as f64;
+                (((newest - shown.clamp(0.0, newest)) * 100.0).round() / 100.0) as f32
+            }
+            _ => self.advance(now, completed, per_second, refresh),
+        }
+    }
+
+    /// Moves it to `now`, as a frame is about to be drawn; from then on only
+    /// frames move it.
+    fn drive(
+        &mut self,
+        now: Duration,
+        completed: u64,
+        per_second: f64,
+        refresh: Option<u32>,
+    ) -> f32 {
+        self.driven = true;
+        self.advance(now, completed, per_second, refresh)
+    }
+
+    fn advance(
+        &mut self,
+        now: Duration,
+        completed: u64,
+        per_second: f64,
+        refresh: Option<u32>,
+    ) -> f32 {
+        let newest = completed as f64;
+        let period = refresh.filter(|&r| r > 0).map(|r| 1.0 / f64::from(r));
+        let since = self
+            .shown
+            .map(|(_, at)| now.saturating_sub(at).as_secs_f64());
+        // Drawn again on the refresh it was moved to (another window, a
+        // repaint): it stays put. Moving it by a frame's rounding would send
+        // it back a little, then forward in a jump.
+        if let (Some((shown, _)), Some(since), Some(period)) = (self.shown, since, period)
+            && (since / period).round() == 0.0
+        {
+            return (((newest - shown.clamp(0.0, newest)) * 100.0).round() / 100.0) as f32;
+        }
+        self.slack = (self.slack - since.unwrap_or(0.0) * PLAYHEAD_SLACK_EASE).max(PLAYHEAD_LAG);
+        match self.arrived {
+            Some((count, at)) if completed > count => {
+                let gap = now.saturating_sub(at).as_secs_f64();
+                self.slack = self.slack.max(gap * 1.2).min(PLAYHEAD_MAX_LAG);
+                self.arrived = Some((completed, now));
+            }
+            Some(_) => {}
+            None => self.arrived = Some((completed, now)),
+        }
+        let target = newest - self.slack * per_second;
+        let shown = match self.shown {
+            Some((shown, at)) => {
+                let mut elapsed = now.saturating_sub(at).as_secs_f64();
+                if let Some(period) = period {
+                    elapsed = (elapsed / period).round() * period;
+                }
+                let predicted = shown + elapsed * per_second;
+                let drift = target - predicted;
+                if drift.abs() > PLAYHEAD_JUMP * per_second {
+                    target
+                } else {
+                    // Slowed to keep in step, never sent back.
+                    (predicted + drift * PLAYHEAD_CORRECTION).max(shown)
+                }
+            }
+            None => target,
+        };
+        let shown = shown.clamp(0.0, newest);
+        self.shown = Some((shown, now));
+        // To a hundredth of a column: finer would only redraw for nothing.
+        (((newest - shown) * 100.0).round() / 100.0) as f32
+    }
+
+    fn reset(&mut self) {
+        *self = Playhead::default();
+    }
 }
 
 enum Analyser {
@@ -279,6 +917,13 @@ enum Analyser {
     Loudness(Box<LoudnessAnalyser>),
     Stereometer(Box<StereometerAnalyser>),
     Cepstrum(Box<CepstrumAnalyser>),
+    Spectrogram(Box<SpectrogramAnalyser>),
+    PhaseScope(Box<PhaseScope>),
+    Oscilloscope(Box<OscilloscopeAnalyser>),
+    TonalBalance(Box<TonalBalanceAnalyser>),
+    Tuner(Box<TunerAnalyser>),
+    StereoBands(Box<StereoBandsAnalyser>),
+    Needle(Box<NeedleAnalyser>),
 }
 
 /// A Meter in the app core: settings, analyser (once a sample rate is known) and a cached view.
@@ -286,6 +931,102 @@ pub(crate) struct Meter {
     settings: MeterSettings,
     analyser: Option<Analyser>,
     view: Option<MeterView>,
+    /// The Spectrum's box being dragged, as fractions of the plot: where
+    /// the drag started and where the pointer is.
+    selecting: Option<[f32; 4]>,
+    zoom: Option<Zoom>,
+    playhead: Playhead,
+    /// The Spectrum's marked peaks while the pointer is over it.
+    marked: MarkedPeaks,
+    /// A Spectrum's Overlay Source's analyser, while it takes one.
+    overlay_spectrum: Option<Box<SpectrumAnalyser>>,
+    /// A Spectrum's B layer: the analyser for B's song, and when it was
+    /// last fed (it's dropped once B stops coming).
+    b_spectrum: Option<Box<SpectrumAnalyser>>,
+    b_fed_at: Option<Duration>,
+}
+
+/// B's layer goes once B's song hasn't come for this long.
+const B_LAYER_STALE: Duration = Duration::from_millis(500);
+
+/// The analysis an Overlay Source gets: the Spectrum's, on the mono sum,
+/// without a long-term average.
+fn overlay_analysis(settings: &SpectrumMeterSettings) -> SpectrumSettings {
+    SpectrumSettings {
+        channel_view: ChannelView::Mono,
+        long_term: dasmeter_analysis::LongTerm::Off,
+        ..settings.analysis
+    }
+}
+
+/// Peaks marked over a Spectrum, kept where they were found until their
+/// peak is gone for a while, so the marks don't hop about.
+#[derive(Default)]
+struct MarkedPeaks {
+    /// Each with how many updates in a row it's been missing.
+    peaks: Vec<(CursorReadout, u32)>,
+}
+
+impl MarkedPeaks {
+    /// Takes this update's candidates (strongest first), or `None` to clear
+    /// the marks, and returns the marks, lowest frequency first.
+    fn update(&mut self, candidates: Option<Vec<CursorReadout>>) -> Vec<CursorReadout> {
+        let Some(candidates) = candidates else {
+            self.peaks.clear();
+            return Vec::new();
+        };
+        let near = |a: f32, b: f32, octaves: f32| (a / b).log2().abs() < octaves;
+        let mut seen = vec![false; self.peaks.len()];
+        for candidate in candidates {
+            let found = self.peaks.iter().position(|(peak, _)| {
+                near(peak.frequency, candidate.frequency, HELD_PEAK_STICK_OCTAVES)
+            });
+            if let Some(i) = found {
+                // Where it was found; only its level follows.
+                if !seen[i] {
+                    seen[i] = true;
+                    self.peaks[i].0.level = candidate.level;
+                    self.peaks[i].1 = 0;
+                }
+            } else if self.peaks.len() < HELD_PEAKS
+                && self.peaks.iter().all(|(peak, _)| {
+                    !near(
+                        peak.frequency,
+                        candidate.frequency,
+                        HELD_PEAK_SPACING_OCTAVES,
+                    )
+                })
+            {
+                self.peaks.push((candidate, 0));
+                seen.push(true);
+            }
+        }
+        for ((_, missing), seen) in self.peaks.iter_mut().zip(seen) {
+            if !seen {
+                *missing += 1;
+            }
+        }
+        self.peaks
+            .retain(|&(_, missing)| missing <= HELD_PEAK_KEEP_UPDATES);
+        let mut marks: Vec<CursorReadout> = self.peaks.iter().map(|&(peak, _)| peak).collect();
+        marks.sort_by(|a, b| a.frequency.total_cmp(&b.frequency));
+        marks
+    }
+}
+
+/// An open zoom window: its box and the analyser behind it.
+struct Zoom {
+    selection: [f32; 4],
+    range: (f32, f32),
+    db_range: (f32, f32),
+    analyser: Option<ZoomAnalyser>,
+    marked: MarkedPeaks,
+    playhead: Playhead,
+}
+
+enum ZoomAnalyser {
+    Spectrum(Box<SpectrumAnalyser>),
+    Spectrogram(Box<SpectrogramAnalyser>),
 }
 
 impl Meter {
@@ -294,6 +1035,13 @@ impl Meter {
             settings,
             analyser: None,
             view: None,
+            selecting: None,
+            zoom: None,
+            playhead: Playhead::default(),
+            marked: MarkedPeaks::default(),
+            overlay_spectrum: None,
+            b_spectrum: None,
+            b_fed_at: None,
         }
     }
 
@@ -308,7 +1056,135 @@ impl Meter {
     /// Starts over at a sample rate: a new Source, or the output changed.
     pub fn start(&mut self, sample_rate: u32) {
         self.analyser = Some(analyser(sample_rate, &self.settings));
+        // A fresh analyser takes its Overlay Source afresh (the app core re-routes it).
+        self.overlay_spectrum = None;
+        self.b_spectrum = None;
         self.view = None;
+        self.start_zoom();
+    }
+
+    /// Whether this is a Spectrum or a Spectrogram, which zoom into a dragged box.
+    pub fn zooms(&self) -> bool {
+        matches!(
+            self.settings,
+            MeterSettings::Spectrum(_) | MeterSettings::Spectrogram(_)
+        )
+    }
+
+    /// The open zoom window's place, as fractions of the plot.
+    pub fn zoom_panel(&self) -> Option<[f32; 4]> {
+        self.zoom.as_ref().map(|z| zoom_panel(z.selection))
+    }
+
+    /// Starts or moves the box being dragged over the Spectrum.
+    pub fn drag_box(&mut self, from: [f32; 2], to: [f32; 2]) {
+        let clamp = |v: f32| v.clamp(0.0, 1.0);
+        let selecting = Some([clamp(from[0]), clamp(from[1]), clamp(to[0]), clamp(to[1])]);
+        if selecting != self.selecting {
+            self.selecting = selecting;
+            self.view = None;
+        }
+    }
+
+    /// The drag ended: zooms into the box if it's big enough. Returns whether it zoomed.
+    pub fn end_drag(&mut self) -> bool {
+        let Some([x0, y0, x1, y1]) = self.selecting.take() else {
+            return false;
+        };
+        self.view = None;
+        let selection = [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)];
+        if selection[2] - selection[0] < MIN_ZOOM_BOX[0]
+            || selection[3] - selection[1] < MIN_ZOOM_BOX[1]
+        {
+            return false;
+        }
+        let nyquist = self
+            .sample_rate()
+            .map_or(f32::MAX, |rate| rate as f32 / 2.0);
+        let (range, db_range) = match self.settings {
+            // Frequency across, level up.
+            MeterSettings::Spectrum(settings) => {
+                let analysis = settings.analysis;
+                let (low, high) = (
+                    analysis.frequency_range.0,
+                    analysis.frequency_range.1.min(nyquist),
+                );
+                let frequency = |x: f32| low * (high / low).powf(x);
+                let (bottom, top) = analysis.db_range;
+                let db = |y: f32| top - y * (top - bottom);
+                (
+                    (frequency(selection[0]), frequency(selection[2])),
+                    (db(selection[3]), db(selection[1])),
+                )
+            }
+            // Time across, frequency up: the box's frequencies, all of time.
+            MeterSettings::Spectrogram(settings) => {
+                let analysis = settings.analysis;
+                let (low, high) = (
+                    analysis.frequency_range.0,
+                    analysis.frequency_range.1.min(nyquist),
+                );
+                let frequency = |y: f32| low * (high / low).powf(1.0 - y);
+                (
+                    (frequency(selection[3]), frequency(selection[1])),
+                    analysis.db_range,
+                )
+            }
+            _ => return false,
+        };
+        self.zoom = Some(Zoom {
+            selection,
+            range,
+            db_range,
+            analyser: None,
+            marked: MarkedPeaks::default(),
+            playhead: Playhead::default(),
+        });
+        self.start_zoom();
+        true
+    }
+
+    /// Closes the zoom window. Returns whether one was open.
+    pub fn close_zoom(&mut self) -> bool {
+        self.view = None;
+        self.zoom.take().is_some()
+    }
+
+    /// (Re)starts the zoom window's analyser at the Meter's sample rate.
+    fn start_zoom(&mut self) {
+        let (Some(rate), Some(zoom)) = (self.sample_rate(), &mut self.zoom) else {
+            return;
+        };
+        zoom.playhead.reset();
+        zoom.analyser = match self.settings {
+            MeterSettings::Spectrum(settings) => {
+                Some(ZoomAnalyser::Spectrum(Box::new(SpectrumAnalyser::new(
+                    rate,
+                    SpectrumSettings {
+                        fft_size: ZOOM_FFT_SIZE,
+                        frequency_range: zoom.range,
+                        db_range: zoom.db_range,
+                        style: dasmeter_analysis::SpectrumStyle::Line {
+                            points: ZOOM_POINTS,
+                        },
+                        long_term: dasmeter_analysis::LongTerm::Off,
+                        ..settings.analysis
+                    },
+                ))))
+            }
+            MeterSettings::Spectrogram(settings) => Some(ZoomAnalyser::Spectrogram(Box::new(
+                SpectrogramAnalyser::new(
+                    rate,
+                    SpectrogramSettings {
+                        fft_size: ZOOM_FFT_SIZE,
+                        frequency_range: zoom.range,
+                        span: (settings.analysis.span * ZOOM_SLOWER).min(ZOOM_MAX_SPAN),
+                        ..settings.analysis
+                    },
+                ),
+            ))),
+            _ => None,
+        };
     }
 
     /// The Source says it's mono (or not). Only the Stereometer shows it.
@@ -332,14 +1208,158 @@ impl Meter {
         true
     }
 
+    /// Starts a Spectrum's long-term average, or a Tonal Balance Meter's
+    /// average, over. Other Meters have none; returns whether this one did.
+    pub fn reset_long_term(&mut self) -> bool {
+        match &mut self.analyser {
+            Some(Analyser::Spectrum(a)) => a.reset_long_term(),
+            Some(Analyser::TonalBalance(a)) => a.reset(),
+            _ => return false,
+        }
+        self.view = None;
+        true
+    }
+
+    fn tonal_balance(&mut self) -> Option<&mut TonalBalanceAnalyser> {
+        match &mut self.analyser {
+            Some(Analyser::TonalBalance(a)) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// A Tonal Balance Meter's mix key, once the detection has settled on it.
+    pub fn settled_key(&self) -> Option<dasmeter_analysis::tonal_balance::Key> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.settled_key(),
+            _ => None,
+        }
+    }
+
+    /// A Tonal Balance Meter's live average, once it has heard something.
+    pub fn tonal_summary(&self) -> Option<&Summary> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.summary(),
+            _ => None,
+        }
+    }
+
+    /// While a Tonal Balance Meter learns a song: the whole seconds heard.
+    pub fn learning_seconds(&self) -> Option<u32> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.learning_seconds().map(|s| s as u32),
+            _ => None,
+        }
+    }
+
+    /// Compares a file (its name and summary) in place of the live Source,
+    /// or (`None`) the Source again; returns whether anything changed.
+    pub fn set_compare(&mut self, compare: Option<(String, Summary)>) -> bool {
+        let changed = self.tonal_balance().is_some_and(|a| a.set_compare(compare));
+        if changed {
+            self.view = None;
+        }
+        changed
+    }
+
+    pub fn comparing(&self) -> Option<&str> {
+        match &self.analyser {
+            Some(Analyser::TonalBalance(a)) => a.comparing(),
+            _ => None,
+        }
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        matches!(&self.analyser, Some(Analyser::TonalBalance(a)) if a.frozen().is_some())
+    }
+
+    /// A Tonal Balance Meter starts (over) learning a song by playing;
+    /// returns whether this is one.
+    pub fn learn(&mut self) -> bool {
+        let Some(a) = self.tonal_balance() else {
+            return false;
+        };
+        a.learn();
+        self.view = None;
+        true
+    }
+
+    /// Stops learning without keeping anything; returns whether it was.
+    pub fn cancel_learning(&mut self) -> bool {
+        let changed = self.tonal_balance().is_some_and(|a| a.cancel_learning());
+        if changed {
+            self.view = None;
+        }
+        changed
+    }
+
+    /// Ends learning with what was heard, summed over the parts the
+    /// settings choose; `None` if it heard only silence (it goes on learning).
+    pub fn take_learned(&mut self) -> Option<Summary> {
+        let MeterSettings::TonalBalance(settings) = self.settings else {
+            return None;
+        };
+        let summary = self.tonal_balance()?.take_learned(settings.parts)?;
+        self.view = None;
+        Some(summary)
+    }
+
+    /// A/B on a Tonal Balance Meter: B pauses its average. Returns whether
+    /// it changed.
+    pub fn set_listening_b(&mut self, b: bool) -> bool {
+        self.tonal_balance().is_some_and(|a| a.set_paused(b))
+    }
+
+    /// Freezes a Tonal Balance Meter's curve as a ghost, or lets it go;
+    /// returns whether anything changed.
+    pub fn toggle_freeze(&mut self) -> bool {
+        let changed = self.tonal_balance().is_some_and(|a| a.toggle_freeze());
+        if changed {
+            self.view = None;
+        }
+        changed
+    }
+
+    /// A Spectrum's long-term average as a Reference curve: the seconds it
+    /// holds and its levels on the Reference grid. `None` for other Meters,
+    /// or while it's off or has heard nothing.
+    pub fn long_term_curve(&self) -> Option<(f64, Vec<f32>)> {
+        let Some(Analyser::Spectrum(a)) = &self.analyser else {
+            return None;
+        };
+        Some((a.long_term_seconds(), a.long_term_curve()?))
+    }
+
+    /// A Spectrum's draw-buffer frequencies, while it's analysing.
+    pub fn spectrum_frequencies(&self) -> Option<&[f32]> {
+        let Some(Analyser::Spectrum(a)) = &self.analyser else {
+            return None;
+        };
+        Some(&a.spectrum().frequencies)
+    }
+
     pub fn stop(&mut self) {
         self.analyser = None;
         self.view = None;
+        if let Some(zoom) = &mut self.zoom {
+            zoom.analyser = None;
+        }
     }
 
     pub fn set_settings(&mut self, settings: MeterSettings) {
         let sample_rate = self.sample_rate();
         let same_kind = std::mem::discriminant(&settings) == std::mem::discriminant(&self.settings);
+        // A new frequency or level range would move the zoomed box: close it.
+        let same_analysis = match (self.settings, settings) {
+            (MeterSettings::Spectrum(a), MeterSettings::Spectrum(b)) => a.analysis == b.analysis,
+            (MeterSettings::Spectrogram(a), MeterSettings::Spectrogram(b)) => {
+                a.analysis == b.analysis
+            }
+            _ => same_kind,
+        };
+        if !same_analysis {
+            self.zoom = None;
+            self.selecting = None;
+        }
         self.settings = settings;
         self.view = None;
         let Some(sample_rate) = sample_rate else {
@@ -351,12 +1371,46 @@ impl Meter {
                 if *a.settings() != s.analysis {
                     a.set_settings(s.analysis);
                 }
+                if let Some(overlay) = &mut self.overlay_spectrum
+                    && *overlay.settings() != overlay_analysis(&s)
+                {
+                    overlay.set_settings(overlay_analysis(&s));
+                }
+                if !s.show_b {
+                    self.b_spectrum = None;
+                } else if let Some(b) = &mut self.b_spectrum
+                    && *b.settings() != overlay_analysis(&s)
+                {
+                    b.set_settings(overlay_analysis(&s));
+                }
             }
             (Some(Analyser::Loudness(a)), MeterSettings::Loudness(s)) => a.set_settings(s.analysis),
             (Some(Analyser::Stereometer(a)), MeterSettings::Stereometer(s)) => {
                 a.set_settings(stereo_analysis(sample_rate, &s))
             }
+            (Some(Analyser::Stereometer(a)), MeterSettings::Goniometer(s)) => {
+                a.set_settings(goniometer_analysis(sample_rate, &s))
+            }
             (Some(Analyser::Cepstrum(a)), MeterSettings::Cepstrum(s)) => a.set_settings(s.analysis),
+            (Some(Analyser::Tuner(a)), MeterSettings::Tuner(s)) => a.set_settings(s.analysis),
+            (Some(Analyser::Needle(a)), MeterSettings::Needle(s)) => {
+                if a.differs(s.scale, s.vu_reference, s.mono) {
+                    **a = NeedleAnalyser::new(sample_rate, s.scale, s.vu_reference, s.mono);
+                }
+            }
+            (Some(Analyser::StereoBands(a)), MeterSettings::StereoBands(s)) => {
+                if a.time() != s.time {
+                    **a = StereoBandsAnalyser::new(sample_rate, s.time);
+                }
+            }
+            (Some(Analyser::Spectrogram(a)), MeterSettings::Spectrogram(s)) => {
+                a.set_settings(s.analysis)
+            }
+            (Some(Analyser::PhaseScope(a)), MeterSettings::PhaseScope(s)) => a.set_settings(s),
+            (Some(Analyser::Oscilloscope(a)), MeterSettings::Oscilloscope(s)) => {
+                a.set_settings(s.analysis)
+            }
+            (Some(Analyser::TonalBalance(a)), MeterSettings::TonalBalance(s)) => a.set_settings(&s),
             _ => debug_assert!(!same_kind),
         }
         if !same_kind {
@@ -371,39 +1425,327 @@ impl Meter {
             Analyser::Loudness(a) => a.sample_rate(),
             Analyser::Stereometer(a) => a.sample_rate(),
             Analyser::Cepstrum(a) => a.sample_rate(),
+            Analyser::Tuner(a) => a.sample_rate(),
+            Analyser::StereoBands(a) => a.sample_rate(),
+            Analyser::Needle(a) => a.sample_rate(),
+            Analyser::Spectrogram(a) => a.sample_rate(),
+            Analyser::PhaseScope(a) => a.sample_rate(),
+            Analyser::Oscilloscope(a) => a.sample_rate(),
+            Analyser::TonalBalance(a) => a.sample_rate(),
         })
     }
 
     pub fn process(&mut self, frames: &[f32]) {
+        self.process_timed(frames, None);
+    }
+
+    /// Takes a block of the Source's audio, with where its DAW was at the
+    /// block's first frame if it says.
+    pub fn process_timed(&mut self, frames: &[f32], timing: Option<Timing>) {
         match &mut self.analyser {
+            Some(Analyser::PhaseScope(a)) => {
+                // It only looks different once a Cycle is added.
+                if !a.process(frames, timing) {
+                    return;
+                }
+            }
             Some(Analyser::Waveform(a)) => a.process(frames),
-            Some(Analyser::Spectrum(a)) => a.process(frames),
+            Some(Analyser::Spectrum(a)) => {
+                a.process(frames);
+                if let Some(ZoomAnalyser::Spectrum(zoom)) =
+                    self.zoom.as_mut().and_then(|z| z.analyser.as_mut())
+                {
+                    zoom.process(frames);
+                }
+            }
             Some(Analyser::Loudness(a)) => a.process(frames),
             Some(Analyser::Stereometer(a)) => a.process(frames),
             Some(Analyser::Cepstrum(a)) => a.process(frames),
+            Some(Analyser::Tuner(a)) => a.process(frames),
+            Some(Analyser::StereoBands(a)) => a.process(frames),
+            Some(Analyser::Needle(a)) => a.process(frames),
+            Some(Analyser::Oscilloscope(a)) => a.process(frames),
+            Some(Analyser::TonalBalance(a)) => {
+                // It only looks different once a frame is added, and while
+                // the drawn curve eases toward it.
+                if !a.process(frames) {
+                    return;
+                }
+            }
+            Some(Analyser::Spectrogram(a)) => {
+                let before = a.completed();
+                a.process(frames);
+                let mut added = a.completed() != before;
+                if let Some(ZoomAnalyser::Spectrogram(zoom)) =
+                    self.zoom.as_mut().and_then(|z| z.analyser.as_mut())
+                {
+                    let before = zoom.completed();
+                    zoom.process(frames);
+                    added |= zoom.completed() != before;
+                }
+                // It only looks different once a column is added.
+                if !added {
+                    return;
+                }
+            }
             None => return,
         }
         self.view = None;
     }
 
-    /// The cursor moved over this Meter (or left it): only the Spectrum shows it.
+    pub fn is_tonal_balance(&self) -> bool {
+        matches!(self.settings, MeterSettings::TonalBalance(_))
+    }
+
+    /// A Phase Scope starts (afresh) or stops taking an Overlay Source.
+    /// Other Meters have none.
+    pub fn set_overlay(&mut self, on: bool) {
+        match &mut self.analyser {
+            Some(Analyser::PhaseScope(a)) => a.set_overlay(on),
+            Some(Analyser::Spectrum(a)) => {
+                let MeterSettings::Spectrum(settings) = &self.settings else {
+                    return;
+                };
+                self.overlay_spectrum = on.then(|| {
+                    Box::new(SpectrumAnalyser::new(
+                        a.sample_rate(),
+                        overlay_analysis(settings),
+                    ))
+                });
+            }
+            _ => return,
+        }
+        self.view = None;
+    }
+
+    /// Whether this Meter can take an Overlay Source: a Phase Scope or a Spectrum.
+    pub fn takes_overlay(&self) -> bool {
+        matches!(
+            self.settings,
+            MeterSettings::PhaseScope(_) | MeterSettings::Spectrum(_)
+        )
+    }
+
+    /// B's song as it plays (A/B), gain-matched, at `sample_rate`: a
+    /// Spectrum showing B takes it as its grey layer.
+    pub fn process_b(&mut self, frames: &[f32], sample_rate: u32, now: Duration) {
+        let MeterSettings::Spectrum(settings) = &self.settings else {
+            return;
+        };
+        if !settings.show_b {
+            return;
+        }
+        let b = match &mut self.b_spectrum {
+            Some(b) if b.sample_rate() == sample_rate => b,
+            _ => self.b_spectrum.insert(Box::new(SpectrumAnalyser::new(
+                sample_rate,
+                overlay_analysis(settings),
+            ))),
+        };
+        b.process(frames);
+        self.b_fed_at = Some(now);
+        self.view = None;
+    }
+
+    /// The Overlay Source's audio, for a Phase Scope.
+    pub fn process_overlay(&mut self, frames: &[f32], timing: Option<Timing>) {
+        if let Some(Analyser::PhaseScope(a)) = &mut self.analyser {
+            a.process_overlay(frames, timing);
+        }
+        if let Some(a) = &mut self.overlay_spectrum {
+            a.process(frames);
+        }
+    }
+
+    /// The cursor moved over this Meter (or left it): only the Spectrum,
+    /// the Cepstrum and Tonal Balance show it.
     pub fn pointer_changed(&mut self) {
-        if matches!(self.settings, MeterSettings::Spectrum(_)) {
+        if matches!(
+            self.settings,
+            MeterSettings::Spectrum(_)
+                | MeterSettings::Cepstrum(_)
+                | MeterSettings::TonalBalance(_)
+        ) {
             self.view = None;
         }
     }
 
     /// What the Meter shows now, or `None` before a Source starts.
     /// `pointer` is the cursor's position inside the Meter (0–1 each way), if it's over it.
-    pub fn view(&mut self, pointer: Option<[f32; 2]>) -> Option<&MeterView> {
+    /// `now` paces the scrolling Meters.
+    /// A scrolling Meter's columns a second (the Waveform's, the Spectrogram's).
+    fn columns_per_second(&self) -> Option<f64> {
+        match self.analyser.as_ref()? {
+            Analyser::Waveform(_) => {
+                Some(f64::from(dasmeter_analysis::waveform::COLUMNS_PER_SECOND))
+            }
+            Analyser::Spectrogram(a) => Some(a.columns_per_second()),
+            _ => None,
+        }
+    }
+
+    /// Where a scrolling Meter's camera is at `now` (just before its frame
+    /// is drawn), for a view of `completed` columns: how far behind the
+    /// newest to draw.
+    pub fn scroll_lag(
+        &mut self,
+        completed: u64,
+        now: Duration,
+        refresh: Option<u32>,
+    ) -> Option<f32> {
+        let per_second = self.columns_per_second()?;
+        (completed > 0).then(|| self.playhead.drive(now, completed, per_second, refresh))
+    }
+
+    /// `refresh` is the display's refresh rate, when known: scrolling Meters
+    /// move on its clock.
+    pub fn view(
+        &mut self,
+        pointer: Option<[f32; 2]>,
+        now: Duration,
+        refresh: Option<u32>,
+    ) -> Option<&MeterView> {
         if self.view.is_none() {
-            self.view = Some(build_view(self.analyser.as_mut()?, &self.settings, pointer));
+            let mut view = build_view(self.analyser.as_mut()?, &self.settings, pointer);
+            if let MeterView::Spectrum {
+                selecting,
+                zoom,
+                settings,
+                held_peaks,
+                spectrum,
+                overlay,
+                b_layer,
+                ..
+            } = &mut view
+            {
+                *overlay = self
+                    .overlay_spectrum
+                    .as_mut()
+                    .map(|a| Box::new(overlay_view(a, spectrum, settings)));
+                // B's layer while B's song comes; gone once it stops.
+                if self
+                    .b_fed_at
+                    .is_none_or(|at| now.saturating_sub(at) > B_LAYER_STALE)
+                {
+                    self.b_spectrum = None;
+                }
+                *b_layer = self.b_spectrum.as_mut().map(|b| {
+                    let floor = spectrum.db_range.0;
+                    b.update()
+                        .traces
+                        .first()
+                        .map(|t| {
+                            t.levels
+                                .iter()
+                                .map(|l| round_to(l.max(floor), 0.1))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                });
+                *selecting = self.selecting;
+                let slow = pointer.is_some() && settings.slow_on_hover;
+                *held_peaks = self.marked.update(slow.then(|| std::mem::take(held_peaks)));
+                *zoom = self.zoom.as_mut().and_then(|z| z.view(slow)).map(Box::new);
+            }
+            if let MeterView::Spectrogram {
+                selecting, zoom, ..
+            } = &mut view
+            {
+                *selecting = self.selecting;
+                *zoom = self.zoom.as_ref().and_then(Zoom::spectrogram_view);
+            }
+            self.view = Some(view);
+        }
+        let Some(per_second) = self.columns_per_second() else {
+            return self.view.as_ref();
+        };
+        if let Some(
+            MeterView::Waveform { completed, lag, .. }
+            | MeterView::Spectrogram { completed, lag, .. },
+        ) = &mut self.view
+        {
+            *lag = if *completed == 0 {
+                self.playhead.reset();
+                0.0
+            } else {
+                self.playhead.lag(now, *completed, per_second, refresh)
+            };
+        }
+        if let (
+            Some(MeterView::Spectrogram {
+                zoom: Some(view), ..
+            }),
+            Some(zoom),
+        ) = (&mut self.view, &mut self.zoom)
+        {
+            if let Some(ZoomAnalyser::Spectrogram(a)) = &zoom.analyser {
+                view.lag = if view.completed == 0 {
+                    zoom.playhead.reset();
+                    0.0
+                } else {
+                    zoom.playhead
+                        .lag(now, view.completed, a.columns_per_second(), refresh)
+                };
+            }
         }
         self.view.as_ref()
     }
 }
 
+impl Zoom {
+    fn spectrogram_view(&self) -> Option<SpectrogramZoom> {
+        let Some(ZoomAnalyser::Spectrogram(a)) = &self.analyser else {
+            return None;
+        };
+        let columns: Vec<Vec<u8>> = a.columns().cloned().collect();
+        let silent = columns.iter().flatten().all(|&level| level == 0);
+        Some(SpectrogramZoom {
+            selection: self.selection,
+            panel: zoom_panel(self.selection),
+            range: self.range,
+            columns,
+            completed: if silent { 0 } else { a.completed() },
+            lag: 0.0,
+        })
+    }
+
+    fn view(&mut self, slow: bool) -> Option<SpectrumZoom> {
+        let Some(ZoomAnalyser::Spectrum(analyser)) = self.analyser.as_mut() else {
+            return None;
+        };
+        analyser.set_slow(slow);
+        let mut spectrum = analyser.update().clone();
+        let floor = spectrum.db_range.0;
+        for trace in &mut spectrum.traces {
+            for level in trace.levels.iter_mut().chain(&mut trace.peak_hold) {
+                *level = round_to(level.max(floor), 0.1);
+            }
+        }
+        // Its peaks are always marked: the zoom window is for looking closely.
+        let candidates = steady_peaks(analyser, &spectrum, self.range);
+        let peaks = self.marked.update(Some(candidates));
+        Some(SpectrumZoom {
+            selection: self.selection,
+            panel: zoom_panel(self.selection),
+            range: self.range,
+            spectrum,
+            peaks,
+        })
+    }
+}
+
 fn stereo_analysis(sample_rate: u32, settings: &StereometerMeterSettings) -> StereometerSettings {
+    let points = (settings.persistence.as_secs_f64() * f64::from(sample_rate)).round() as usize;
+    StereometerSettings {
+        points: points.clamp(1, MAX_STEREO_POINTS),
+        ..settings.analysis
+    }
+}
+
+fn goniometer_analysis(
+    sample_rate: u32,
+    settings: &GoniometerMeterSettings,
+) -> StereometerSettings {
     let points = (settings.persistence.as_secs_f64() * f64::from(sample_rate)).round() as usize;
     StereometerSettings {
         points: points.clamp(1, MAX_STEREO_POINTS),
@@ -426,8 +1768,37 @@ fn analyser(sample_rate: u32, settings: &MeterSettings) -> Analyser {
             sample_rate,
             stereo_analysis(sample_rate, s),
         ))),
+        // The Goniometer looks at the same thing the Stereometer does.
+        MeterSettings::Goniometer(s) => Analyser::Stereometer(Box::new(StereometerAnalyser::new(
+            sample_rate,
+            goniometer_analysis(sample_rate, s),
+        ))),
         MeterSettings::Cepstrum(s) => {
             Analyser::Cepstrum(Box::new(CepstrumAnalyser::new(sample_rate, s.analysis)))
+        }
+        MeterSettings::StereoBands(s) => {
+            Analyser::StereoBands(Box::new(StereoBandsAnalyser::new(sample_rate, s.time)))
+        }
+        MeterSettings::Needle(s) => Analyser::Needle(Box::new(NeedleAnalyser::new(
+            sample_rate,
+            s.scale,
+            s.vu_reference,
+            s.mono,
+        ))),
+        MeterSettings::Tuner(s) => {
+            Analyser::Tuner(Box::new(TunerAnalyser::new(sample_rate, s.analysis)))
+        }
+        MeterSettings::Spectrogram(s) => {
+            Analyser::Spectrogram(Box::new(SpectrogramAnalyser::new(sample_rate, s.analysis)))
+        }
+        MeterSettings::PhaseScope(s) => {
+            Analyser::PhaseScope(Box::new(PhaseScope::new(sample_rate, *s)))
+        }
+        MeterSettings::Oscilloscope(s) => {
+            Analyser::Oscilloscope(Box::new(OscilloscopeAnalyser::new(sample_rate, s.analysis)))
+        }
+        MeterSettings::TonalBalance(s) => {
+            Analyser::TonalBalance(Box::new(TonalBalanceAnalyser::new(sample_rate, s)))
         }
     }
 }
@@ -457,36 +1828,54 @@ fn build_view(
                 settings,
                 traces,
                 completed: if silent { 0 } else { a.completed() },
+                lag: 0.0,
             }
         }
         (Analyser::Spectrum(a), MeterSettings::Spectrum(settings)) => {
             let nyquist = a.sample_rate() as f32 / 2.0;
             let (low, high) = settings.analysis.frequency_range;
             let range = (low, high.min(nyquist));
+            let slow = pointer.is_some() && settings.slow_on_hover;
+            a.set_slow(slow);
             let mut spectrum = a.update().clone();
             let floor = spectrum.db_range.0;
+            let steady = settings.colouring == SpectrumColouring::SteadyHarmonics;
             for trace in &mut spectrum.traces {
                 for level in trace.levels.iter_mut().chain(&mut trace.peak_hold) {
                     *level = round_to(level.max(floor), 0.1);
                 }
+                if steady {
+                    for value in &mut trace.steadiness {
+                        *value = round_to(*value, 0.02);
+                    }
+                } else {
+                    trace.steadiness = Vec::new();
+                }
             }
-            let cursor = pointer.map(|[x, _]| {
+            let held_peaks = if slow {
+                steady_peaks(a, &spectrum, range)
+            } else {
+                Vec::new()
+            };
+            let cursor = pointer.filter(|_| settings.show_cursor).map(|[x, _]| {
                 let frequency = range.0 * (range.1 / range.0).powf(x);
                 CursorReadout {
                     x,
                     frequency,
                     note: note_name(frequency),
+                    level: None,
                 }
             });
             let peak = settings
                 .show_peak_line
-                .then(|| a.peak(floor))
+                .then(|| a.steady_peak())
                 .flatten()
-                .map(|(frequency, _)| CursorReadout {
+                .map(|(frequency, level)| CursorReadout {
                     x: ((frequency / range.0).ln() / (range.1 / range.0).ln()).clamp(0.0, 1.0),
-                    // To 0.1 Hz: finer would only redraw for nothing.
+                    // To 0.1 Hz and 0.1 dB: finer would only redraw for nothing.
                     frequency: round_to(frequency, 0.1),
                     note: note_name(frequency),
+                    level: Some(round_to(level, 0.1)),
                 });
             MeterView::Spectrum {
                 settings,
@@ -494,6 +1883,12 @@ fn build_view(
                 range,
                 cursor,
                 peak,
+                selecting: None,
+                zoom: None,
+                pointer,
+                held_peaks,
+                overlay: None,
+                b_layer: None,
             }
         }
         (Analyser::Loudness(a), MeterSettings::Loudness(settings)) => MeterView::Loudness {
@@ -518,6 +1913,54 @@ fn build_view(
                 points,
             }
         }
+        (Analyser::Stereometer(a), MeterSettings::Goniometer(settings)) => {
+            let mut readings = a.readings();
+            readings.correlation = round_to(readings.correlation, 0.01);
+            let mut points = Vec::new();
+            a.points(StereoView::Lissajous, &mut points);
+            MeterView::Goniometer {
+                settings,
+                readings,
+                points,
+                scale_db: round_to(20.0 * a.gain().max(1e-6).log10(), 0.5),
+            }
+        }
+        (Analyser::Needle(a), MeterSettings::Needle(settings)) => MeterView::Needle {
+            settings,
+            needles: a
+                .readings()
+                .into_iter()
+                .map(|r| NeedleDisplay {
+                    level: Level::from_db(r.level, -120.0),
+                    over: r.over,
+                })
+                .collect(),
+        },
+        (Analyser::StereoBands(a), MeterSettings::StereoBands(settings)) => {
+            MeterView::StereoBands {
+                settings,
+                bands: a
+                    .readings()
+                    .into_iter()
+                    .map(|b| BandDisplay {
+                        centre: b.centre,
+                        correlation: b.correlation.map(|c| round_to(c, 0.01)),
+                        width: b.width.map(|w| round_to(w, 0.01)),
+                    })
+                    .collect(),
+            }
+        }
+        (Analyser::Tuner(a), MeterSettings::Tuner(settings)) => MeterView::Tuner {
+            settings,
+            reading: a.update(settings.a4).map(|r| TunerDisplay {
+                note: dasmeter_analysis::Note {
+                    cents: r.note.cents.round(),
+                    ..r.note
+                },
+                frequency: round_to(r.frequency, 0.1),
+                held: r.held,
+            }),
+        },
         (Analyser::Cepstrum(a), MeterSettings::Cepstrum(settings)) => {
             let cepstrum = a.update();
             let (short, long) = cepstrum.quefrency_range;
@@ -530,16 +1973,204 @@ fn build_view(
                     // To 0.1 Hz: finer would only redraw for nothing.
                     frequency: round_to(pitch.frequency, 0.1),
                     note: note_name(pitch.frequency),
+                    level: None,
                 });
+            let hover = pointer.map(|[x, _]| {
+                let frequency = 1.0 / (short + x * (long - short));
+                CursorReadout {
+                    x,
+                    frequency,
+                    note: note_name(frequency),
+                    level: None,
+                }
+            });
             MeterView::Cepstrum {
                 settings,
                 values: cepstrum.values.iter().map(|&v| round_to(v, 0.01)).collect(),
                 quefrency_range: cepstrum.quefrency_range,
                 pitch,
+                hover,
+            }
+        }
+        (Analyser::Spectrogram(a), MeterSettings::Spectrogram(settings)) => {
+            let nyquist = a.sample_rate() as f32 / 2.0;
+            let (low, high) = settings.analysis.frequency_range;
+            let columns: Vec<Vec<u8>> = a.columns().cloned().collect();
+            let silent = columns.iter().flatten().all(|&level| level == 0);
+            MeterView::Spectrogram {
+                settings,
+                columns,
+                range: (low, high.min(nyquist)),
+                completed: if silent { 0 } else { a.completed() },
+                lag: 0.0,
+                selecting: None,
+                zoom: None,
+            }
+        }
+        (Analyser::PhaseScope(a), MeterSettings::PhaseScope(settings)) => MeterView::PhaseScope {
+            settings,
+            scope: Box::new(a.view()),
+        },
+        (Analyser::Oscilloscope(a), MeterSettings::Oscilloscope(settings)) => {
+            MeterView::Oscilloscope {
+                settings,
+                scope: a.update().clone(),
+            }
+        }
+        (Analyser::TonalBalance(a), MeterSettings::TonalBalance(settings)) => {
+            let mix = a.shown().map(|summary| {
+                let mut mix = summary.clone();
+                for level in mix.curve.iter_mut().chain(&mut mix.regions) {
+                    *level = round_to(*level, 0.1);
+                }
+                Box::new(mix)
+            });
+            MeterView::TonalBalance {
+                settings,
+                mix,
+                frozen: a
+                    .frozen()
+                    .map(|curve| curve.iter().map(|&l| round_to(l, 0.1)).collect()),
+                pointer,
             }
         }
         _ => unreachable!("a Meter's analyser always matches its settings"),
     }
+}
+
+/// The Overlay Source's levels on the Spectrum's points, and the collisions
+/// with the Spectrum's own (its loudest trace at each point).
+fn overlay_view(
+    a: &mut SpectrumAnalyser,
+    spectrum: &Spectrum,
+    settings: &SpectrumMeterSettings,
+) -> SpectrumOverlay {
+    let floor = spectrum.db_range.0;
+    let other = a.update();
+    let levels: Vec<f32> = other
+        .traces
+        .first()
+        .map(|t| {
+            t.levels
+                .iter()
+                .map(|l| round_to(l.max(floor), 0.1))
+                .collect()
+        })
+        .unwrap_or_default();
+    let own: Vec<f32> = (0..spectrum.frequencies.len())
+        .map(|i| {
+            spectrum
+                .traces
+                .iter()
+                .filter_map(|t| t.levels.get(i).copied())
+                .fold(floor, f32::max)
+        })
+        .collect();
+    let collisions = if levels.len() == own.len() {
+        dasmeter_analysis::collisions(
+            &own,
+            &levels,
+            settings.collision_floor,
+            settings.collision_within,
+            spectrum.db_range.1,
+        )
+        .into_iter()
+        .map(|c| round_to(c, 0.05))
+        .collect()
+    } else {
+        Vec::new()
+    };
+    SpectrumOverlay {
+        levels,
+        collisions,
+        name: String::new(),
+        colour: None,
+        waiting: false,
+    }
+}
+
+/// Candidates for the marked peaks, strongest first: local maxima of each
+/// point's level averaged over a couple of seconds (the loudest trace), so
+/// only peaks that keep sounding count, like the steady harmonics. Each
+/// stands [`HELD_PEAK_PROMINENCE_DB`] above the average around it and within
+/// [`HELD_PEAK_RANGE_DB`] of the peak readout's level, at least
+/// [`HELD_PEAK_SPACING_OCTAVES`] from a stronger one. Levels are the held
+/// curve's, where the dots sit.
+fn steady_peaks(
+    a: &SpectrumAnalyser,
+    spectrum: &Spectrum,
+    range: (f32, f32),
+) -> Vec<CursorReadout> {
+    let floor = spectrum.db_range.0;
+    let loudest = |levels: Vec<&[f32]>| -> Vec<f32> {
+        (0..spectrum.frequencies.len())
+            .map(|i| {
+                levels
+                    .iter()
+                    .filter_map(|l| l.get(i).copied())
+                    .fold(floor, f32::max)
+            })
+            .collect()
+    };
+    let steady = loudest(
+        (0..spectrum.traces.len())
+            .map(|t| a.steady_levels(t))
+            .collect(),
+    );
+    let held = loudest(
+        spectrum
+            .traces
+            .iter()
+            .map(|t| t.peak_hold.as_slice())
+            .collect(),
+    );
+    let top = a
+        .steady_peak()
+        .map(|(_, level)| level)
+        .unwrap_or_else(|| steady.iter().copied().fold(floor, f32::max));
+    let quietest = (top - HELD_PEAK_RANGE_DB).max(floor);
+    // Local maxima standing well above the average around them: noise,
+    // averaged, doesn't; a tone or a harmonic that keeps sounding does.
+    let frequencies = &spectrum.frequencies;
+    let mut candidates: Vec<(usize, f32)> = Vec::new();
+    for i in 1..steady.len().saturating_sub(1) {
+        let level = steady[i];
+        if level <= quietest || level < steady[i - 1] || level < steady[i + 1] {
+            continue;
+        }
+        let (sum, count) = frequencies
+            .iter()
+            .zip(&steady)
+            .filter(|&(&f, _)| (f / frequencies[i]).log2().abs() <= HELD_PEAK_SURROUNDINGS_OCTAVES)
+            .fold((0.0, 0), |(sum, count), (_, &l)| (sum + l, count + 1));
+        let around = sum / count.max(1) as f32;
+        if level - around >= HELD_PEAK_PROMINENCE_DB {
+            candidates.push((i, level));
+        }
+    }
+    candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut chosen: Vec<usize> = Vec::new();
+    for (i, _) in candidates {
+        let f = spectrum.frequencies[i];
+        if chosen
+            .iter()
+            .all(|&j| (f / spectrum.frequencies[j]).log2().abs() >= HELD_PEAK_SPACING_OCTAVES)
+        {
+            chosen.push(i);
+        }
+    }
+    chosen
+        .into_iter()
+        .map(|i| {
+            let frequency = a.refine(spectrum.frequencies[i]);
+            CursorReadout {
+                x: ((frequency / range.0).ln() / (range.1 / range.0).ln()).clamp(0.0, 1.0),
+                frequency: round_to(frequency, 0.1),
+                note: note_name(frequency),
+                level: Some(round_to(held[i], 0.1)),
+            }
+        })
+        .collect()
 }
 
 /// The loudness graph's points: the LUFS bar's reading every 100 ms over the
@@ -557,4 +2188,124 @@ fn history(a: &LoudnessAnalyser, settings: &LoudnessMeterSettings) -> Vec<Level>
             Level::from_db(lufs, crate::scene::LUFS_FLOOR)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Columns a playhead moves each frame at 120 Hz, the frames prepared
+    /// a little early or late (as the event loop wakes), the audio coming
+    /// in 512-frame blocks at 48 kHz.
+    fn steps(refresh: Option<u32>) -> Vec<f64> {
+        let per_second = 200.0;
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let shown_at = f64::from(frame) / 120.0;
+            // ±2 ms of wake-up jitter.
+            let jitter = [0.0, 0.002, -0.0015, 0.001, -0.002][frame as usize % 5];
+            let now = Duration::from_secs_f64(1.0 + shown_at + jitter);
+            let audio = (1.0 + shown_at) * 48_000.0;
+            let completed = ((audio / 512.0).floor() * 512.0 / 240.0) as u64;
+            let lag = playhead.lag(now, completed, per_second, refresh);
+            shown.push(completed as f64 - f64::from(lag));
+        }
+        shown.windows(2).skip(240).map(|w| w[1] - w[0]).collect()
+    }
+
+    #[test]
+    fn building_a_scene_between_frames_doesnt_move_it() {
+        // Frames on a 120 Hz refresh, each scene built a varying time before
+        // its frame is ready.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let ready = 1.0 + f64::from(frame) / 120.0;
+            let built = ready - [0.001, 0.004, 0.0075, 0.002, 0.006][frame as usize % 5];
+            let completed = |t: f64| ((t * 48_000.0 / 512.0).floor() * 512.0 / 240.0) as u64;
+            playhead.lag(
+                Duration::from_secs_f64(built),
+                completed(built),
+                200.0,
+                Some(120),
+            );
+            let c = completed(ready);
+            let lag = playhead.drive(Duration::from_secs_f64(ready), c, 200.0, Some(120));
+            shown.push(c as f64 - f64::from(lag));
+        }
+        let even = 200.0 / 120.0;
+        let worst = shown
+            .windows(2)
+            .skip(240)
+            .map(|w| (w[1] - w[0] - even).abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.1, "steps vary by {worst} columns");
+    }
+
+    #[test]
+    fn a_second_window_drawn_on_the_same_refresh_doesnt_move_it() {
+        // Each refresh drawn by two windows (the Meters and Settings), the
+        // second a fraction of a ms after the first: both show the camera
+        // where it is on that refresh, and it moves the same every refresh.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        for frame in 0..600u32 {
+            let ready = 1.0 + f64::from(frame) / 120.0;
+            let completed = |t: f64| ((t * 48_000.0 / 512.0).floor() * 512.0 / 240.0) as u64;
+            let mut lags = Vec::new();
+            for after in [0.0, 0.0004] {
+                let at = ready + after;
+                let c = completed(at);
+                let lag = playhead.drive(Duration::from_secs_f64(at), c, 200.0, Some(120));
+                lags.push(c as f64 - f64::from(lag));
+            }
+            assert!(
+                (lags[1] - lags[0]).abs() < 0.011,
+                "frame {frame}: the second window shows {} columns on",
+                lags[1] - lags[0]
+            );
+            shown.push(lags[0]);
+        }
+        let even = 200.0 / 120.0;
+        let worst = shown
+            .windows(2)
+            .skip(240)
+            .map(|w| (w[1] - w[0] - even).abs())
+            .fold(0.0, f64::max);
+        assert!(worst < 0.1, "steps vary by {worst} columns");
+    }
+
+    #[test]
+    fn late_audio_doesnt_stop_the_scrolling() {
+        // Audio in 10.7 ms blocks, but every two seconds one comes 90 ms late
+        // (then all at once), as a busy system sometimes delivers it.
+        let mut playhead = Playhead::default();
+        let mut shown = Vec::new();
+        let mut delivered = 0.0f64;
+        for frame in 0..1200u32 {
+            let t = f64::from(frame) / 120.0;
+            let late = (t % 2.0) > 1.0 && (t % 2.0) < 1.09;
+            if !late {
+                delivered = (t * 48_000.0 / 512.0).floor() * 512.0 / 240.0;
+            }
+            let now = Duration::from_secs_f64(1.0 + t);
+            let lag = playhead.lag(now, delivered as u64, 200.0, Some(120));
+            shown.push(delivered.floor() - f64::from(lag));
+        }
+        // After the first gap it has learned to stay far enough behind.
+        let steps: Vec<f64> = shown.windows(2).skip(400).map(|w| w[1] - w[0]).collect();
+        let slowest = steps.iter().copied().fold(f64::MAX, f64::min);
+        assert!(slowest > 0.8, "it stalled: a step of {slowest} columns");
+    }
+
+    #[test]
+    fn on_the_displays_clock_every_frame_moves_the_same() {
+        let even = 200.0 / 120.0;
+        let worst = |steps: &[f64]| steps.iter().map(|s| (s - even).abs()).fold(0.0, f64::max);
+        let snapped = steps(Some(120));
+        assert!(worst(&snapped) < 0.1, "steps vary by {}", worst(&snapped));
+        let unsnapped = steps(None);
+        assert!(worst(&unsnapped) > worst(&snapped), "the clock must help");
+    }
 }

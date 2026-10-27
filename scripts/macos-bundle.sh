@@ -53,8 +53,13 @@ plugins="$root/target/bundle-plugins"
 
 app="$out/$name.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/PlugIns"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/PlugIns" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/das-meter"
+# Our licences and the third-party ones the app is built from.
+cp "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$root/THIRD-PARTY-LICENSES.md" \
+    "$app/Contents/Resources/"
+# The app icon (scripts/make-icons.sh makes it from the SVG).
+cp "$root/crates/app/assets/icon/AppIcon.icns" "$app/Contents/Resources/"
 # The Send Plugin bundles, signed already, as the app installs them.
 cp -R "$plugins/" "$app/Contents/PlugIns/"
 
@@ -67,6 +72,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>$name</string>
     <key>CFBundleIdentifier</key><string>$bundle_id</string>
     <key>CFBundleExecutable</key><string>das-meter</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>
@@ -74,7 +80,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key><true/>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Das-Meter shows meters for the audio your Mac plays.</string>
-    <key>NSHumanReadableCopyright</key><string>Das Werk, MIT OR Apache-2.0</string>
+    <key>NSHumanReadableCopyright</key><string>Designed by Punktmidi · Das Werk, MIT OR Apache-2.0</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

@@ -270,6 +270,8 @@ impl<R: Random> Link<R> {
         self.status = if writer.app_running(now) {
             Status::Connected
         } else {
+            // A/B silence only lasts as long as the app that asked for it.
+            writer.clear_muted();
             Status::AppNotRunning
         };
     }

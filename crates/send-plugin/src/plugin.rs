@@ -18,14 +18,15 @@ use clack_extensions::timer::{HostTimer, PluginTimer, PluginTimerImpl, TimerId};
 use clack_extensions::track_info::{
     HostTrackInfo, PluginTrackInfo, PluginTrackInfoImpl, TrackInfoBuffer,
 };
+use clack_plugin::events::event_types::{TransportEvent, TransportFlags};
 use clack_plugin::prelude::*;
 use clack_plugin::stream::{InputStream, OutputStream};
-use dasmeter_transport::{HEARTBEAT_INTERVAL, TABLE_NAME};
+use dasmeter_transport::{HEARTBEAT_INTERVAL, TABLE_NAME, Timing};
 
 use crate::identity::{StdRandom, Track};
 use crate::link::{Link, Status};
 use crate::reaper::HostReaper;
-use crate::send::{AudioSend, Block, pass_through};
+use crate::send::{self, AudioSend, Block, pass_through};
 use crate::window::{self, SharedLink, Window, lock};
 
 /// The plugin's CLAP ID.
@@ -324,6 +325,9 @@ impl PluginGuiImpl for MainThread<'_> {
 /// The audio thread's state.
 pub struct Processor {
     send: AudioSend,
+    /// The main port's gain: 1, or on its way to 0 while the app plays a
+    /// reference (A/B) and back.
+    gain: f32,
 }
 
 impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
@@ -337,16 +341,19 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
         main_thread.active.set(true);
         Ok(Processor {
             send: AudioSend::new(writer, shared.mono.clone()),
+            gain: 1.0,
         })
     }
 
     fn process(
         &mut self,
-        _process: Process,
+        process: Process,
         mut audio: Audio,
         _events: Events,
     ) -> Result<ProcessStatus, PluginError> {
-        self.process_audio(&mut audio);
+        let timing = process.transport.and_then(host_timing);
+        self.process_audio(&mut audio, timing.as_ref());
+        self.apply_mute(&mut audio);
         Ok(ProcessStatus::ContinueIfNotQuiet)
     }
 
@@ -358,7 +365,7 @@ impl<'a> PluginAudioProcessor<'a, Shared, MainThread<'a>> for Processor {
 impl Processor {
     /// Passes the main port through unchanged and sends it on. Other ports and
     /// 64-bit buffers pass through without being sent.
-    fn process_audio(&mut self, audio: &mut Audio) {
+    fn process_audio(&mut self, audio: &mut Audio, timing: Option<&Timing>) {
         let mut sent = false;
         for index in 0..audio.port_pair_count() {
             let Some(mut pair) = audio.port_pair(index) else {
@@ -395,12 +402,57 @@ impl Processor {
                 sent = true;
                 match count {
                     0 => {}
-                    1 => self.send.send(Block::Mono(inputs[0])),
-                    _ => self.send.send(Block::Stereo(inputs[0], inputs[1])),
+                    1 => self.send.send(Block::Mono(inputs[0]), timing),
+                    _ => self.send.send(Block::Stereo(inputs[0], inputs[1]), timing),
                 }
             }
         }
     }
+}
+
+impl Processor {
+    /// A/B listening: while the app plays a reference, the main port fades
+    /// to silence (what was sent is the track as it was), and back after.
+    fn apply_mute(&mut self, audio: &mut Audio) {
+        let to = if self.send.muted() { 0.0 } else { 1.0 };
+        if self.gain == 1.0 && to == 1.0 {
+            return;
+        }
+        let Some(mut pair) = audio.port_pair(0) else {
+            return;
+        };
+        let Some(mut channels) = pair.channels().ok().and_then(|c| c.into_f32()) else {
+            return;
+        };
+        let from = self.gain;
+        let mut end = from;
+        for i in 0..channels.channel_pair_count() {
+            match channels.channel_pair(i) {
+                Some(ChannelPair::InputOutput(_, output) | ChannelPair::OutputOnly(output)) => {
+                    end = send::ramp(output, from, to);
+                }
+                Some(ChannelPair::InPlace(buffer)) => end = send::ramp(buffer, from, to),
+                _ => {}
+            }
+        }
+        self.gain = end;
+    }
+}
+
+/// Where the host says it is, for the app's Phase Scope.
+fn host_timing(transport: &TransportEvent) -> Option<Timing> {
+    let flags = transport.flags;
+    let has = |flag| flags.contains(flag);
+    send::timing(
+        has(TransportFlags::HAS_TEMPO).then_some(transport.tempo),
+        has(TransportFlags::HAS_BEATS_TIMELINE).then(|| transport.song_pos_beats.to_float()),
+        transport.bar_start.to_float(),
+        has(TransportFlags::HAS_TIME_SIGNATURE).then_some((
+            transport.time_signature_numerator,
+            transport.time_signature_denominator,
+        )),
+        has(TransportFlags::IS_PLAYING),
+    )
 }
 
 clack_export_entry!(SinglePluginEntry<SendPlugin>);

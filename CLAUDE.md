@@ -20,3 +20,5 @@ Das-Meter is dual-licensed **MIT OR Apache-2.0** (`LICENSE-MIT`, `LICENSE-APACHE
 
 - **Never copy code from GPL-licensed projects** (e.g. MiniMetersServer, BlackHole). Read them for ideas only; write our own implementation.
 - Only add dependencies whose licences are compatible with MIT OR Apache-2.0.
+- After adding or updating a dependency, run `scripts/third-party-licenses.py` to refresh `THIRD-PARTY-LICENSES.md` (CI checks it).
+- One exception: **MPL-2.0 is allowed for the Symphonia crates alone** (audio file decoding, ADR 0006), listed one by one in `deny.toml`. Any other MPL-2.0 crate needs its own decision.

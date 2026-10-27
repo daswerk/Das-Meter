@@ -37,9 +37,25 @@ reopen the budget issue with the measurements.
 
 ## Loudness conformance
 
-Run the EBU test set at 48 kHz (`--features ebu-conformance`), per
+Run the EBU test set at 48 kHz, per
 [ADR 0005](adr/0005-measurement-definitions-and-verification.md). The EBU
 files are downloaded by hand and never committed.
+
+1. Download the set from
+   <https://tech.ebu.ch/publications/ebu_loudness_test_set> and unzip it into
+   `ebu-test-set/` at the repository root (git-ignored), or set
+   `DASMETER_EBU_TEST_SET` to its folder.
+2. Run, with every file required:
+
+   ```sh
+   DASMETER_EBU_REQUIRE=1 cargo test -p dasmeter-analysis --features ebu-conformance \
+     --test ebu_conformance -- --nocapture
+   ```
+
+3. It passes, and the report lists every case with its expected and
+   measured values. A failure blocks the release. (CI's "EBU conformance"
+   job runs the same when it can get the files; a "skipped" there doesn't
+   count.)
 
 ## One-time setup: signing (ADR 0004)
 
@@ -67,7 +83,20 @@ reads the results from the `release` environment.
    - Variable `MINISIGN_PUBLIC_KEY`: the second line of `das-meter.pub` (the
      base64 key).
    Keep `das-meter.key` safe and offline; losing it means users update by hand.
-4. **Developer ID (later)**: once there's an Apple Developer account, add
+4. **Windows signing (SignPath Foundation)**: apply at
+   <https://signpath.org> for free code signing of open-source projects.
+   Once accepted, create a project with two artifact configurations:
+   `binaries` (a zip holding `das-meter.exe`, `Das-Meter Send.clap` and the
+   `Das-Meter Send.vst3` folder; sign every PE file in it) and `installer` (a
+   zip holding the setup `.exe`; sign it), and link it to this repository
+   as a trusted build system.
+   - Secret `SIGNPATH_API_TOKEN`: a CI user's API token.
+   - Variables `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG` and
+     `SIGNPATH_SIGNING_POLICY_SLUG`.
+   Until then the Windows installer ships unsigned (SmartScreen asks once);
+   the app's Update checks the minisign signature either way. If SignPath
+   says no: Azure Artifact Signing, else an OV certificate (#46).
+5. **Developer ID (later)**: once there's an Apple Developer account, add
    `APPLE_DEVELOPER_ID_CERTIFICATE`, `APPLE_DEVELOPER_ID_PASSWORD`, `APPLE_ID`,
    `APPLE_TEAM_ID` and `APPLE_APP_PASSWORD`. The workflow then signs with the
    Developer ID and notarizes, and the DMG no longer needs Open Anyway. Note
@@ -79,9 +108,14 @@ reads the results from the `release` environment.
 2. `git tag v<version> && git push origin v<version>`; approve the `release`
    environment run.
 3. Check the draft Release: the DMG, `Das-Meter-<version>.app.tar.gz` and its
-   `.minisig`. Install from the DMG on a clean Mac, and check that an
-   installed older build offers the update and keeps its System Capture
-   permission. Then publish the draft: apps find it within a day.
+   `.minisig`, `Das-Meter-<version>-windows-x64-setup.exe` and its
+   `.minisig`, and the Linux tarball. Install from the DMG on a clean Mac,
+   and check that an installed older build offers the update and keeps its
+   System Capture permission.
+4. On Windows 11: install, load the Send Plugin in a DAW, update an older
+   install from the app (with the DAW open), and uninstall (Presets stay
+   unless you answer Yes).
+5. Then publish the draft: apps find it within a day.
 
 A tag with a suffix (`v0.2.0-test1`) makes a pre-release, which apps never
 offer as an update: use it for dry runs, then delete the draft and the tag.

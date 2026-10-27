@@ -1,5 +1,8 @@
 //! A Meter's text: short labels placed in physical pixels, shaped with glyphon.
-//! Shaped buffers are reused while a label's text and style stay the same.
+//! Shaped text is kept by its text, size and weight, and reused next frame
+//! wherever it's drawn, so only text that changed is shaped again.
+
+use std::collections::HashMap;
 
 use dasmeter_core::Colour;
 use glyphon::{
@@ -33,17 +36,26 @@ struct Label {
 }
 
 struct Shaped {
-    text: String,
-    size: f32,
-    bold: bool,
     buffer: Buffer,
     width: f32,
+}
+
+/// What shaping depends on: the text, its size (as bits) and its weight.
+type Key = (String, u32, bool);
+
+fn key(label: &Label) -> Key {
+    (
+        label.text.clone(),
+        label.style.size.to_bits(),
+        label.style.bold,
+    )
 }
 
 pub struct Labels {
     renderer: TextRenderer,
     labels: Vec<Label>,
-    shaped: Vec<Shaped>,
+    /// The text shaped for the last frame.
+    shaped: HashMap<Key, Shaped>,
 }
 
 impl Labels {
@@ -56,7 +68,7 @@ impl Labels {
                 None,
             ),
             labels: Vec::new(),
-            shaped: Vec::new(),
+            shaped: HashMap::new(),
         }
     }
 
@@ -76,48 +88,18 @@ impl Labels {
 
     /// Shapes and uploads the labels, clipped to `clip`.
     pub fn prepare(&mut self, gpu: &Gpu, text: &mut Text, clip: Area) {
-        self.shaped.truncate(self.labels.len());
-        for (i, label) in self.labels.iter().enumerate() {
-            let style = label.style;
-            let fresh = self.shaped.get(i).is_some_and(|s| {
-                s.text == label.text && s.size == style.size && s.bold == style.bold
-            });
-            if fresh {
+        // Kept from the last frame where it's the same, shaped where it's new;
+        // what this frame doesn't show is let go.
+        let mut last = std::mem::take(&mut self.shaped);
+        for label in &self.labels {
+            let key = key(label);
+            if self.shaped.contains_key(&key) {
                 continue;
             }
-            let mut buffer = Buffer::new(
-                &mut text.font_system,
-                Metrics::new(style.size, style.size * 1.25),
-            );
-            let weight = if style.bold {
-                Weight::BOLD
-            } else {
-                Weight::NORMAL
-            };
-            buffer.set_size(None, None);
-            buffer.set_text(
-                &label.text,
-                &Attrs::new().family(Family::Monospace).weight(weight),
-                Shaping::Advanced,
-                None,
-            );
-            buffer.shape_until_scroll(&mut text.font_system, false);
-            let width = buffer
-                .layout_runs()
-                .map(|run| run.line_w)
-                .fold(0.0, f32::max);
-            let shaped = Shaped {
-                text: label.text.clone(),
-                size: style.size,
-                bold: style.bold,
-                buffer,
-                width,
-            };
-            if i < self.shaped.len() {
-                self.shaped[i] = shaped;
-            } else {
-                self.shaped.push(shaped);
-            }
+            let shaped = last
+                .remove(&key)
+                .unwrap_or_else(|| shape(text, &label.text, label.style));
+            self.shaped.insert(key, shaped);
         }
 
         let bounds = TextBounds {
@@ -126,7 +108,8 @@ impl Labels {
             right: clip.right() as i32,
             bottom: clip.bottom() as i32,
         };
-        let areas = self.labels.iter().zip(&self.shaped).map(|(label, shaped)| {
+        let areas = self.labels.iter().map(|label| {
+            let shaped = &self.shaped[&key(label)];
             let left = match label.style.align {
                 Align::Left => label.x,
                 Align::Centre => label.x - shaped.width / 2.0,
@@ -160,4 +143,30 @@ impl Labels {
             eprintln!("text: {error}");
         }
     }
+}
+
+/// `text` shaped at `style`'s size and weight.
+fn shape(text: &mut Text, line: &str, style: Style) -> Shaped {
+    let mut buffer = Buffer::new(
+        &mut text.font_system,
+        Metrics::new(style.size, style.size * 1.25),
+    );
+    let weight = if style.bold {
+        Weight::BOLD
+    } else {
+        Weight::NORMAL
+    };
+    buffer.set_size(None, None);
+    buffer.set_text(
+        line,
+        &Attrs::new().family(Family::Monospace).weight(weight),
+        Shaping::Advanced,
+        None,
+    );
+    buffer.shape_until_scroll(&mut text.font_system, false);
+    let width = buffer
+        .layout_runs()
+        .map(|run| run.line_w)
+        .fold(0.0, f32::max);
+    Shaped { buffer, width }
 }

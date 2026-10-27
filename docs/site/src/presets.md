@@ -7,7 +7,18 @@ them; **Revert Preset** goes back to how the Preset was when you opened it.
 - Switch Presets from the **Presets** menu, or with **⌘1–⌘9** (Ctrl on
   Windows) for the first nine.
 - **Save as New Preset** keeps the current setup under a new name.
-- The built-in Presets can be reset to how they came.
+- The built-in Presets can be reset to how they came. Each comes with its
+  own Theme, of the same name:
+  - **Producing Top-Bar 1.0**: a Bar along the top edge with Waveform,
+    Spectrogram, Stereometer and a Mid/Side Spectrum.
+  - **Mixing/Producing 1.0**: Spectrum and Stereo Bands on top; Waveform,
+    Loudness Meter and Stereometer below.
+  - **Mastering 1.0**: Spectrum over Tonal Balance; Stereo Bands, Waveform,
+    Loudness Meter and Stereometer below.
+
+  An update that brings new built-ins adds them once, at the end of the list.
+  Copies of an earlier version's built-ins stay in the list as your own
+  Presets.
 
 Presets are files in the presets folder:
 

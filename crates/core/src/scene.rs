@@ -18,6 +18,12 @@ use crate::themes::ThemeScene;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
     pub windows: Vec<WindowScene>,
+    /// The Reference curves in the curves folder, by name, for menus.
+    pub reference_curves: Vec<String>,
+    /// The Targets in the targets folder, by name, for menus.
+    pub targets: Vec<String>,
+    /// Each of those Targets' songs, by name, in the same order.
+    pub target_songs: Vec<Vec<String>>,
     /// Brief notes, such as "Output changed: reset".
     pub notes: Vec<Note>,
     /// The Theme in use's colours; a Meter's own overrides go over them.
@@ -46,6 +52,19 @@ pub struct Scene {
     pub app: AppSettings,
     /// The highest frame-rate cap the settings panel offers.
     pub max_frame_rate_cap: u32,
+    /// The Bar's settings, also in Window mode, where the settings show
+    /// them for when the Bar is back.
+    pub bar: BarSettingsScene,
+}
+
+/// The Bar's settings as the settings panel shows them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarSettingsScene {
+    pub edge: Edge,
+    /// Logical pixels across the Bar.
+    pub thickness: f32,
+    pub screen: ScreenMode,
+    pub over_fullscreen: bool,
 }
 
 /// An open Meter menu: whose it is and where it was opened.
@@ -109,6 +128,38 @@ pub struct MeterScene {
     pub show_source_label: bool,
     /// The Meter's own colours for single roles, over the Theme's.
     pub overrides: Vec<(Role, Colour)>,
+    /// The Reference curve a Spectrum shows, if it shows one.
+    pub reference: Option<ReferenceScene>,
+    /// A Tonal Balance Meter's Target, learning and Freeze; `None` for other Meters.
+    pub tonal_balance: Option<crate::tonal_balance::TonalBalanceScene>,
+    /// A Phase Scope's Overlay Source item; `None` for other Meters.
+    pub overlay: Option<OverlayScene>,
+    /// How lit it is, 0 (dimmed in silence) to 1. Always 1 unless the Theme
+    /// is drawn Smooth with dimming when silent.
+    pub activity: f32,
+    /// Whether the pointer is over it.
+    pub hovered: bool,
+}
+
+/// A Reference curve on a Spectrum.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReferenceScene {
+    pub name: String,
+    /// Its level at each of the Spectrum's points, sloped like the Spectrum,
+    /// to 0.1 dB. Empty while the curve's file is missing.
+    pub levels: Vec<f32>,
+    /// Its file isn't in the curves folder (any more).
+    pub missing: bool,
+}
+
+/// A Phase Scope's Overlay Source, for its menu.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverlayScene {
+    /// The picked Send Plugin's ID, there or not.
+    pub picked: Option<u64>,
+    /// What can be picked: Send Plugins from the same DAW as the Meter's
+    /// Source. Empty on System Capture, which has only the one Source.
+    pub choices: Vec<SendPluginItem>,
 }
 
 /// The Source a Meter shows, as its small label says it.
@@ -212,6 +263,9 @@ impl Note {
             Note::OutputChanged => "Output changed: reset",
             Note::ImportFailed => "That file isn't a Das-Meter Preset: nothing was imported",
             Note::SendPluginUpdated => "Send Plugin updated: restart your DAW to use it",
+            Note::UpdateAvailable if cfg!(windows) => {
+                "A new Das-Meter is out: Update in the settings (App)"
+            }
             Note::UpdateAvailable => "A new Das-Meter is out: Das-Meter ▸ Update",
             Note::UpdateFailed => "The update didn't work: Das-Meter is unchanged",
         }
@@ -249,6 +303,12 @@ pub struct ChannelDisplay {
     pub rms: Level,
     pub peak: Level,
     pub peak_hold: Level,
+    /// Clips (runs at or over 0 dBFS) since the last reset.
+    pub clips: u32,
+    /// True peaks over the ceiling since the last reset.
+    pub true_peak_overs: u32,
+    /// The VU or PPM reading (dBFS of a sine's peak), on those scales.
+    pub scale_level: Level,
 }
 
 /// A level in tenths of a dB, or silence.
@@ -311,6 +371,9 @@ impl ChannelDisplay {
             rms: level(levels.rms),
             peak: level(levels.peak),
             peak_hold: level(levels.peak_hold),
+            clips: levels.clips,
+            true_peak_overs: levels.true_peak_overs,
+            scale_level: level(levels.scale_level),
         }
     }
 }

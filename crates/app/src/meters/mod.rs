@@ -2,11 +2,22 @@
 //! drawing that Meter's part of the scene with the palette's colour roles.
 
 mod cepstrum;
+mod goniometer;
+mod heatmap;
 mod labels;
 mod loudness;
+mod needle;
+mod oscilloscope;
+mod phase_scope;
 mod shapes;
+mod smooth;
+mod spectrogram;
 mod spectrum;
+mod stereo_bands;
 mod stereometer;
+mod strip;
+mod tonal_balance;
+mod tuner;
 mod waveform;
 
 use dasmeter_core::{
@@ -14,19 +25,32 @@ use dasmeter_core::{
 };
 
 use crate::gpu::{Gpu, Text};
+use heatmap::Heatmap;
 use labels::{Align, Labels, Style};
 pub use shapes::Area;
 use shapes::Shapes;
+use strip::Strip;
+pub use tonal_balance::controls as tonal_balance_controls;
 
 /// What a Meter's drawing code draws with: shapes, labels, colours and the scale factor.
 pub struct Canvas<'a> {
     pub shapes: &'a mut Shapes,
+    /// Shapes drawn over the heat map (and under the labels).
+    pub overlay: &'a mut Shapes,
+    pub heatmap: &'a mut Heatmap,
+    /// The Waveform's picture, drawn with the heat maps.
+    pub strip: &'a mut Strip,
     labels: &'a mut Labels,
     palette: &'a Palette,
     /// Physical pixels per logical pixel.
     pub scale: f32,
     /// The Theme's styling: line weight, text size, shape cues.
     pub styling: Styling,
+    /// Text that would fall in this area is left out: something drawn over
+    /// it (labels are drawn after all shapes) covers it.
+    pub covered: Option<Area>,
+    /// Whether the pointer is over the Meter: Smooth brightens its grid.
+    pub hovered: bool,
 }
 
 impl Canvas<'_> {
@@ -46,11 +70,34 @@ impl Canvas<'_> {
 
     /// Secondary text: labels, units, scales.
     pub fn dim(&self) -> Colour {
-        self.palette[Role::Text].faded(0.55)
+        // Smooth labels sit quieter so the traces lead.
+        let dim = if self.smooth() { 0.45 } else { 0.55 };
+        self.palette[Role::Text].faded(dim)
+    }
+
+    /// Whether text at `x`, `y` would run into the covered area.
+    fn hidden(&self, text: &str, x: f32, y: f32, size: f32, align: Align) -> bool {
+        let Some(covered) = self.covered else {
+            return false;
+        };
+        let height = self.px(size) * self.styling.text_scale;
+        let width = 0.6 * height * text.chars().count() as f32;
+        let left = match align {
+            Align::Left => x,
+            Align::Centre => x - width / 2.0,
+            Align::Right => x - width,
+        };
+        left < covered.right()
+            && left + width > covered.x
+            && y < covered.bottom()
+            && y + height > covered.y
     }
 
     /// Text whose top edge is at `y`, `size` logical pixels high.
     pub fn text(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
+        if self.hidden(text, x, y, size, align) {
+            return;
+        }
         let style = Style {
             size: self.px(size) * self.styling.text_scale,
             colour,
@@ -61,6 +108,9 @@ impl Canvas<'_> {
     }
 
     pub fn bold(&mut self, text: &str, x: f32, y: f32, size: f32, colour: Colour, align: Align) {
+        if self.hidden(text, x, y, size, align) {
+            return;
+        }
         let style = Style {
             size: self.px(size) * self.styling.text_scale,
             colour,
@@ -78,39 +128,94 @@ pub struct Look<'a> {
     pub styling: Styling,
     /// Physical pixels per logical pixel.
     pub scale: f32,
+    /// Whether it's the Bar (thin Meters, smaller corners).
+    pub bar: bool,
 }
 
 /// Draws one Meter (or the notes over a window) into its area.
 pub struct MeterRenderer {
     shapes: Shapes,
+    heatmap: Heatmap,
+    strip: Strip,
+    overlay: Shapes,
     labels: Labels,
+    /// A Tonal Balance Meter's view range, held between frames.
+    tonal: tonal_balance::Steady,
+    /// What the shapes were last laid out from: a frame that would lay out
+    /// the same again keeps them (most Meters change less often than a
+    /// 120 Hz display draws).
+    last: Option<Drawn>,
+    /// Whether the shapes changed since the last upload.
+    changed: bool,
+}
+
+/// What a Meter's shapes depend on.
+#[derive(PartialEq)]
+struct Drawn {
+    meter: MeterScene,
+    area: Area,
+    palette: Palette,
+    styling: Styling,
+    scale: f32,
+    bar: bool,
 }
 
 impl MeterRenderer {
     pub fn new(gpu: &Gpu, text: &mut Text) -> MeterRenderer {
         MeterRenderer {
             shapes: Shapes::new(gpu),
+            heatmap: Heatmap::new(gpu),
+            strip: Strip::new(gpu),
+            overlay: Shapes::new(gpu),
             labels: Labels::new(gpu, text),
+            tonal: tonal_balance::Steady::default(),
+            last: None,
+            changed: true,
         }
     }
 
     fn canvas<'a>(&'a mut self, palette: &'a Palette, scale: f32, styling: Styling) -> Canvas<'a> {
         Canvas {
             shapes: &mut self.shapes,
+            overlay: &mut self.overlay,
+            heatmap: &mut self.heatmap,
+            strip: &mut self.strip,
             labels: &mut self.labels,
             palette,
             scale,
             styling,
+            covered: None,
+            hovered: false,
         }
     }
 
     fn begin(&mut self, gpu: &Gpu, area: Area) {
         self.shapes.begin(gpu, area);
+        self.heatmap.begin();
+        self.strip.begin();
+        self.overlay.begin(gpu, area);
         self.labels.clear();
     }
 
+    /// Sends the shapes [`MeterRenderer::prepare`] laid out to the GPU, if
+    /// they changed.
+    pub fn upload(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        belt: &mut wgpu::util::StagingBelt,
+    ) {
+        if std::mem::take(&mut self.changed) {
+            self.shapes.upload(encoder, belt);
+            self.overlay.upload(encoder, belt);
+        }
+    }
+
     fn finish(&mut self, gpu: &Gpu, text: &mut Text, area: Area) {
+        self.changed = true;
         self.shapes.prepare(gpu);
+        self.heatmap.prepare(gpu);
+        self.strip.prepare(gpu);
+        self.overlay.prepare(gpu);
         self.labels.prepare(gpu, text, area);
     }
 
@@ -123,14 +228,47 @@ impl MeterRenderer {
         look: Look,
         meter: &MeterScene,
     ) {
+        let drawn = Drawn {
+            meter: meter.clone(),
+            area,
+            palette: look.palette.clone(),
+            styling: look.styling,
+            scale: look.scale,
+            bar: look.bar,
+        };
+        // The same as last frame: the shapes stay. (Tonal Balance glides its
+        // range between frames, so it's always laid out.) The text is
+        // prepared again all the same, so its glyphs stay in the atlas.
+        let glides = matches!(
+            meter.settings,
+            dasmeter_core::MeterSettings::TonalBalance(_)
+        );
+        if !glides && self.last.as_ref() == Some(&drawn) {
+            self.labels.prepare(gpu, text, area);
+            return;
+        }
+        self.last = Some(drawn);
         self.begin(gpu, area);
         let (scale, styling) = (look.scale, look.styling);
         // The Meter's own colour overrides go over the Theme's.
         let palette = look.palette.with(&meter.overrides);
+        // Held across frames, lent to the drawing while the canvas borrows the rest.
+        let mut tonal = std::mem::take(&mut self.tonal);
         let mut c = self.canvas(&palette, scale, styling);
-        let panel = c.colour(Role::Panel).faded(styling.background_opacity);
-        c.shapes
-            .rounded_rect(area, c.px(styling.corner_radius), panel);
+        c.hovered = meter.hovered;
+        let radius = c.px(styling.corner_radius);
+        if c.smooth() {
+            // Thin Bar Meters get smaller corners.
+            let radius = if look.bar {
+                radius.min(c.px(6.0))
+            } else {
+                radius
+            };
+            smooth::panel(&mut c, area, radius, styling.background_opacity);
+        } else {
+            let panel = c.colour(Role::Panel).faded(styling.background_opacity);
+            c.shapes.rounded_rect(area, radius, panel);
+        }
         let inner = area.inset(c.px(10.0));
         match &meter.state {
             MeterState::Starting => {
@@ -223,21 +361,38 @@ impl MeterRenderer {
                     settings,
                     traces,
                     completed,
-                } => waveform::draw(&mut c, inner, settings, traces, *completed),
+                    lag,
+                } => waveform::draw(&mut c, inner, settings, traces, *completed, *lag),
                 MeterView::Spectrum {
                     settings,
                     spectrum,
                     range,
                     cursor,
                     peak,
+                    selecting,
+                    zoom,
+                    pointer,
+                    held_peaks,
+                    overlay,
+                    b_layer,
                 } => spectrum::draw(
                     &mut c,
+                    area,
                     inner,
                     settings,
                     spectrum,
                     *range,
-                    cursor.as_ref(),
-                    peak.as_ref(),
+                    spectrum::Marks {
+                        cursor: cursor.as_ref(),
+                        peak: peak.as_ref(),
+                        held_peaks,
+                        pointer: *pointer,
+                    },
+                    *selecting,
+                    zoom.as_deref(),
+                    meter.reference.as_ref(),
+                    overlay.as_deref(),
+                    b_layer.as_deref(),
                 ),
                 MeterView::Loudness { settings, display } => {
                     loudness::draw(&mut c, inner, settings, display)
@@ -247,11 +402,18 @@ impl MeterRenderer {
                     readings,
                     points,
                 } => stereometer::draw(&mut c, inner, settings, readings, points),
+                MeterView::Goniometer {
+                    settings,
+                    readings,
+                    points,
+                    scale_db,
+                } => goniometer::draw(&mut c, inner, settings, readings, points, *scale_db),
                 MeterView::Cepstrum {
                     settings,
                     values,
                     quefrency_range,
                     pitch,
+                    hover,
                 } => cepstrum::draw(
                     &mut c,
                     inner,
@@ -259,6 +421,65 @@ impl MeterRenderer {
                     values,
                     *quefrency_range,
                     pitch.as_ref(),
+                    hover.as_ref(),
+                ),
+                MeterView::Spectrogram {
+                    settings,
+                    columns,
+                    range,
+                    lag,
+                    selecting,
+                    zoom,
+                    ..
+                } => spectrogram::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    columns,
+                    *range,
+                    *lag,
+                    *selecting,
+                    zoom.as_ref(),
+                ),
+                MeterView::PhaseScope { settings, scope } => {
+                    phase_scope::draw(&mut c, inner, settings, scope)
+                }
+                MeterView::Oscilloscope { settings, scope } => {
+                    oscilloscope::draw(&mut c, inner, settings, scope)
+                }
+                MeterView::Needle { settings, needles } => {
+                    needle::draw(&mut c, inner, settings, needles)
+                }
+                MeterView::StereoBands { settings, bands } => {
+                    stereo_bands::draw(&mut c, inner, settings, bands)
+                }
+                MeterView::Tuner { settings, reading } => {
+                    tuner::draw(&mut c, inner, settings, reading.as_ref())
+                }
+                MeterView::TonalBalance {
+                    settings,
+                    mix,
+                    frozen,
+                    pointer,
+                } => tonal_balance::draw(
+                    &mut c,
+                    inner,
+                    settings,
+                    tonal_balance::Drawn {
+                        mix: mix.as_deref(),
+                        frozen: frozen.as_deref(),
+                        learning: meter.tonal_balance.as_ref().and_then(|t| t.learning),
+                        comparing: meter
+                            .tonal_balance
+                            .as_ref()
+                            .and_then(|t| t.comparing.as_deref()),
+                        target: meter.tonal_balance.as_ref().and_then(|t| t.target.as_ref()),
+                        pointer: pointer
+                            .map(|[x, y]| [area.x + x * area.width, area.y + y * area.height]),
+                        ab: meter.tonal_balance.as_ref().and_then(|t| t.ab.as_ref()),
+                    },
+                    look.bar,
+                    &mut tonal,
                 ),
             },
         }
@@ -282,7 +503,38 @@ impl MeterRenderer {
             };
             c.text(&source.name, x - width, y, 10.0, dim, Align::Right);
         }
+        // In silence the Smooth Look dims the Meter under a veil of its panel.
+        if c.smooth() && meter.activity < 1.0 {
+            let veil = c
+                .colour(Role::Panel)
+                .faded(smooth::SILENT_DIM * (1.0 - meter.activity));
+            let radius = if look.bar {
+                radius.min(c.px(6.0))
+            } else {
+                radius
+            };
+            c.overlay.rounded_rect(area, radius, veil);
+        }
+        self.tonal = tonal;
         self.finish(gpu, text, area);
+    }
+
+    /// Lays out what's under the Meters: in the Smooth Look, the window's
+    /// gradient and a soft shadow under each Meter's panel (`areas`).
+    pub fn prepare_backdrop(
+        &mut self,
+        gpu: &Gpu,
+        text: &mut Text,
+        window: Area,
+        look: Look,
+        areas: &[Area],
+    ) {
+        self.begin(gpu, window);
+        let mut c = self.canvas(look.palette, look.scale, look.styling);
+        if c.smooth() {
+            smooth::backdrop(&mut c, window, areas, look.styling.background_opacity);
+        }
+        self.finish(gpu, text, window);
     }
 
     /// Lays out the notes along the bottom of a window.
@@ -314,8 +566,23 @@ impl MeterRenderer {
     }
 
     pub fn render(&self, text: &Text, pass: &mut wgpu::RenderPass) {
+        // The shapes set the Meter's scissor, which clips the rest too.
         self.shapes.render(pass);
+        self.heatmap.render(pass);
+        self.strip.render(pass);
+        self.overlay.render(pass);
         self.labels.render(text, pass);
+    }
+}
+
+/// `a` blended toward `b` by `t` (0 to 1), alpha too.
+pub fn mix(a: Colour, b: Colour, t: f32) -> Colour {
+    let channel = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Colour {
+        r: channel(a.r, b.r),
+        g: channel(a.g, b.g),
+        b: channel(a.b, b.b),
+        a: channel(a.a, b.a),
     }
 }
 

@@ -7,11 +7,15 @@
 use std::time::Duration;
 
 use dasmeter_analysis::spectrum::{MAX_FFT_SIZE, MIN_FFT_SIZE};
-use dasmeter_analysis::{CepstrumSettings, PeakHold, SpectrumStyle, StereoScaling};
+use dasmeter_analysis::{
+    CepstrumSettings, PeakHold, SpectrogramSettings, SpectrumStyle, StereoScaling,
+};
 
 use crate::meters::{
-    CepstrumMeterSettings, LoudnessMeterSettings, MeterSettings, SpectrumMeterSettings,
-    StereometerMeterSettings, WaveformMeterSettings,
+    CepstrumMeterSettings, GoniometerMeterSettings, LoudnessMeterSettings, MeterSettings,
+    NeedleMeterSettings, OscilloscopeMeterSettings, PhaseScopeMeterSettings,
+    SpectrogramMeterSettings, SpectrumMeterSettings, StereoBandsMeterSettings,
+    StereometerMeterSettings, TunerMeterSettings, WaveformMeterSettings,
 };
 
 /// Where the docs page on what the Loudness Meter measures lives.
@@ -30,7 +34,11 @@ pub const MIN_FRAME_RATE_CAP: u32 = 30;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
-    /// Most frames drawn per second. Default 60, at most the display's refresh rate.
+    /// Keep in step with the display: present on every refresh and bring new
+    /// content on every k-th one (k refreshes nearest the frame-rate cap), so
+    /// scrolling Meters move evenly. Default on. Off: frames on a plain timer.
+    pub match_display: bool,
+    /// Most new frames per second. Default 60, at most the display's refresh rate.
     pub frame_rate_cap: u32,
     /// Look for a new version once a day. Default on.
     pub check_for_updates: bool,
@@ -39,6 +47,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
+            match_display: true,
             frame_rate_cap: DEFAULT_FRAME_RATE_CAP,
             check_for_updates: true,
         }
@@ -46,9 +55,30 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// The shortest time between two draws.
-    pub fn frame_interval(&self) -> Duration {
+    /// The shortest time between two new frames on a display refreshing
+    /// `refresh` times a second (if known). Matching the display, it's the
+    /// whole number of refreshes nearest the cap, less 0.4 of one (room for
+    /// waking a little late; a quarter while the display's rate is unknown):
+    /// frames are presented on every refresh (each waits for it), so a new
+    /// one comes on exactly every k-th.
+    pub fn frame_interval(&self, refresh: Option<u32>) -> Duration {
+        if self.match_display {
+            let rate = refresh.unwrap_or(DEFAULT_FRAME_RATE_CAP).max(1);
+            let period = 1.0 / f64::from(rate);
+            let k = (f64::from(rate) / f64::from(self.frame_rate_cap.max(1)))
+                .round()
+                .max(1.0);
+            // Unknown, nothing holds frames to a refresh: a quarter is enough.
+            let margin = if refresh.is_some() { 0.4 } else { 0.25 };
+            return Duration::from_secs_f64((k - margin) * period);
+        }
         Duration::from_nanos(1_000_000_000 / u64::from(self.frame_rate_cap.max(1)))
+    }
+
+    /// How long after a new frame the display keeps being presented on
+    /// every refresh (matching the display), so the next new frame is in step.
+    pub fn present_for(&self, refresh: Option<u32>) -> Option<Duration> {
+        self.match_display.then(|| self.frame_interval(refresh) * 3)
     }
 }
 
@@ -79,6 +109,15 @@ pub const SPECTRUM_MAX_SMOOTHING: f32 = 1.0 / 3.0;
 pub const PEAK_HOLD: (Duration, Duration) = (Duration::from_millis(100), Duration::from_secs(30));
 /// The Loudness Meter's target, in LUFS.
 pub const LOUDNESS_TARGET: (f64, f64) = (-40.0, 0.0);
+/// The VU's reference: the peak of the sine that reads 0 VU, in dBFS.
+pub const VU_REFERENCE: (f64, f64) = (-24.0, -8.0);
+/// A Spectrum's collision floor and how close two levels must be, in dB.
+pub const COLLISION_FLOOR: (f32, f32) = (-90.0, -10.0);
+pub const COLLISION_WITHIN: (f32, f32) = (1.0, 12.0);
+/// The Tuner's reference pitch, A4 in Hz.
+pub const TUNER_A4: (f32, f32) = (415.0, 466.0);
+/// The true-peak ceiling the counter counts overs of, in dBTP.
+pub const TRUE_PEAK_CEILING: (f64, f64) = (-6.0, 0.0);
 /// The Loudness Meter's RMS window.
 pub const RMS_WINDOW: (Duration, Duration) = (Duration::from_millis(50), Duration::from_secs(3));
 /// The loudness graph's span.
@@ -91,6 +130,13 @@ pub const LOUDNESS_BAR: (f64, f64) = (-120.0, 6.0);
 pub const CEPSTRUM_FFT_SIZES: [usize; 3] = dasmeter_analysis::cepstrum::FFT_SIZES;
 pub const CEPSTRUM_PITCH: (f32, f32) = dasmeter_analysis::cepstrum::PITCH_LIMITS;
 pub const CEPSTRUM_SMOOTHING: (Duration, Duration) = (Duration::ZERO, Duration::from_secs(1));
+
+/// The Oscilloscope's shortest and longest window.
+pub const OSCILLOSCOPE_WINDOW: (Duration, Duration) =
+    dasmeter_analysis::oscilloscope::WINDOW_LIMITS;
+/// The Spectrogram's FFT sizes and span choices (seconds).
+pub const SPECTROGRAM_FFT_SIZES: [usize; 4] = dasmeter_analysis::spectrogram::FFT_SIZES;
+pub const SPECTROGRAM_SPANS: [u64; 4] = [5, 10, 20, 30];
 /// The Stereometer's persistence.
 pub const STEREO_PERSISTENCE: (Duration, Duration) =
     (Duration::from_millis(5), Duration::from_millis(340));
@@ -99,6 +145,14 @@ pub const STEREO_GAIN: (f32, f32) = (0.25, 16.0);
 /// The Stereometer's correlation averaging time.
 pub const CORRELATION_TIME: (Duration, Duration) =
     (Duration::from_millis(50), Duration::from_secs(3));
+/// The Phase Scope's typed-in tempo, in BPM.
+pub const PHASE_SCOPE_TEMPO: (f32, f32) = (30.0, 300.0);
+/// The Phase Scope's manual gain, in dB.
+pub const PHASE_SCOPE_GAIN: (f32, f32) = (-24.0, 48.0);
+/// The Phase Scope's correlation cut-off, in Hz.
+pub const PHASE_SCOPE_CUTOFF: (f32, f32) = (40.0, 500.0);
+/// How far the Phase Scope's Overlay Source can be moved, in ms.
+pub const PHASE_SCOPE_OFFSET: (f32, f32) = (-50.0, 50.0);
 /// The narrowest a range (dB or Hz ratio) may get, so a Meter never divides by nothing.
 const MIN_DB_SPAN: f32 = 6.0;
 
@@ -149,6 +203,25 @@ impl MeterSettings {
             MeterSettings::Loudness(s) => MeterSettings::Loudness(s.clamped()),
             MeterSettings::Stereometer(s) => MeterSettings::Stereometer(s.clamped()),
             MeterSettings::Cepstrum(s) => MeterSettings::Cepstrum(s.clamped()),
+            MeterSettings::Spectrogram(s) => MeterSettings::Spectrogram(s.clamped()),
+            MeterSettings::PhaseScope(s) => MeterSettings::PhaseScope(s.clamped()),
+            MeterSettings::Oscilloscope(s) => MeterSettings::Oscilloscope(s.clamped()),
+            MeterSettings::TonalBalance(s) => MeterSettings::TonalBalance(s.clamped()),
+            MeterSettings::Tuner(s) => MeterSettings::Tuner(s.clamped()),
+            MeterSettings::Needle(s) => MeterSettings::Needle(NeedleMeterSettings {
+                // VU or a PPM; Peak and the K-System have no needle.
+                scale: if s.scale.ballistic() {
+                    s.scale
+                } else {
+                    dasmeter_analysis::Scale::Vu
+                },
+                vu_reference: clamp_f64(s.vu_reference, VU_REFERENCE, -18.0).round(),
+                ..s
+            }),
+            MeterSettings::StereoBands(s) => MeterSettings::StereoBands(StereoBandsMeterSettings {
+                time: clamp_duration(s.time, CORRELATION_TIME),
+            }),
+            MeterSettings::Goniometer(s) => MeterSettings::Goniometer(s.clamped()),
         }
     }
 }
@@ -177,6 +250,19 @@ impl WaveformMeterSettings {
 
 impl SpectrumMeterSettings {
     fn clamped(mut self) -> Self {
+        let spectrum_defaults = SpectrumMeterSettings::default();
+        self.collision_floor = clamp_f32(
+            self.collision_floor,
+            COLLISION_FLOOR,
+            spectrum_defaults.collision_floor,
+        )
+        .round();
+        self.collision_within = clamp_f32(
+            self.collision_within,
+            COLLISION_WITHIN,
+            spectrum_defaults.collision_within,
+        )
+        .round();
         let defaults = SpectrumMeterSettings::default().analysis;
         let a = &mut self.analysis;
         a.slope = nearest(a.slope, &SPECTRUM_SLOPES, |s| s);
@@ -231,6 +317,12 @@ impl LoudnessMeterSettings {
         a.rms_window = clamp_duration(a.rms_window, RMS_WINDOW);
         self.history_span = clamp_duration(self.history_span, HISTORY_SPAN);
         a.peak_hold = clamp_hold(a.peak_hold);
+        // To 0.1 dB, as the slider sets it.
+        a.ceiling = (clamp_f64(a.ceiling, TRUE_PEAK_CEILING, defaults.analysis.ceiling) * 10.0)
+            .round()
+            / 10.0;
+        a.vu_reference =
+            clamp_f64(a.vu_reference, VU_REFERENCE, defaults.analysis.vu_reference).round();
         let (floor, top) = self.bar_range;
         let floor = clamp_f64(floor, LOUDNESS_BAR, defaults.bar_range.0);
         let top = clamp_f64(top, LOUDNESS_BAR, defaults.bar_range.1);
@@ -260,6 +352,60 @@ impl CepstrumMeterSettings {
     }
 }
 
+impl TunerMeterSettings {
+    fn clamped(self) -> Self {
+        let analysis = CepstrumMeterSettings {
+            analysis: self.analysis,
+            show_pitch: true,
+        }
+        .clamped()
+        .analysis;
+        TunerMeterSettings {
+            analysis,
+            // To 0.1 Hz, as the slider sets it.
+            a4: (clamp_f32(self.a4, TUNER_A4, 440.0) * 10.0).round() / 10.0,
+        }
+    }
+}
+
+impl OscilloscopeMeterSettings {
+    fn clamped(self) -> Self {
+        OscilloscopeMeterSettings {
+            analysis: self.analysis.clamped(),
+        }
+    }
+}
+
+impl SpectrogramMeterSettings {
+    fn clamped(mut self) -> Self {
+        let defaults = SpectrogramSettings::default();
+        let a = &mut self.analysis;
+        if !SPECTROGRAM_FFT_SIZES.contains(&a.fft_size) {
+            a.fft_size = defaults.fft_size;
+        }
+        a.slope = nearest(a.slope, &SPECTRUM_SLOPES, |s| s);
+        let (low, high) = a.frequency_range;
+        let low = clamp_f32(low, SPECTRUM_FREQUENCIES, defaults.frequency_range.0);
+        let high = clamp_f32(high, SPECTRUM_FREQUENCIES, defaults.frequency_range.1);
+        // At least an octave shown.
+        a.frequency_range = if high >= low * 2.0 {
+            (low, high)
+        } else {
+            (
+                low.min(SPECTRUM_FREQUENCIES.1 / 2.0),
+                (low * 2.0).min(SPECTRUM_FREQUENCIES.1),
+            )
+        };
+        let (floor, top) = a.db_range;
+        let floor = clamp_f32(floor, SPECTRUM_DB, defaults.db_range.0);
+        let top = clamp_f32(top, SPECTRUM_DB, defaults.db_range.1);
+        a.db_range = (floor.min(top - MIN_DB_SPAN), top.max(floor + MIN_DB_SPAN));
+        let seconds = nearest(a.span.as_secs_f32(), &SPECTROGRAM_SPANS, |s| s as f32);
+        a.span = Duration::from_secs(seconds);
+        self
+    }
+}
+
 impl StereometerMeterSettings {
     fn clamped(mut self) -> Self {
         let defaults = StereometerMeterSettings::default();
@@ -275,6 +421,41 @@ impl StereometerMeterSettings {
             a.scaling = StereoScaling::Fixed {
                 gain: clamp_f32(gain, STEREO_GAIN, 1.0),
             };
+        }
+        self
+    }
+}
+
+impl GoniometerMeterSettings {
+    fn clamped(mut self) -> Self {
+        self.persistence = clamp_duration(self.persistence, STEREO_PERSISTENCE);
+        let a = &mut self.analysis;
+        a.correlation_time = clamp_duration(a.correlation_time, CORRELATION_TIME);
+        if let StereoScaling::Fixed { gain } = a.scaling {
+            a.scaling = StereoScaling::Fixed {
+                gain: clamp_f32(gain, STEREO_GAIN, 1.0),
+            };
+        }
+        self
+    }
+}
+
+impl PhaseScopeMeterSettings {
+    fn clamped(mut self) -> Self {
+        let defaults = PhaseScopeMeterSettings::default();
+        // To 0.1 BPM, as typed or tapped.
+        self.tempo =
+            (clamp_f32(self.tempo, PHASE_SCOPE_TEMPO, defaults.tempo) * 10.0).round() / 10.0;
+        self.gain = clamp_f32(self.gain, PHASE_SCOPE_GAIN, defaults.gain);
+        self.cutoff = clamp_f32(self.cutoff, PHASE_SCOPE_CUTOFF, defaults.cutoff);
+        self.overlay_offset = clamp_f32(
+            self.overlay_offset,
+            PHASE_SCOPE_OFFSET,
+            defaults.overlay_offset,
+        );
+        // Mono or Left and Right only.
+        if self.channel_view == dasmeter_analysis::ChannelView::MidSide {
+            self.channel_view = dasmeter_analysis::ChannelView::Mono;
         }
         self
     }

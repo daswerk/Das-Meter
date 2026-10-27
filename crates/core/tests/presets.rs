@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use dasmeter_core::{
-    AUTOSAVE_DELAY, AppCore, Edge, Event, LayoutMode, ListenTo, MeterState, PresetData, PresetFile,
-    PresetOp, Scene, SendPlugin, SendPluginState, WindowKey,
+    AUTOSAVE_DELAY, AppCore, Edge, Event, LayoutMode, ListenTo, MeterKind, MeterState, PresetData,
+    PresetFile, PresetOp, Scene, SendPlugin, SendPluginState, WindowKey,
 };
 
 /// The presets folder, `settings.toml`, the trash and the Preset files' `.bak`s.
@@ -135,31 +135,132 @@ impl App {
 }
 
 #[test]
-fn first_launch_copies_the_built_ins_and_opens_bar() {
+fn first_launch_copies_the_built_ins_and_opens_the_top_bar() {
     let mut app = App::first_launch();
-    assert_eq!(app.names(), ["Bar", "Mixing", "Mastering"]);
-    assert_eq!(app.current(), "Bar");
+    assert_eq!(app.names(), BUILT_INS);
+    assert_eq!(app.current(), TOP_BAR);
+    assert_eq!(app.scene().mode, LayoutMode::Bar);
+    assert_eq!(app.edge(), Some(Edge::Top));
     assert!(app.scene().presets.list.iter().all(|p| p.built_in));
     let files: Vec<&String> = app.disk.files.keys().collect();
-    assert_eq!(files, ["bar.toml", "mastering.toml", "mixing.toml"]);
+    assert_eq!(files, [MASTERING_FILE, MIXING_FILE, TOP_BAR_FILE]);
     assert!(app.disk.settings.is_some());
+}
 
-    // The built-ins are what the spec lays out.
-    app.send(Event::SwitchPreset { index: 1 });
-    let scene = app.scene();
-    assert_eq!(scene.mode, LayoutMode::Window);
-    assert_eq!(scene.windows[0].meters.len(), 4);
-    app.send(Event::SwitchPreset { index: 2 });
-    let scene = app.scene();
-    let loudness = scene.windows[0]
-        .meters
-        .iter()
-        .find(|m| m.meter == 3)
-        .unwrap();
-    assert!(
-        loudness.frame.width > 0.5 && loudness.frame.height == 1.0,
-        "a large Loudness Meter"
+/// The built-ins, in their first-launch order.
+const BUILT_INS: [&str; 3] = [TOP_BAR, MIXING, MASTERING];
+const TOP_BAR: &str = "Producing Top-Bar 1.0";
+const MIXING: &str = "Mixing/Producing 1.0";
+const MASTERING: &str = "Mastering 1.0";
+const TOP_BAR_FILE: &str = "producing-top-bar-1.0.toml";
+const MIXING_FILE: &str = "mixing-producing-1.0.toml";
+const MASTERING_FILE: &str = "mastering-1.0.toml";
+
+impl App {
+    /// The kinds of the Meters the open Preset shows, in Meter order.
+    fn shown(&mut self) -> Vec<MeterKind> {
+        let scene = self.scene();
+        let mut meters: Vec<_> = scene.windows.iter().flat_map(|w| &w.meters).collect();
+        meters.sort_by_key(|m| m.meter);
+        meters.iter().map(|m| m.settings.kind()).collect()
+    }
+
+    fn switch_to(&mut self, name: &str) {
+        let index = self.names().iter().position(|n| n == name).unwrap();
+        self.send(Event::SwitchPreset { index });
+    }
+}
+
+#[test]
+fn the_built_ins_hold_the_meters_for_their_job_in_their_own_theme() {
+    use MeterKind::*;
+    let mut app = App::first_launch();
+    assert_eq!(
+        app.shown(),
+        [Waveform, Spectrogram, Stereometer, Spectrum, Loudness]
     );
+    assert_eq!(app.scene().theme.name, TOP_BAR);
+    app.switch_to(MIXING);
+    assert_eq!(app.scene().mode, LayoutMode::Window);
+    assert_eq!(
+        app.shown(),
+        [
+            Spectrum,
+            Stereometer,
+            Loudness,
+            Waveform,
+            StereoBands,
+            TonalBalance
+        ]
+    );
+    assert_eq!(app.scene().theme.name, MIXING);
+    app.switch_to(MASTERING);
+    assert_eq!(app.scene().mode, LayoutMode::Window);
+    assert_eq!(
+        app.shown(),
+        [
+            StereoBands,
+            Goniometer,
+            Loudness,
+            Spectrum,
+            Waveform,
+            TonalBalance
+        ]
+    );
+    assert_eq!(app.scene().theme.name, MASTERING);
+    // No Send Plugin of whoever made them is waited for.
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let scene = app.scene();
+    assert!(
+        scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .all(|m| !matches!(m.state, MeterState::WaitingFor(_))),
+        "the built-ins pick no Send Plugins"
+    );
+}
+
+#[test]
+fn an_older_install_gets_the_new_built_ins_once_and_keeps_its_own() {
+    // Copied by a version with other built-ins, which this one doesn't have.
+    let mut disk = Disk::default();
+    for (file, name, built_in) in [
+        ("bar.toml", "Bar", "bar"),
+        ("mixing.toml", "Mixing", "mixing"),
+        ("mastering.toml", "Mastering", "mastering"),
+    ] {
+        let data = PresetData {
+            name: name.to_owned(),
+            ..PresetData::default()
+        };
+        let text = format!("built_in = \"{built_in}\"\n{}", data.to_toml());
+        disk.files.insert(file.to_owned(), text);
+    }
+    disk.settings = Some(
+        "order = [\"bar.toml\", \"mixing.toml\", \"mastering.toml\"]\n\
+         [first_launch]\nbuilt_ins_copied = true\nbuilt_ins_version = 2\n"
+            .to_owned(),
+    );
+    let mut app = App::launch(disk);
+    assert_eq!(
+        app.names(),
+        ["Bar", "Mixing", "Mastering", TOP_BAR, MIXING, MASTERING],
+        "the built-ins come after its own"
+    );
+    let list = app.scene().presets.list;
+    assert!(
+        list[..3].iter().all(|p| !p.built_in && !p.broken),
+        "the earlier built-ins' copies read as its own Presets"
+    );
+    assert!(list[3..].iter().all(|p| p.built_in));
+
+    // Deleted after: not copied again.
+    let index = app.names().iter().position(|n| n == MASTERING).unwrap();
+    app.send(Event::DeletePreset { index });
+    app.flush();
+    let mut app = app.relaunch();
+    assert_eq!(app.names(), ["Bar", "Mixing", "Mastering", TOP_BAR, MIXING]);
 }
 
 #[test]
@@ -168,31 +269,36 @@ fn a_deleted_built_in_isnt_copied_again() {
     app.send(Event::DeletePreset { index: 2 });
     app.flush();
     let mut app = app.relaunch();
-    assert_eq!(app.names(), ["Bar", "Mixing"]);
+    let mut left = BUILT_INS.to_vec();
+    left.remove(2);
+    assert_eq!(app.names(), left);
 }
 
 #[test]
 fn changes_are_saved_after_a_pause_and_come_back_at_launch() {
     let mut app = App::first_launch();
-    let before = app.disk.files["bar.toml"].clone();
-    app.send(Event::SetEdge(Edge::Top));
+    let before = app.disk.files[TOP_BAR_FILE].clone();
+    app.send(Event::SetEdge(Edge::Left));
     app.wait(AUTOSAVE_DELAY / 2);
-    assert_eq!(app.disk.files["bar.toml"], before, "not before the pause");
+    assert_eq!(app.disk.files[TOP_BAR_FILE], before, "not before the pause");
     // Another change restarts the pause.
     app.send(Event::SetBarThickness(240.0));
     app.wait(AUTOSAVE_DELAY / 2 + Duration::from_millis(200));
-    assert_eq!(app.disk.files["bar.toml"], before);
+    assert_eq!(app.disk.files[TOP_BAR_FILE], before);
     app.wait(AUTOSAVE_DELAY);
-    assert_ne!(app.disk.files["bar.toml"], before, "saved after the pause");
+    assert_ne!(
+        app.disk.files[TOP_BAR_FILE], before,
+        "saved after the pause"
+    );
 
     // Everything comes back as it was: the last Preset, its layout and Meters.
     app.send(Event::SwitchPreset { index: 1 });
     app.send(Event::ClosePane { meter: 2 });
     let mut app = app.relaunch();
-    assert_eq!(app.current(), "Mixing");
-    assert_eq!(app.scene().windows[0].meters.len(), 3);
+    assert_eq!(app.current(), MIXING);
+    assert_eq!(app.scene().windows[0].meters.len(), 5);
     app.send(Event::SwitchPreset { index: 0 });
-    assert_eq!(app.edge(), Some(Edge::Top));
+    assert_eq!(app.edge(), Some(Edge::Left));
     assert_eq!(app.core.layout().thickness, 240.0);
 }
 
@@ -222,18 +328,18 @@ fn revert_goes_back_to_the_preset_as_opened() {
     app.wait(AUTOSAVE_DELAY * 2);
     assert!(app.scene().presets.can_revert);
     app.send(Event::RevertPreset);
-    assert_eq!(app.edge(), Some(Edge::Bottom));
+    assert_eq!(app.edge(), Some(Edge::Top));
     app.wait(AUTOSAVE_DELAY * 2);
     assert!(!app.scene().presets.can_revert);
-    let saved: PresetData = toml::from_str(&app.disk.files["bar.toml"]).unwrap();
-    assert_eq!(saved.bar.edge, Edge::Bottom, "the reverted state is saved");
+    let saved: PresetData = toml::from_str(&app.disk.files[TOP_BAR_FILE]).unwrap();
+    assert_eq!(saved.bar.edge, Edge::Top, "the reverted state is saved");
 
     // Revert only goes back to the last switch.
-    app.send(Event::SetEdge(Edge::Top));
+    app.send(Event::SetEdge(Edge::Bottom));
     app.send(Event::SwitchPreset { index: 1 });
     app.send(Event::SwitchPreset { index: 0 });
     app.send(Event::RevertPreset);
-    assert_eq!(app.edge(), Some(Edge::Top));
+    assert_eq!(app.edge(), Some(Edge::Bottom));
 }
 
 #[test]
@@ -297,7 +403,7 @@ fn a_broken_file_is_listed_but_never_opened_or_deleted() {
         .unwrap();
     assert!(app.scene().presets.list[index].broken);
     app.send(Event::SwitchPreset { index });
-    assert_eq!(app.current(), "Bar");
+    assert_eq!(app.current(), TOP_BAR);
     app.send(Event::DeletePreset { index });
     app.flush();
     assert!(app.disk.files.contains_key("zz.toml"));
@@ -314,13 +420,16 @@ fn reset_brings_a_built_in_back() {
         name: "My mix",
     });
     app.wait(AUTOSAVE_DELAY * 2);
-    assert_eq!(app.scene().windows[0].meters.len(), 3);
+    assert_eq!(app.scene().windows[0].meters.len(), 5);
     app.send(Event::ResetPreset { index: 1 });
     app.flush();
-    assert_eq!(app.current(), "Mixing");
-    assert_eq!(app.scene().windows[0].meters.len(), 4);
-    let saved: PresetData = toml::from_str(&app.disk.files["mixing.toml"]).unwrap();
-    assert_eq!(saved, PresetData::built_in(dasmeter_core::BuiltIn::Mixing));
+    assert_eq!(app.current(), MIXING);
+    assert_eq!(app.scene().windows[0].meters.len(), 6);
+    let saved: PresetData = toml::from_str(&app.disk.files[MIXING_FILE]).unwrap();
+    assert_eq!(
+        saved,
+        PresetData::built_in(dasmeter_core::BuiltIn::MixingProducing1)
+    );
 }
 
 #[test]
@@ -329,16 +438,19 @@ fn deleting_the_current_preset_switches_to_the_one_above() {
     app.send(Event::SwitchPreset { index: 2 });
     app.send(Event::DeletePreset { index: 2 });
     app.flush();
-    assert_eq!(app.current(), "Mixing");
-    assert_eq!(app.disk.trash, ["mastering.toml"]);
+    assert_eq!(app.current(), MIXING);
+    assert_eq!(app.disk.trash, [MASTERING_FILE]);
     // The first one: the new first takes over.
     app.send(Event::SwitchPreset { index: 0 });
     app.send(Event::DeletePreset { index: 0 });
-    assert_eq!(app.current(), "Mixing");
+    assert_eq!(app.current(), MIXING);
     // The last one stays.
+    while app.names().len() > 1 {
+        app.send(Event::DeletePreset { index: 1 });
+    }
     app.send(Event::DeletePreset { index: 0 });
     app.flush();
-    assert_eq!(app.names(), ["Mixing"]);
+    assert_eq!(app.names(), [MIXING]);
 }
 
 #[test]
@@ -346,21 +458,26 @@ fn managing_names_copies_and_order() {
     let mut app = App::first_launch();
     app.send(Event::DuplicatePreset { index: 0 });
     app.flush();
-    assert_eq!(app.names(), ["Bar", "Bar (2)", "Mixing", "Mastering"]);
+    let copy = format!("{TOP_BAR} (2)");
+    assert_eq!(app.names()[..4], [TOP_BAR, &copy, MIXING, MASTERING]);
     assert!(
         !app.scene().presets.list[1].built_in,
         "a copy isn't a built-in"
     );
     app.send(Event::RenamePreset {
         index: 1,
-        name: "Mixing",
+        name: MIXING,
     });
-    assert_eq!(app.names()[1], "Mixing (2)", "a taken name gets (2)");
+    assert_eq!(
+        app.names()[1],
+        format!("{MIXING} (2)"),
+        "a taken name gets (2)"
+    );
 
     app.send(Event::SetEdge(Edge::Right));
     app.send(Event::SavePresetAsNew);
     app.flush();
-    assert_eq!(app.current(), "Bar (2)");
+    assert_eq!(app.current(), copy);
     assert_eq!(app.edge(), Some(Edge::Right));
 
     app.send(Event::MovePreset { from: 4, to: 0 });
@@ -374,14 +491,14 @@ fn managing_names_copies_and_order() {
 fn shortcuts_follow_the_list_order() {
     let mut app = App::first_launch();
     app.send(Event::PresetShortcut { number: 3 });
-    assert_eq!(app.current(), "Mastering");
+    assert_eq!(app.current(), MASTERING);
     app.send(Event::MovePreset { from: 2, to: 0 });
     app.send(Event::PresetShortcut { number: 2 });
-    assert_eq!(app.current(), "Bar");
+    assert_eq!(app.current(), TOP_BAR);
     // Numbers past the list, or 0, do nothing.
     app.send(Event::PresetShortcut { number: 9 });
     app.send(Event::PresetShortcut { number: 0 });
-    assert_eq!(app.current(), "Bar");
+    assert_eq!(app.current(), TOP_BAR);
 }
 
 fn plugin(id: u64, name: &str) -> SendPlugin {
@@ -393,6 +510,7 @@ fn plugin(id: u64, name: &str) -> SendPlugin {
         sample_rate: 48_000,
         state: SendPluginState::Live,
         outdated: false,
+        host_pid: 1,
     }
 }
 
@@ -406,14 +524,17 @@ fn a_loaded_preset_finds_its_send_plugins_by_id_then_name() {
     app.send(Event::PickSendPlugin { meter: 1, id: 2 });
     app.send(Event::PickSendPlugin { meter: 2, id: 2 });
     app.send(Event::PickSendPlugin { meter: 3, id: 2 });
+    app.send(Event::PickSendPlugin { meter: 7, id: 2 });
 
     // Next session: the DAW gave Kick a new ID; Bass kept its own; no Hats.
     let mut app = app.relaunch();
     let plugins = [plugin(7, "Kick"), plugin(2, "Bass")];
     app.send(Event::SendPlugins(&plugins));
     let scene = app.scene();
-    let picked: Vec<Option<u64>> = scene.windows[0].meters.iter().map(|m| m.picked).collect();
-    assert_eq!(picked, [Some(7), Some(2), Some(2), Some(2)]);
+    let mut meters: Vec<_> = scene.windows[0].meters.iter().collect();
+    meters.sort_by_key(|m| m.meter);
+    let picked: Vec<Option<u64>> = meters.iter().map(|m| m.picked).collect();
+    assert_eq!(picked, [Some(7), Some(2), Some(2), Some(2), Some(2)]);
 
     // A Send Plugin that isn't there is waited for.
     let plugins = [plugin(2, "Bass")];
@@ -429,7 +550,7 @@ fn a_loaded_preset_finds_its_send_plugins_by_id_then_name() {
 fn print_a_preset_file() {
     println!(
         "{}",
-        PresetData::built_in(dasmeter_core::BuiltIn::Mastering).to_toml()
+        PresetData::built_in(dasmeter_core::BuiltIn::Mastering1).to_toml()
     );
 }
 
@@ -440,6 +561,121 @@ fn a_saved_copy_isnt_taken_for_a_built_in_after_relaunch() {
     app.flush();
     let mut app = app.relaunch();
     let list = app.scene().presets.list;
-    let copy = list.iter().find(|p| p.name == "Bar (2)").unwrap();
+    let copy = list
+        .iter()
+        .find(|p| p.name == format!("{TOP_BAR} (2)"))
+        .unwrap();
     assert!(!copy.built_in);
+}
+
+#[test]
+fn a_phase_scopes_overlay_and_offset_are_saved() {
+    use dasmeter_core::{MeterKind, MeterSettings};
+    let mut app = App::first_launch();
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let plugins = [plugin(1, "Kick"), plugin(2, "Bass")];
+    app.send(Event::SendPlugins(&plugins));
+    let MeterSettings::PhaseScope(mut settings) = MeterSettings::default_of(MeterKind::PhaseScope)
+    else {
+        unreachable!()
+    };
+    settings.overlay_offset = 7.0;
+    app.send(Event::SetMeter {
+        meter: 0,
+        settings: MeterSettings::PhaseScope(settings),
+    });
+    app.send(Event::PickSendPlugin { meter: 0, id: 1 });
+    app.send(Event::PickOverlay {
+        meter: 0,
+        id: Some(2),
+    });
+
+    // Next session: Bass came back under a new ID, found by name.
+    let mut app = app.relaunch();
+    let plugins = [plugin(1, "Kick"), plugin(5, "Bass")];
+    app.send(Event::SendPlugins(&plugins));
+    let scene = app.scene();
+    let meter = &scene.windows[0].meters[0];
+    assert_eq!(meter.overlay.as_ref().and_then(|o| o.picked), Some(5));
+    let MeterSettings::PhaseScope(settings) = meter.settings else {
+        panic!("{:?}", meter.settings)
+    };
+    assert_eq!(settings.overlay_offset, 7.0);
+}
+
+#[test]
+fn every_built_in_can_be_read_back_after_a_relaunch() {
+    let mut app = App::first_launch();
+    // Open and change each so each is saved by this version.
+    let count = app.scene().presets.list.len();
+    for index in 0..count {
+        app.send(Event::SwitchPreset { index });
+        app.wait(AUTOSAVE_DELAY * 2);
+    }
+    let mut app = app.relaunch();
+    let broken: Vec<String> = app
+        .scene()
+        .presets
+        .list
+        .iter()
+        .filter(|p| p.broken)
+        .map(|p| p.name.clone())
+        .collect();
+    assert!(broken.is_empty(), "{broken:?}");
+}
+
+#[test]
+fn each_built_in_reads_back_as_written() {
+    for built_in in dasmeter_core::BuiltIn::ALL {
+        let text = PresetData::built_in(built_in).to_toml();
+        let back: Result<PresetData, _> = toml::from_str(&text);
+        assert!(
+            back.is_ok(),
+            "{}: {:?}\n{text}",
+            built_in.name(),
+            back.err()
+        );
+    }
+}
+
+#[test]
+fn a_preset_with_a_large_send_plugin_id_reads_back() {
+    let mut app = App::first_launch();
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let big = u64::MAX - 7;
+    let plugins = [plugin(big, "Kick")];
+    app.send(Event::SendPlugins(&plugins));
+    app.send(Event::PickSendPlugin { meter: 0, id: big });
+    let mut app = app.relaunch();
+    let broken: Vec<String> = app
+        .scene()
+        .presets
+        .list
+        .iter()
+        .filter(|p| p.broken)
+        .map(|p| p.name.clone())
+        .collect();
+    assert!(broken.is_empty(), "{broken:?}");
+}
+
+#[test]
+fn a_file_saved_with_a_too_large_id_is_repaired_on_reading() {
+    let mut app = App::first_launch();
+    app.send(Event::SetListenTo(ListenTo::SendPlugins));
+    let big = u64::MAX - 7;
+    app.send(Event::SendPlugins(&[plugin(big, "Kick")]));
+    app.send(Event::PickSendPlugin { meter: 0, id: big });
+    app.wait(AUTOSAVE_DELAY * 2);
+    // Earlier versions wrote the ID past TOML's integer range, which no
+    // TOML reader accepts.
+    let mut disk = app.disk.clone();
+    let text = disk.files[TOP_BAR_FILE].replace("id = -8", "id = 18446744073709551608");
+    assert!(text.contains("18446744073709551608"), "{text}");
+    disk.files.insert(TOP_BAR_FILE.into(), text);
+
+    let mut app = App::launch(disk);
+    app.send(Event::SendPlugins(&[plugin(big, "Kick")]));
+    let scene = app.scene();
+    assert!(scene.presets.list.iter().all(|p| !p.broken));
+    assert_eq!(scene.windows[0].meters[0].picked, Some(big));
 }

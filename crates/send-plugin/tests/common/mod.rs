@@ -5,6 +5,7 @@
 
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui};
 use clack_extensions::state::PluginState;
+use clack_host::events::event_types::TransportEvent;
 use clack_host::prelude::*;
 use clack_plugin::entry::SinglePluginEntry;
 use dasmeter_send::plugin::{PLUGIN_ID, SendPlugin, use_table};
@@ -78,6 +79,17 @@ impl Instance {
 
     /// Runs `process()` on one stereo block, in place of a host's audio thread.
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32], out: &mut [Vec<f32>; 2]) {
+        self.process_at(left, right, out, None);
+    }
+
+    /// [`Instance::process`] with the host's transport at the block's first frame.
+    pub fn process_at(
+        &mut self,
+        left: &mut [f32],
+        right: &mut [f32],
+        out: &mut [Vec<f32>; 2],
+        transport: Option<&TransportEvent>,
+    ) {
         let (in_ports, out_ports) = &mut self.ports;
         let inputs = in_ports.with_input_buffers([AudioPortBuffer {
             latency: 0,
@@ -101,9 +113,45 @@ impl Instance {
                 &InputEvents::empty(),
                 &mut OutputEvents::void(),
                 None,
-                None,
+                transport,
             )
             .expect("process");
+    }
+
+    /// A host's transport: `tempo` BPM in `signature`, at `beats` quarter notes
+    /// into a bar that began at `bar_start`.
+    pub fn transport(
+        tempo: f64,
+        beats: f64,
+        bar_start: f64,
+        signature: (u16, u16),
+        playing: bool,
+    ) -> TransportEvent {
+        use clack_host::events::event_types::TransportFlags;
+        use clack_host::events::{EventFlags, EventHeader};
+        use clack_host::utils::{BeatTime, SecondsTime};
+        let mut flags = TransportFlags::HAS_TEMPO
+            | TransportFlags::HAS_BEATS_TIMELINE
+            | TransportFlags::HAS_TIME_SIGNATURE;
+        if playing {
+            flags |= TransportFlags::IS_PLAYING;
+        }
+        TransportEvent {
+            header: EventHeader::new_core(0, EventFlags::empty()),
+            flags,
+            song_pos_beats: BeatTime::from_float(beats),
+            song_pos_seconds: SecondsTime::from_float(beats * 60.0 / tempo),
+            tempo,
+            tempo_inc: 0.0,
+            loop_start_beats: BeatTime::from_int(0),
+            loop_end_beats: BeatTime::from_int(0),
+            loop_start_seconds: SecondsTime::from_int(0),
+            loop_end_seconds: SecondsTime::from_int(0),
+            bar_start: BeatTime::from_float(bar_start),
+            bar_number: 0,
+            time_signature_numerator: signature.0,
+            time_signature_denominator: signature.1,
+        }
     }
 
     /// The plugin's saved state, as a host would store it in the project.

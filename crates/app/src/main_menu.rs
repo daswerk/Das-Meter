@@ -33,6 +33,10 @@ pub enum Command {
     LaunchAtLogin(bool),
     /// Bring the app's windows forward (the menu bar icon).
     ShowWindows,
+    /// Edit ▸ Undo (⌘Z), or Redo (⇧⌘Z): the text being typed, else the
+    /// last change to the Preset or its Themes.
+    Undo,
+    Redo,
 }
 
 pub struct MainMenu {
@@ -41,6 +45,7 @@ pub struct MainMenu {
     system_capture: CheckMenuItem,
     send_plugins: CheckMenuItem,
     help: MenuId,
+    donate: MenuId,
     float_on_top: CheckMenuItem,
     keep_here: MenuItem,
     bar_mode: CheckMenuItem,
@@ -48,6 +53,8 @@ pub struct MainMenu {
     presets: Submenu,
     preset_items: Vec<CheckMenuItem>,
     revert: MenuItem,
+    undo: MenuId,
+    redo: MenuId,
     save_as_new: MenuItem,
     export: MenuItem,
     import: MenuItem,
@@ -81,6 +88,7 @@ impl MainMenu {
         let system_capture = CheckMenuItem::new("System Capture", true, true, None);
         let send_plugins = CheckMenuItem::new("Send Plugins", true, false, None);
         let help = MenuItem::new("Das-Meter Help", true, None);
+        let donate = MenuItem::new("Support Das-Meter…", true, None);
         let float_on_top = CheckMenuItem::new("Float on Top", true, true, None);
         let keep_here = MenuItem::new("Keep Windows Here", false, None);
         let bar_mode = CheckMenuItem::new("Bar Mode", true, true, None);
@@ -96,6 +104,7 @@ impl MainMenu {
         let about = AboutMetadata {
             name: Some("Das-Meter".into()),
             version: Some(env!("CARGO_PKG_VERSION").into()),
+            credits: Some(dasmeter_core::DESIGNED_BY.into()),
             ..Default::default()
         };
         let app = Submenu::with_items(
@@ -139,8 +148,22 @@ impl MainMenu {
             ],
         )
         .expect("build the Window menu");
-        let help_menu = Submenu::with_items("Help", true, &[&help, &show_welcome])
+        let help_menu = Submenu::with_items("Help", true, &[&help, &show_welcome, &donate])
             .expect("build the Help menu");
+        let undo = MenuItem::new(
+            "Undo",
+            true,
+            Some(Accelerator::new(Modifiers::META, Code::KeyZ)),
+        );
+        let redo = MenuItem::new(
+            "Redo",
+            true,
+            Some(Accelerator::new(
+                Modifiers::META | Modifiers::SHIFT,
+                Code::KeyZ,
+            )),
+        );
+        let edit = Submenu::with_items("Edit", true, &[&undo, &redo]).expect("build the Edit menu");
         // Filled from the Preset list; see `show_presets`.
         let presets = Submenu::new("Presets", true);
         let revert = MenuItem::new("Revert Preset", false, None);
@@ -151,7 +174,7 @@ impl MainMenu {
             true,
             Some(Accelerator::new(Modifiers::META, Code::KeyO)),
         );
-        let menu = Menu::with_items(&[&app, &listen_to, &presets, &window, &help_menu])
+        let menu = Menu::with_items(&[&app, &edit, &listen_to, &presets, &window, &help_menu])
             .expect("build the menu bar");
         menu.init_for_nsapp();
         window.set_as_windows_menu_for_nsapp();
@@ -187,11 +210,14 @@ impl MainMenu {
             system_capture,
             send_plugins,
             help: help.id().clone(),
+            donate: donate.id().clone(),
             float_on_top,
             keep_here,
             presets,
             preset_items: Vec::new(),
             revert,
+            undo: undo.id().clone(),
+            redo: redo.id().clone(),
             save_as_new,
             export,
             import,
@@ -247,6 +273,10 @@ impl MainMenu {
                     Some(Command::Core(Event::SetMode(LayoutMode::Bar)))
                 } else if id == *self.window_mode.id() {
                     Some(Command::Core(Event::SetMode(LayoutMode::Window)))
+                } else if id == self.undo {
+                    Some(Command::Undo)
+                } else if id == self.redo {
+                    Some(Command::Redo)
                 } else if id == *self.revert.id() {
                     Some(Command::Core(Event::RevertPreset))
                 } else if id == *self.save_as_new.id() {
@@ -267,6 +297,8 @@ impl MainMenu {
                     Some(Command::Uninstall)
                 } else if id == self.help {
                     Some(Command::Open(HELP_URL))
+                } else if id == self.donate {
+                    Some(Command::Open(dasmeter_core::DONATE_URL))
                 } else {
                     None
                 }

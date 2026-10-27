@@ -4,6 +4,10 @@
 //! events into the app core, draws the scene when the core says so, and
 //! otherwise sleeps.
 
+// A Windows release build is a GUI app: no console window behind it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+mod audio_files;
 mod benchmark;
 mod capture;
 mod gpu;
@@ -11,10 +15,11 @@ mod gpu;
 mod macos;
 #[cfg(target_os = "macos")]
 mod main_menu;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod maintenance;
 mod meters;
 mod painter;
+mod playback;
 #[cfg(target_os = "macos")]
 mod plugin_install;
 mod preset_files;
@@ -22,10 +27,12 @@ mod send_plugins;
 mod sharing;
 mod shell;
 mod snapshot;
+mod system_mute;
 mod theme_files;
 mod ui;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod updates;
+mod widgets;
 
 use std::sync::atomic::AtomicU8;
 use std::sync::{Arc, mpsc};
@@ -63,7 +70,46 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        // Hidden: plays silence, mutes the other apps for N seconds (default
+        // 10) as A/B's B does on System Capture, and says how it went.
+        Some("--try-system-mute") => {
+            let seconds = std::env::args()
+                .nth(2)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+            try_system_mute(seconds);
+        }
         _ => shell::run(),
+    }
+}
+
+/// See `--try-system-mute`.
+fn try_system_mute(seconds: u64) {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    // Das-Meter must be playing (as the A/B song always is) to keep itself heard.
+    let device = cpal::default_host().default_output_device();
+    let stream = device.and_then(|d| {
+        let config = d.default_output_config().ok()?.config();
+        d.build_output_stream(
+            config,
+            |out: &mut [f32], _: &cpal::OutputCallbackInfo| out.fill(0.0),
+            |e| eprintln!("output: {e}"),
+            None,
+        )
+        .ok()
+    });
+    if let Some(stream) = &stream {
+        let _ = stream.play();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    match system_mute::SystemMute::start() {
+        Ok(mute) => {
+            println!("muted the other apps for {seconds} s");
+            std::thread::sleep(std::time::Duration::from_secs(seconds));
+            drop(mute);
+            println!("unmuted");
+        }
+        Err(reason) => println!("couldn't mute: {reason}"),
     }
 }
 

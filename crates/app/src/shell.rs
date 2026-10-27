@@ -19,6 +19,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::ModifiersState;
 use winit::window::{CursorIcon, Window, WindowAttributes, WindowId, WindowLevel};
 
 use crate::Audio;
@@ -43,6 +44,20 @@ const PRIVACY_SETTINGS: &str =
 /// one-time "is sending" note: rarely, as it wakes an otherwise idle app.
 const LIST_ON_CAPTURE_EVERY: Duration = Duration::from_secs(2);
 
+/// The `.dasmeter-preset` files on the command line: Explorer starts the app
+/// with the one double-clicked.
+#[cfg(not(target_os = "macos"))]
+fn launch_files() -> std::sync::mpsc::Receiver<std::path::PathBuf> {
+    let (sender, files) = std::sync::mpsc::channel();
+    for arg in std::env::args_os().skip(1) {
+        let path = std::path::PathBuf::from(arg);
+        if crate::sharing::is_preset(&path) {
+            let _ = sender.send(path);
+        }
+    }
+    files
+}
+
 pub fn run() {
     let event_loop = EventLoop::<()>::with_user_event()
         .build()
@@ -57,19 +72,35 @@ pub fn run() {
         audio: None,
         #[cfg(target_os = "macos")]
         opened_files: crate::macos::receive_opened_files(wake.clone()),
+        #[cfg(not(target_os = "macos"))]
+        opened_files: launch_files(),
         wake,
         send_plugins: SendPluginInput::new(),
         send_plugins_listed_at: Duration::ZERO,
         windows: HashMap::new(),
         started: false,
         theme_folder: Vec::new(),
+        curve_folder: Vec::new(),
+        target_folder: Vec::new(),
+        audio_files: None,
+        upload_progress: HashMap::new(),
+        dropped: Vec::new(),
         theme_scan_at: Duration::ZERO,
         menu_anchor: None,
+        modifiers: ModifiersState::empty(),
         ui_view: None,
         ui_wake: None,
+        players: HashMap::new(),
+        quieted: Vec::new(),
+        system_mute: None,
+        frame_log: FrameLog::open(),
+        system_mute_failed: false,
+        overviews_asked: std::collections::HashSet::new(),
+        b_frames: Vec::new(),
+        overviews: std::sync::mpsc::channel(),
         #[cfg(target_os = "macos")]
         main_menu: None,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         maintenance: None,
         #[cfg(target_os = "macos")]
         login_item: None,
@@ -112,6 +143,9 @@ enum Drag {
     End(BarEnd),
     /// A divider between Window mode's panes.
     Split(SplitId, Direction),
+    /// The whole Bar, ⌘-dragged off its edge, held at this point (logical
+    /// px in the Bar window).
+    Move([f32; 2]),
 }
 
 /// How often the themes folder is looked at, so a Theme file that comes back
@@ -119,13 +153,13 @@ enum Drag {
 const THEME_SCAN_EVERY: Duration = Duration::from_secs(2);
 
 /// How close to a divider or the Bar's inner edge the pointer grabs it, in logical px.
-const GRAB: f32 = 5.0;
+const GRAB: f32 = 6.0;
 
 /// The menu window's size for placing it before its content is measured.
 /// (It opens at 1 × 1 px and takes its content's size on its first frame, so
 /// nothing bigger flashes up.)
 const MENU_SIZE: (f32, f32) = (300.0, 420.0);
-const SETTINGS_SIZE: (f32, f32) = (460.0, 640.0);
+const SETTINGS_SIZE: (f32, f32) = (760.0, 720.0);
 
 struct AppWindow {
     role: Role,
@@ -150,6 +184,8 @@ struct AppWindow {
     /// The window has had keyboard focus. A new window reports losing focus
     /// before it first gains it, which mustn't close a menu.
     had_focus: bool,
+    /// Key presses for egui that came another way (⌘Z from the menu bar).
+    keys: Vec<egui::Event>,
     // Dropped last: the surface must go before the window.
     window: Arc<Window>,
 }
@@ -182,33 +218,75 @@ impl AppWindow {
     }
 }
 
+/// The app icon for a window's title bar and the taskbar: 64×64 RGBA, made
+/// by scripts/make-icons.sh.
+#[cfg(not(target_os = "macos"))]
+fn window_icon() -> Option<winit::window::Icon> {
+    const RGBA: &[u8] = include_bytes!("../assets/icon/das-meter-64.rgba");
+    winit::window::Icon::from_rgba(RGBA.to_vec(), 64, 64).ok()
+}
+
+/// An A/B song's waveform, read in the background: its file and the waveform.
+type ReadOverview = (String, dasmeter_core::SongOverview);
+
 struct Shell {
     start: Instant,
     core: AppCore,
     /// System Capture, running only while Listen to is System Capture.
     audio: Option<Audio>,
     wake: Arc<dyn Fn() + Send + Sync>,
-    /// `.dasmeter-preset` files Finder opened with the app, to import.
-    #[cfg(target_os = "macos")]
+    /// `.dasmeter-preset` files Finder opened with the app (elsewhere: the
+    /// ones it was started with, as Explorer does), to import.
     opened_files: std::sync::mpsc::Receiver<std::path::PathBuf>,
     send_plugins: SendPluginInput,
     /// When the Send Plugins were last listed while on System Capture.
     send_plugins_listed_at: Duration,
     windows: HashMap<WindowId, AppWindow>,
     started: bool,
-    /// The themes folder as last read, and when it's next looked at.
+    /// The themes, curves and targets folders as last read, and when they're
+    /// next looked at.
     theme_folder: crate::theme_files::Signature,
+    curve_folder: crate::theme_files::Signature,
+    target_folder: crate::theme_files::Signature,
+    /// Audio files being analysed for Tonal Balance Meters, started on first use.
+    audio_files: Option<crate::audio_files::Uploads>,
+    /// Each Meter's files in progress, and those that failed.
+    upload_progress: HashMap<usize, dasmeter_core::UploadScene>,
+    /// Files dropped on a window since the last pump: where, and the path.
+    dropped: Vec<(WindowKey, Option<[f32; 2]>, std::path::PathBuf)>,
     theme_scan_at: Duration,
     /// Where the open menu was right-clicked, on screen.
     menu_anchor: Option<[f32; 2]>,
+    /// The modifier keys held: ⌘ (Ctrl elsewhere) drags the Bar around.
+    modifiers: ModifiersState,
     /// The scene without the Meters' live content, as the menu and panel last drew it.
     ui_view: Option<Scene>,
     /// When an egui layer asked to be drawn again (an animation, a tooltip).
     ui_wake: Option<Duration>,
+    /// A/B: each Tonal Balance Meter's song, playing since B was first
+    /// chosen (silent while A is heard), and the Send Plugins asked to be
+    /// quiet while B plays.
+    players: HashMap<usize, crate::playback::Player>,
+    quieted: Vec<u64>,
+    /// A/B on System Capture: the other apps, muted while B plays.
+    system_mute: Option<crate::system_mute::SystemMute>,
+    /// Hidden: `DASMETER_FRAME_LOG=<file>` logs each frame's timing.
+    frame_log: Option<FrameLog>,
+    /// Muting them failed this time B came on (not tried again until A).
+    system_mute_failed: bool,
+    /// A/B songs whose waveform is being (or was) read, and where the
+    /// background reads report back.
+    overviews_asked: std::collections::HashSet<String>,
+    /// B's song as last taken from its player, for the Spectrum's B layer.
+    b_frames: Vec<f32>,
+    overviews: (
+        std::sync::mpsc::Sender<ReadOverview>,
+        std::sync::mpsc::Receiver<ReadOverview>,
+    ),
     #[cfg(target_os = "macos")]
     main_menu: Option<crate::main_menu::MainMenu>,
-    /// The Send Plugin refresh, updates and uninstall.
-    #[cfg(target_os = "macos")]
+    /// Updates, and on macOS the Send Plugin refresh and uninstall.
+    #[cfg(any(target_os = "macos", windows))]
     maintenance: Option<crate::maintenance::Maintenance>,
     /// Launch at Login as last read from or given to macOS.
     #[cfg(target_os = "macos")]
@@ -240,6 +318,11 @@ fn ui_view(scene: &Scene) -> Scene {
                     picked: meter.picked,
                     show_source_label: meter.show_source_label,
                     overrides: meter.overrides.clone(),
+                    reference: meter.reference.clone(),
+                    tonal_balance: meter.tonal_balance.clone(),
+                    overlay: meter.overlay.clone(),
+                    activity: 1.0,
+                    hovered: false,
                 })
                 .collect(),
             key: window.key,
@@ -255,6 +338,9 @@ fn ui_view(scene: &Scene) -> Scene {
         .collect();
     Scene {
         windows,
+        reference_curves: scene.reference_curves.clone(),
+        targets: scene.targets.clone(),
+        target_songs: scene.target_songs.clone(),
         notes: Vec::new(),
         palette: scene.palette.clone(),
         theme: scene.theme.clone(),
@@ -270,6 +356,7 @@ fn ui_view(scene: &Scene) -> Scene {
         launch_at_login: scene.launch_at_login,
         app: scene.app,
         max_frame_rate_cap: scene.max_frame_rate_cap,
+        bar: scene.bar,
     }
 }
 
@@ -299,6 +386,11 @@ impl Shell {
         match self.core.listen_to() {
             ListenTo::SystemCapture => {
                 self.send_plugins.stop();
+                // B playing: the Send Plugins it quiets need the app's heartbeat.
+                let keep_alive = !self.quieted.is_empty();
+                if keep_alive {
+                    self.send_plugins.keep_alive(self.start + now);
+                }
                 // Before Start listening (first launch), nothing is captured,
                 // so the macOS prompt only follows the welcome card.
                 if self.core.may_capture() {
@@ -313,14 +405,19 @@ impl Shell {
                 // Look for a sending Send Plugin now and then, for the
                 // one-time note.
                 if !self.core.wants_send_plugins_listed() {
-                    return None;
+                    return keep_alive.then_some(now + LIST_EVERY);
                 }
                 if now >= self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY {
                     self.send_plugins_listed_at = now;
                     self.send_plugins
                         .pump(&mut self.core, now, self.start + now);
                 }
-                Some(self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY)
+                let next = self.send_plugins_listed_at + LIST_ON_CAPTURE_EVERY;
+                Some(if keep_alive {
+                    next.min(now + LIST_EVERY)
+                } else {
+                    next
+                })
             }
             ListenTo::SendPlugins => {
                 // System Capture pauses while listening to Send Plugins.
@@ -328,7 +425,7 @@ impl Shell {
                 self.send_plugins
                     .pump(&mut self.core, now, self.start + now);
                 let every = if self.send_plugins.listening() {
-                    self.core.app_settings().frame_interval()
+                    self.core.frame_interval()
                 } else {
                     LIST_EVERY
                 };
@@ -345,6 +442,10 @@ impl Shell {
     }
 
     fn open(&mut self, event_loop: &ActiveEventLoop, role: Role, attributes: WindowAttributes) {
+        // On Windows and Linux the window brings its own icon (title bar,
+        // taskbar); a macOS app takes its icon from the bundle.
+        #[cfg(not(target_os = "macos"))]
+        let attributes = attributes.with_window_icon(window_icon());
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
             Err(error) => {
@@ -395,6 +496,7 @@ impl Shell {
                 ui_hot: false,
                 title: String::new(),
                 had_focus: false,
+                keys: Vec::new(),
                 window,
             },
         );
@@ -553,6 +655,22 @@ impl Shell {
                 .with_min_inner_size(LogicalSize::new(360.0, 240.0));
             self.open(event_loop, Role::Settings, attributes);
         }
+        // The settings stay above a Bar or Window that floats on top.
+        let above = scene.windows.iter().any(|w| w.on_top);
+        if let Some(id) = self.find(Role::Settings) {
+            let app = self.windows.get_mut(&id).expect("found");
+            if app.on_top != Some(above) {
+                #[cfg(target_os = "macos")]
+                crate::macos::set_above_floating(&app.window, above);
+                #[cfg(not(target_os = "macos"))]
+                app.window.set_window_level(if above {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                });
+                app.on_top = Some(above);
+            }
+        }
         // The menu and the panel show settings, not audio: they redraw only
         // when what they show changes.
         let ui_view = ui_view(&scene);
@@ -574,12 +692,17 @@ impl Shell {
             app.window.request_redraw();
             return;
         };
+        // The frame is ready just after a refresh: the scrolling Meters move
+        // to now, so every frame is placed at the same point of the rhythm.
+        let acquired = self.start.elapsed();
+        self.core.retime(acquired);
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut actions = crate::ui::Actions::new();
         let ui = self.core.scene().map(|scene| {
-            let input = app.egui.take_egui_input(&app.window);
+            let mut input = app.egui.take_egui_input(&app.window);
+            input.events.append(&mut app.keys);
             let (mut output, done) = app.ui.run(input, scene, app.role.surface());
             actions = done;
             let platform = std::mem::take(&mut output.platform_output);
@@ -610,6 +733,9 @@ impl Shell {
         );
         app.window.pre_present_notify();
         app.painter.gpu.queue.present(frame);
+        if let Some(log) = &mut self.frame_log {
+            log.frame(now, acquired, self.start.elapsed(), self.core.scene());
+        }
         // The card takes the size of what it shows, and moves to stay next to the Bar.
         if let (Role::Card, Some(size)) = (app.role, app.ui.content_size) {
             let [width, height] = app.logical_size();
@@ -642,6 +768,11 @@ impl Shell {
         }
         let requests = std::mem::take(&mut actions.requests);
         for action in actions {
+            // A/B goes to the player and the Send Plugins at once, not at
+            // the next frame.
+            if let Event::ListenB { meter, b } = action {
+                self.switch_ab(meter, b);
+            }
             self.core.handle(action, now);
         }
         for request in requests {
@@ -649,6 +780,93 @@ impl Shell {
                 Request::RenamePreset { index, name } => {
                     self.core
                         .handle(Event::RenamePreset { index, name: &name }, now);
+                }
+                Request::RenameTheme { index, name } => {
+                    self.core.handle(
+                        Event::RenameTheme {
+                            theme: index,
+                            name: &name,
+                        },
+                        now,
+                    );
+                }
+                Request::SaveReferenceCurve { meter, name } => {
+                    self.core
+                        .handle(Event::SaveReferenceCurve { meter, name: &name }, now);
+                }
+                Request::ShowReferenceCurve { meter, name } => {
+                    self.core.handle(
+                        Event::ShowReferenceCurve {
+                            meter,
+                            name: name.as_deref(),
+                        },
+                        now,
+                    );
+                }
+                Request::ChooseTarget { meter, name } => {
+                    self.core.handle(
+                        Event::ChooseTarget {
+                            meter,
+                            name: name.as_deref(),
+                        },
+                        now,
+                    );
+                }
+                Request::AddLearnedSong {
+                    meter,
+                    target,
+                    song,
+                } => {
+                    self.core.handle(
+                        Event::AddLearnedSong {
+                            meter,
+                            target: &target,
+                            song: &song,
+                        },
+                        now,
+                    );
+                }
+                Request::RemoveTargetSong { target, song } => {
+                    self.core.handle(
+                        Event::RemoveTargetSong {
+                            target: &target,
+                            song,
+                        },
+                        now,
+                    );
+                }
+                Request::AddTargetFiles { meter } => {
+                    let picked = rfd::FileDialog::new()
+                        .set_title("Add songs to the Target")
+                        .add_filter("Audio", crate::audio_files::EXTENSIONS)
+                        .pick_files();
+                    if let Some(files) = picked {
+                        self.add_target_files(meter, files, now);
+                    }
+                }
+                Request::CompareFile { meter } => {
+                    let picked = rfd::FileDialog::new()
+                        .set_title("Compare a file")
+                        .add_filter("Audio", crate::audio_files::EXTENSIONS)
+                        .pick_file();
+                    if let Some(file) = picked {
+                        self.analyse_files(
+                            meter,
+                            crate::audio_files::Purpose::Compare,
+                            vec![file],
+                            now,
+                        );
+                    }
+                }
+                Request::DismissUpload { meter } => {
+                    self.upload_progress.remove(&meter);
+                    self.core.handle(
+                        Event::UploadProgress {
+                            meter,
+                            progress: None,
+                        },
+                        now,
+                    );
                 }
                 Request::ShowPresetInFolder { file_name } => {
                     crate::preset_files::show_in_folder(&file_name);
@@ -661,6 +879,20 @@ impl Shell {
                 }
                 Request::Learn(topic) => self.open_url(&topic.url()),
                 Request::OpenPrivacySettings => self.open_url(PRIVACY_SETTINGS),
+                Request::CheckForUpdates =>
+                {
+                    #[cfg(windows)]
+                    if let Some(maintenance) = &mut self.maintenance {
+                        maintenance.check_now(&mut self.core, now);
+                    }
+                }
+                Request::Update =>
+                {
+                    #[cfg(windows)]
+                    if let Some(maintenance) = &mut self.maintenance {
+                        maintenance.update();
+                    }
+                }
             }
         }
     }
@@ -743,16 +975,29 @@ impl Shell {
         LogicalPosition::new(f64::from(x), f64::from(y))
     }
 
-    /// Reads the themes folder into the core if it changed since last time.
+    /// Reads the themes, curves and targets folders into the core if they
+    /// changed since last time.
     fn scan_themes(&mut self, now: Duration) {
+        use crate::theme_files::{self as files, Folder};
         self.theme_scan_at = now + THEME_SCAN_EVERY;
-        let signature = crate::theme_files::signature();
-        if signature == self.theme_folder && now > Duration::ZERO {
-            return;
+        let signature = files::signature(Folder::Themes);
+        if signature != self.theme_folder || now == Duration::ZERO {
+            self.theme_folder = signature;
+            let read = files::read(Folder::Themes);
+            self.core.handle(Event::ThemeFiles(&read), now);
         }
-        self.theme_folder = signature;
-        let files = crate::theme_files::read();
-        self.core.handle(Event::ThemeFiles(&files), now);
+        let signature = files::signature(Folder::Curves);
+        if signature != self.curve_folder || now == Duration::ZERO {
+            self.curve_folder = signature;
+            let read = files::read(Folder::Curves);
+            self.core.handle(Event::CurveFiles(&read), now);
+        }
+        let signature = files::signature(Folder::Targets);
+        if signature != self.target_folder || now == Duration::ZERO {
+            self.target_folder = signature;
+            let read = files::read(Folder::Targets);
+            self.core.handle(Event::TargetFiles(&read), now);
+        }
     }
 
     /// Carries out the Preset writes, trashing and settings the core asked for.
@@ -763,16 +1008,28 @@ impl Shell {
         }
     }
 
-    /// Saves Theme edits the core made, and remembers the folder as written.
+    /// Saves Theme, Reference curve and Target edits the core made, and
+    /// remembers the folders as written.
     fn save_themes(&mut self) {
+        use crate::theme_files::{self as files, Folder};
         let writes = self.core.take_writes();
         if !writes.is_empty() {
-            crate::theme_files::write(&writes);
-            self.theme_folder = crate::theme_files::signature();
+            files::write(Folder::Themes, &writes);
+            self.theme_folder = files::signature(Folder::Themes);
+        }
+        let writes = self.core.take_curve_writes();
+        if !writes.is_empty() {
+            files::write(Folder::Curves, &writes);
+            self.curve_folder = files::signature(Folder::Curves);
+        }
+        let writes = self.core.take_target_writes();
+        if !writes.is_empty() {
+            files::write(Folder::Targets, &writes);
+            self.target_folder = files::signature(Folder::Targets);
         }
     }
 
-    /// The display the Bar lives on, and its refresh rate for the frame-rate cap.
+    /// The display the Bar lives on, and the refresh rate the frames follow.
     fn report_display(&mut self) {
         let now = self.now();
         #[cfg(target_os = "macos")]
@@ -782,14 +1039,195 @@ impl Shell {
                 self.core.handle(Event::Screens(&screens), now);
             }
         }
-        let rate = self
-            .find(Role::Meters(WindowKey::Bar))
-            .and_then(|id| self.windows[&id].window.current_monitor())
+        // The Bar's display, else the main window's: the frame pacing follows it.
+        let rate = [WindowKey::Bar, WindowKey::Main]
+            .into_iter()
+            .filter_map(|key| self.find(Role::Meters(key)))
+            .find_map(|id| self.windows[&id].window.current_monitor())
             .and_then(|monitor| monitor.refresh_rate_millihertz());
         if let Some(millihertz) = rate {
             self.core
                 .handle(Event::DisplayRefreshRate((millihertz + 500) / 1000), now);
         }
+    }
+
+    /// A/B: plays each Tonal Balance Meter's song while it's on B (at the
+    /// gain that matches the mix), silent but running on while on A, and
+    /// asks the Send Plugin it listens to for silence while B plays.
+    fn sync_ab(&mut self) {
+        let Some(scene) = self.core.scene() else {
+            return;
+        };
+        let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let any_b = scene.windows.iter().flat_map(|w| &w.meters).any(|m| {
+            m.tonal_balance
+                .as_ref()
+                .and_then(|t| t.ab.as_ref())
+                .is_some_and(|ab| ab.b)
+        });
+        // On System Capture the whole DAW is heard: B quiets every Send
+        // Plugin (put one on the master to hear the song alone). Listed now
+        // so the first B finds them.
+        if any_b && !on_send_plugins {
+            self.send_plugins.keep_alive(self.start + self.now());
+        }
+        let everyone = self.send_plugins.ids();
+        let wanted: Vec<(usize, dasmeter_core::AbScene, Option<u64>)> = scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .filter_map(|m| {
+                let ab = m.tonal_balance.as_ref()?.ab.clone()?;
+                Some((m.meter, ab, m.picked.filter(|_| on_send_plugins)))
+            })
+            .collect();
+        // Waveforms still to read, in the background.
+        for (_, ab, _) in &wanted {
+            if ab.overview.is_none() && self.overviews_asked.insert(ab.file.clone()) {
+                let (file, report, wake) =
+                    (ab.file.clone(), self.overviews.0.clone(), self.wake.clone());
+                let _ = std::thread::Builder::new()
+                    .name("A/B waveform".into())
+                    .spawn(move || {
+                        let path = std::path::PathBuf::from(&file);
+                        if let Ok(overview) = crate::audio_files::overview(&path) {
+                            let _ = report.send((file, overview));
+                            wake();
+                        }
+                    });
+            }
+        }
+        // A song (or a region of it) that's no longer picked stops.
+        self.players.retain(|meter, player| {
+            wanted.iter().any(|(m, ab, _)| {
+                m == meter && ab.file == player.file() && ab.region == player.region()
+            })
+        });
+        // The song runs, silent on A, as soon as there's one: switching is
+        // then only a fade, never the wait for a stream to open.
+        for (meter, ab, _) in &wanted {
+            if !self.players.contains_key(meter) {
+                match crate::playback::Player::start(&ab.file, ab.region) {
+                    Ok(player) => {
+                        self.players.insert(*meter, player);
+                    }
+                    Err(reason) => eprintln!("A/B: {reason}"),
+                }
+            }
+            if let Some(player) = self.players.get(meter) {
+                player.set_gain(10f32.powf(ab.gain_db / 20.0), ab.b);
+            }
+            // Where B is, for the playhead on the waveform.
+            let position = self
+                .players
+                .get(meter)
+                .filter(|_| ab.b)
+                .and_then(|p| p.position(ab.overview.as_ref().map(|o| o.seconds)));
+            if position != ab.position {
+                let now = self.now();
+                self.core.handle(
+                    Event::AbPosition {
+                        meter: *meter,
+                        seconds: position,
+                    },
+                    now,
+                );
+            }
+        }
+        let muted_system = self.mute_system(any_b && !on_send_plugins);
+        let quiet: Vec<u64> = if on_send_plugins {
+            wanted
+                .iter()
+                .filter(|(_, ab, _)| ab.b)
+                .filter_map(|(_, _, picked)| *picked)
+                .collect()
+        } else if any_b && !muted_system {
+            everyone
+        } else {
+            Vec::new()
+        };
+        for id in self.quieted.iter().filter(|id| !quiet.contains(id)) {
+            self.send_plugins.set_muted(*id, false);
+        }
+        for id in &quiet {
+            self.send_plugins.set_muted(*id, true);
+        }
+        self.quieted = quiet;
+    }
+
+    /// A/B switched on `meter`: the song fades in or out and the Send
+    /// Plugins go quiet or play again right away, before the next frame
+    /// brings the rest ([`Shell::sync_ab`]).
+    fn switch_ab(&mut self, meter: usize, b: bool) {
+        let Some(scene) = self.core.scene() else {
+            return;
+        };
+        let Some(m) = scene
+            .windows
+            .iter()
+            .flat_map(|w| &w.meters)
+            .find(|m| m.meter == meter)
+        else {
+            return;
+        };
+        let Some(ab) = m.tonal_balance.as_ref().and_then(|t| t.ab.as_ref()) else {
+            return;
+        };
+        let on_send_plugins = scene.listen_to == dasmeter_core::ListenTo::SendPlugins;
+        let (picked, gain) = (m.picked, 10f32.powf(ab.gain_db / 20.0));
+        // Another Meter still on B keeps the rest of the computer quiet.
+        let any_b = b
+            || scene.windows.iter().flat_map(|w| &w.meters).any(|other| {
+                other.meter != meter
+                    && other
+                        .tonal_balance
+                        .as_ref()
+                        .and_then(|t| t.ab.as_ref())
+                        .is_some_and(|ab| ab.b)
+            });
+        let muted_system = !on_send_plugins && self.mute_system(any_b);
+        let quiet = if on_send_plugins {
+            picked.into_iter().collect()
+        } else if muted_system || !b {
+            Vec::new()
+        } else {
+            // Listed now if they weren't yet, so the first B finds them.
+            let now = self.now();
+            self.send_plugins.keep_alive(self.start + now);
+            self.send_plugins.ids()
+        };
+        if let Some(player) = self.players.get(&meter) {
+            player.set_gain(gain, b);
+        }
+        for id in self.quieted.iter().filter(|id| !quiet.contains(id)) {
+            self.send_plugins.set_muted(*id, false);
+        }
+        for id in &quiet {
+            self.send_plugins.set_muted(*id, b);
+        }
+        self.quieted = if b { quiet } else { Vec::new() };
+    }
+
+    /// On System Capture B quiets the rest of the computer (the DAW too),
+    /// so the song is heard alone. Whether the other apps are muted now;
+    /// where that can't be done, B falls back to quieting the Send Plugins.
+    fn mute_system(&mut self, mute: bool) -> bool {
+        if !mute {
+            self.system_mute = None;
+            self.system_mute_failed = false;
+            return false;
+        }
+        // Tried once each time B comes on: where it can't, it won't next frame either.
+        if self.system_mute.is_none() && !self.system_mute_failed {
+            match crate::system_mute::SystemMute::start() {
+                Ok(muted) => self.system_mute = Some(muted),
+                Err(reason) => {
+                    eprintln!("A/B: {reason}");
+                    self.system_mute_failed = true;
+                }
+            }
+        }
+        self.system_mute.is_some()
     }
 
     /// Whether any window with Meters can be seen.
@@ -885,6 +1323,13 @@ impl Shell {
             return;
         };
         let event = match drag {
+            Drag::Move([held_x, held_y]) => {
+                // Measured on screen: the window moves while it's dragged.
+                let Some(window) = app.frame() else { return };
+                Event::MoveBar {
+                    to: [window.x + x - held_x, window.y + y - held_y],
+                }
+            }
             Drag::Divider(divider) => Event::MoveDivider {
                 divider,
                 at: if edge.horizontal() {
@@ -952,6 +1397,10 @@ impl ApplicationHandler for Shell {
             maintenance.at_launch(&mut self.core, now);
             self.maintenance = Some(maintenance);
         }
+        #[cfg(windows)]
+        if self.maintenance.is_none() {
+            self.maintenance = Some(crate::maintenance::Maintenance::new(self.wake.clone()));
+        }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -967,6 +1416,14 @@ impl ApplicationHandler for Shell {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let now = self.now();
+        if let WindowEvent::ModifiersChanged(modifiers) = &event {
+            self.modifiers = modifiers.state();
+        }
+        let moving = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
         let Some(app) = self.windows.get_mut(&id) else {
             return;
         };
@@ -1013,6 +1470,22 @@ impl ApplicationHandler for Shell {
                     self.core.handle(close, now);
                 }
             },
+            // Ctrl+Z / Ctrl+Shift+Z where there's no menu bar to give them
+            // (on macOS the Edit menu has them); a text field takes its own.
+            WindowEvent::KeyboardInput { event: key, .. }
+                if cfg!(not(target_os = "macos"))
+                    && !on_ui
+                    && key.state == ElementState::Pressed
+                    && self.modifiers.control_key()
+                    && matches!(
+                        key.logical_key.as_ref(),
+                        winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("z")
+                    ) =>
+            {
+                let redo = self.modifiers.shift_key();
+                self.core
+                    .handle(if redo { Event::Redo } else { Event::Undo }, now);
+            }
             WindowEvent::Resized(size) => {
                 app.surface
                     .resize(&mut app.painter.gpu, size.width, size.height);
@@ -1079,7 +1552,7 @@ impl ApplicationHandler for Shell {
                         Some(Drag::Divider(_) | Drag::End(_)) => Some(horizontal),
                         Some(Drag::Thickness) => Some(!horizontal),
                         Some(Drag::Split(_, direction)) => Some(direction == Direction::SideBySide),
-                        None => None,
+                        Some(Drag::Move(_)) | None => None,
                     };
                     app.window.set_cursor(match along {
                         Some(true) => CursorIcon::ColResize,
@@ -1100,7 +1573,34 @@ impl ApplicationHandler for Shell {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
-            } => app.drag = None,
+            } => {
+                // A divider drag ends; otherwise a box dragged over a Spectrum may.
+                if app.drag.take().is_some() {
+                    return;
+                }
+                let (Role::Meters(window), Some(cursor)) = (role, app.cursor) else {
+                    return;
+                };
+                let at = app.fraction(cursor);
+                self.core.handle(Event::Release { window, at }, now);
+            }
+            // A handle (the Bar's edge or a divider) or a ⌘-drag of the Bar
+            // wins over whatever egui shows there.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } if matches!(role, Role::Meters(_))
+                && app.cursor.is_some()
+                && (app.handle.is_some() || (moving && role == Role::Meters(WindowKey::Bar))) =>
+            {
+                app.drag = match (moving, app.cursor) {
+                    (true, Some(cursor)) if role == Role::Meters(WindowKey::Bar) => {
+                        Some(Drag::Move(cursor))
+                    }
+                    _ => app.handle,
+                };
+            }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button,
@@ -1108,10 +1608,6 @@ impl ApplicationHandler for Shell {
             } if !on_ui => {
                 let Role::Meters(window) = role else { return };
                 let Some(cursor) = app.cursor else { return };
-                if button == MouseButton::Left && app.handle.is_some() {
-                    app.drag = app.handle;
-                    return;
-                }
                 let at = app.fraction(cursor);
                 match button {
                     MouseButton::Left => self.core.handle(Event::Click { window, at }, now),
@@ -1122,6 +1618,13 @@ impl ApplicationHandler for Shell {
             // A .dasmeter-preset file dropped on a Bar, Pop-out or Window.
             WindowEvent::DroppedFile(path) if crate::sharing::is_preset(&path) => {
                 crate::sharing::import(&mut self.core, &path, now);
+            }
+            // Audio files or folders: songs for a Tonal Balance Meter's Target.
+            WindowEvent::DroppedFile(path) => {
+                if let Role::Meters(window) = role {
+                    let at = app.cursor.map(|cursor| app.fraction(cursor));
+                    self.dropped.push((window, at, path));
+                }
             }
             WindowEvent::RedrawRequested => self.draw(id),
             _ => {}
@@ -1139,6 +1642,12 @@ impl ApplicationHandler for Shell {
             for command in commands {
                 match command {
                     crate::main_menu::Command::Core(event) => self.core.handle(event, now),
+                    crate::main_menu::Command::Undo => {
+                        undo(&mut self.windows, &mut self.core, false, now);
+                    }
+                    crate::main_menu::Command::Redo => {
+                        undo(&mut self.windows, &mut self.core, true, now);
+                    }
                     crate::main_menu::Command::Export => crate::sharing::export(&self.core),
                     crate::main_menu::Command::Import => {
                         crate::sharing::import_chosen(&mut self.core, now);
@@ -1212,6 +1721,29 @@ impl ApplicationHandler for Shell {
                 menu.show_missing_displays(&scene.missing_displays);
             }
         }
+        // After the Presets are read at launch, so an opened file isn't overwritten.
+        #[cfg(not(target_os = "macos"))]
+        if self.started {
+            for path in self.opened_files.try_iter() {
+                crate::sharing::import(&mut self.core, &path, now);
+            }
+        }
+        #[cfg(windows)]
+        if let Some(maintenance) = &mut self.maintenance {
+            if maintenance.poll(&mut self.core, now) {
+                event_loop.exit();
+                return;
+            }
+            maintenance.check_if_due(&mut self.core, now);
+            let offer = crate::ui::UpdateOffer {
+                available: maintenance.available().map(|r| r.version.to_string()),
+                busy: maintenance.busy(),
+            };
+            for app in self.windows.values() {
+                crate::ui::set_update_offer(&app.ui.ctx, offer.clone());
+            }
+        }
+        self.pump_audio_files(now);
         self.save_themes();
         self.save_presets();
         if now >= self.theme_scan_at {
@@ -1220,6 +1752,24 @@ impl ApplicationHandler for Shell {
             self.report_display();
         }
         let pump_at = self.pump(now);
+        // A/B waveforms read in the background.
+        let read: Vec<_> = self.overviews.1.try_iter().collect();
+        for (file, overview) in &read {
+            self.core.handle(Event::AbOverview { file, overview }, now);
+        }
+        // B's song as played, for Spectrums showing it (the first B playing).
+        if let Some(player) = self.players.values_mut().next() {
+            player.take_monitor(&mut self.b_frames);
+            if !self.b_frames.is_empty() {
+                self.core.handle(
+                    Event::BAudio {
+                        frames: &self.b_frames,
+                        sample_rate: player.rate(),
+                    },
+                    now,
+                );
+            }
+        }
         let decision = self.core.decide(now);
         if let Some(audio) = &self.audio {
             let pace = if !self.core.visible() {
@@ -1234,9 +1784,22 @@ impl ApplicationHandler for Shell {
         let wake_at = match decision {
             Decision::Draw => {
                 self.sync_windows(event_loop);
+                self.sync_ab();
                 None
             }
-            Decision::Sleep { until } => until,
+            Decision::Sleep { until } => {
+                // In step with the display: the last frame again on this
+                // refresh (cheap: unchanged Meters keep their shapes), so the
+                // next new one lands on its own refresh.
+                if self.core.keeps_presenting(now) {
+                    for app in self.windows.values() {
+                        if matches!(app.role, Role::Meters(_)) {
+                            app.window.request_redraw();
+                        }
+                    }
+                }
+                until
+            }
         };
         if self.ui_wake.is_some_and(|at| at <= now) {
             self.ui_wake = None;
@@ -1255,7 +1818,202 @@ impl ApplicationHandler for Shell {
     }
 }
 
+#[cfg(target_os = "macos")]
+/// ⌘Z (or ⇧⌘Z, `redo`): to the text field being typed in, if there's
+/// one, else Undo (Redo) of the last change.
+fn undo(windows: &mut HashMap<WindowId, AppWindow>, core: &mut AppCore, redo: bool, now: Duration) {
+    let typing = windows
+        .values_mut()
+        .find(|app| app.window.has_focus() && app.ui.ctx.egui_wants_keyboard_input());
+    if let Some(app) = typing {
+        let modifiers = if redo {
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+        } else {
+            egui::Modifiers::COMMAND
+        };
+        app.keys.push(egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+        app.window.request_redraw();
+        return;
+    }
+    core.handle(if redo { Event::Redo } else { Event::Undo }, now);
+}
+
 impl Shell {
+    /// Songs from files (or folders) for a Tonal Balance Meter's Target: its
+    /// Target, or a new one named after their folder.
+    fn add_target_files(&mut self, meter: usize, paths: Vec<std::path::PathBuf>, now: Duration) {
+        let target = self
+            .core
+            .scene()
+            .and_then(|scene| {
+                scene
+                    .windows
+                    .iter()
+                    .flat_map(|w| &w.meters)
+                    .find(|m| m.meter == meter)
+            })
+            .and_then(|m| m.tonal_balance.as_ref())
+            .and_then(|t| t.target.as_ref())
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| dasmeter_core::targets::SONGS.to_owned());
+        let files = crate::audio_files::audio_files_in(&paths);
+        if files.is_empty() {
+            return;
+        }
+        self.analyse_files(
+            meter,
+            crate::audio_files::Purpose::Target(target),
+            files,
+            now,
+        );
+    }
+
+    /// Hands files to the background thread for a Tonal Balance Meter.
+    fn analyse_files(
+        &mut self,
+        meter: usize,
+        purpose: crate::audio_files::Purpose,
+        files: Vec<std::path::PathBuf>,
+        now: Duration,
+    ) {
+        let Some(dasmeter_core::MeterSettings::TonalBalance(settings)) =
+            self.core.meter_settings(meter)
+        else {
+            return;
+        };
+        let progress = self.upload_progress.entry(meter).or_default();
+        progress.total += files.len();
+        let progress = progress.clone();
+        self.core.handle(
+            Event::UploadProgress {
+                meter,
+                progress: Some(&progress),
+            },
+            now,
+        );
+        let wake = self.wake.clone();
+        self.audio_files
+            .get_or_insert_with(|| crate::audio_files::Uploads::start(wake))
+            .add(crate::audio_files::Job {
+                meter,
+                purpose,
+                files,
+                mono_cutoff: settings.mono_cutoff,
+                parts: settings.parts,
+            });
+    }
+
+    /// Files dropped on a Tonal Balance Meter go to its Target; what the
+    /// background thread finished goes to the core.
+    fn pump_audio_files(&mut self, now: Duration) {
+        use crate::audio_files::{Purpose, Report};
+        let dropped = std::mem::take(&mut self.dropped);
+        let mut batches: Vec<(usize, Vec<std::path::PathBuf>)> = Vec::new();
+        for (window, at, path) in dropped {
+            let tonal = |meter: &usize| {
+                matches!(
+                    self.core.meter_settings(*meter),
+                    Some(dasmeter_core::MeterSettings::TonalBalance(_))
+                )
+            };
+            let under = at
+                .and_then(|at| self.core.meter_at(window, at))
+                .filter(tonal);
+            // Else the window's only Tonal Balance Meter, if there's one.
+            let meter = under.or_else(|| {
+                let scene = self.core.scene()?;
+                let window = scene.windows.iter().find(|w| w.key == window)?;
+                let mut tonal_meters = window.meters.iter().map(|m| m.meter).filter(tonal);
+                let first = tonal_meters.next()?;
+                tonal_meters.next().is_none().then_some(first)
+            });
+            let Some(meter) = meter else { continue };
+            match batches.iter_mut().find(|(m, _)| *m == meter) {
+                Some((_, paths)) => paths.push(path),
+                None => batches.push((meter, vec![path])),
+            }
+        }
+        for (meter, paths) in batches {
+            self.add_target_files(meter, paths, now);
+        }
+        let Some(files) = &self.audio_files else {
+            return;
+        };
+        let reports: Vec<Report> = files.reports().collect();
+        for report in reports {
+            match report {
+                Report::File {
+                    meter,
+                    purpose,
+                    parts,
+                    name,
+                    path,
+                    result,
+                } => {
+                    match (purpose, result) {
+                        (Purpose::Target(target), Ok(summary)) => {
+                            let song = dasmeter_core::TargetSong::new(&name, parts, &summary)
+                                .with_file(&path.to_string_lossy());
+                            self.core.handle(
+                                Event::AddTargetSongs {
+                                    meter,
+                                    target: &target,
+                                    songs: &[song],
+                                },
+                                now,
+                            );
+                        }
+                        (Purpose::Compare, Ok(summary)) => {
+                            self.core.handle(
+                                Event::CompareFile {
+                                    meter,
+                                    file: Some((&name, &*summary)),
+                                },
+                                now,
+                            );
+                        }
+                        (_, Err(reason)) => {
+                            let progress = self.upload_progress.entry(meter).or_default();
+                            progress.failed.push((name, reason));
+                        }
+                    }
+                    let progress = self.upload_progress.entry(meter).or_default();
+                    progress.done += 1;
+                    let progress = progress.clone();
+                    self.core.handle(
+                        Event::UploadProgress {
+                            meter,
+                            progress: Some(&progress),
+                        },
+                        now,
+                    );
+                }
+                Report::Done { meter } => {
+                    // Over once every batch is done; failures stay until dismissed.
+                    let Some(progress) = self.upload_progress.get(&meter) else {
+                        continue;
+                    };
+                    if progress.done >= progress.total && progress.failed.is_empty() {
+                        self.upload_progress.remove(&meter);
+                        self.core.handle(
+                            Event::UploadProgress {
+                                meter,
+                                progress: None,
+                            },
+                            now,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// A Pop-out moved or was resized: by the user if it isn't where the
     /// scene last put it.
     fn moved(&mut self, id: WindowId) {
@@ -1273,5 +2031,52 @@ impl Shell {
         };
         let now = self.now();
         self.core.handle(event, now);
+    }
+}
+
+/// Hidden, for finding stutter: with `DASMETER_FRAME_LOG=<file>`, one line a
+/// frame: when drawing began, when its frame was ready to draw into (it
+/// waits for the display) and when it was presented (ms since launch), and
+/// the first Waveform's newest column and lag.
+struct FrameLog(std::io::BufWriter<std::fs::File>);
+
+impl FrameLog {
+    fn open() -> Option<FrameLog> {
+        let path = std::env::var_os("DASMETER_FRAME_LOG")?;
+        let file = std::fs::File::create(path).ok()?;
+        Some(FrameLog(std::io::BufWriter::new(file)))
+    }
+
+    fn frame(
+        &mut self,
+        began: Duration,
+        acquired: Duration,
+        presented: Duration,
+        scene: Option<&dasmeter_core::Scene>,
+    ) {
+        use std::io::Write;
+        let waveform = scene.and_then(|scene| {
+            scene
+                .windows
+                .iter()
+                .flat_map(|w| &w.meters)
+                .find_map(|m| match &m.state {
+                    dasmeter_core::MeterState::Live(dasmeter_core::MeterView::Waveform {
+                        completed,
+                        lag,
+                        ..
+                    }) => Some((*completed, *lag)),
+                    _ => None,
+                })
+        });
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let (completed, lag) = waveform.unwrap_or((0, 0.0));
+        let _ = writeln!(
+            self.0,
+            "{:.3} {:.3} {:.3} {completed} {lag:.2}",
+            ms(began),
+            ms(acquired),
+            ms(presented)
+        );
     }
 }

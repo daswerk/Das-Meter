@@ -364,3 +364,115 @@ fn dragging_the_ends_shortens_the_bar_along_its_edge() {
     let frame = app.bar().frame.unwrap();
     assert!(near(frame.y, 33.0 + 879.0 * 200.0 / 1512.0), "{frame:?}");
 }
+
+#[test]
+fn the_bar_takes_more_meters_and_gives_them_back() {
+    use dasmeter_core::MeterKind;
+    let mut app = App::mac();
+    let before = app.bar_meters();
+    assert_eq!(before.len(), 4);
+    let loudness_width = before.iter().find(|(m, _)| *m == LOUDNESS).unwrap().1;
+
+    // Add Meter: next to the one clicked, splitting its space, any kind, as many as wanted.
+    app.send(Event::AddMeter {
+        meter: LOUDNESS,
+        kind: MeterKind::Spectrum,
+    });
+    let after = app.bar_meters();
+    assert_eq!(after.len(), 5);
+    let at = after.iter().position(|(m, _)| *m == LOUDNESS).unwrap();
+    let (added, width) = after[at + 1];
+    assert!(near(width, loudness_width / 2.0));
+    assert!(near(after[at].1, loudness_width / 2.0));
+    let kind = |app: &mut App, meter: usize| {
+        app.bar()
+            .meters
+            .iter()
+            .find(|m| m.meter == meter)
+            .unwrap()
+            .settings
+            .kind()
+    };
+    assert_eq!(kind(&mut app, added), MeterKind::Spectrum);
+    for kind in [
+        MeterKind::Cepstrum,
+        MeterKind::Waveform,
+        MeterKind::Loudness,
+    ] {
+        app.send(Event::AddMeter {
+            meter: SPECTRUM,
+            kind,
+        });
+    }
+    let meters = app.bar_meters();
+    assert_eq!(meters.len(), 8);
+    assert!(near(meters.iter().map(|(_, w)| w).sum::<f32>(), 1.0));
+
+    // Remove from Bar: the others share its space; the last one stays.
+    app.send(Event::RemoveFromBar { meter: added });
+    let meters = app.bar_meters();
+    assert_eq!(meters.len(), 7);
+    assert!(meters.iter().all(|(m, _)| *m != added));
+    assert!(near(meters.iter().map(|(_, w)| w).sum::<f32>(), 1.0));
+    for (meter, _) in meters {
+        app.send(Event::RemoveFromBar { meter });
+    }
+    assert_eq!(app.bar_meters().len(), 1);
+}
+
+#[test]
+fn the_bar_can_be_moved_anywhere_and_docks_again() {
+    let mut app = App::on(Platform::Windows);
+    app.send(Event::SetEdge(Edge::Top));
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::End,
+        at: 800.0,
+    });
+    let docked = app.bar().frame.unwrap();
+    assert!(app.bar().reserve_space);
+
+    // Dragged with ⌘ (Ctrl on Windows) to where the user likes it: same
+    // size, off the edge, and no longer taking screen space.
+    app.send(Event::MoveBar { to: [200.0, 400.0] });
+    let bar = app.bar();
+    let frame = bar.frame.unwrap();
+    assert_eq!((frame.x, frame.y), (200.0, 400.0));
+    assert_eq!((frame.width, frame.height), (docked.width, docked.height));
+    assert!(!bar.reserve_space);
+    assert_eq!(
+        bar.edge,
+        Some(Edge::Top),
+        "still lies along a top or bottom"
+    );
+
+    // It can be resized where it is, from its inner edge.
+    app.send(Event::SetBarThickness(frame.bottom() + 40.0 - frame.y));
+    let resized = app.bar().frame.unwrap();
+    assert_eq!((resized.x, resized.y), (200.0, 400.0));
+    assert!(near(resized.height, frame.height + 40.0));
+
+    // Its ends drag where it is: the left one leaves the right one put.
+    app.send(Event::MoveBarEnd {
+        end: BarEnd::Start,
+        at: 300.0,
+    });
+    let shortened = app.bar().frame.unwrap();
+    assert!(near(shortened.x, 300.0), "{shortened:?}");
+    assert!(near(shortened.right(), resized.right()), "{shortened:?}");
+    assert!(near(shortened.y, 400.0));
+
+    // Never off the display.
+    app.send(Event::MoveBar {
+        to: [5_000.0, -300.0],
+    });
+    let frame = app.bar().frame.unwrap();
+    assert!(
+        frame.right() <= DISPLAY.frame.right() && frame.y >= DISPLAY.frame.y,
+        "{frame:?}"
+    );
+
+    // Picking an edge docks it there again.
+    app.send(Event::SetEdge(Edge::Top));
+    assert_eq!(app.bar().frame.unwrap().y, docked.y);
+    assert!(app.bar().reserve_space);
+}

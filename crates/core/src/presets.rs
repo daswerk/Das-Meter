@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::{BarLayout, LayoutMode, Platform};
 use crate::meters::MeterSettings;
-use crate::panes::{Direction, Node, WindowLayout};
+use crate::panes::{Node, WindowLayout};
 use crate::settings::DEFAULT_FRAME_RATE_CAP;
 use crate::sources::{ListenTo, Pick};
-use crate::theme::{Colour, DARK, LIGHT, Role};
+use crate::theme::{Colour, LIGHT, MIXING_PRODUCING, Role};
 
 /// The Preset file layout's version.
 pub const PRESET_VERSION: u32 = 1;
@@ -21,33 +21,83 @@ pub const SETTINGS_VERSION: u32 = 1;
 /// The settings file's name, next to the presets folder.
 pub const SETTINGS_FILE: &str = "settings.toml";
 
-/// The built-in Presets.
+/// The built-in Presets: bundled `.dasmeter-preset` files, each with its
+/// own Theme. A file naming a built-in this version doesn't have (one of
+/// the earlier ones) reads as a Preset of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum BuiltIn {
-    /// Bar mode at the bottom edge with all four Meters.
-    Bar,
-    /// Window mode: Spectrum on top; Waveform, Loudness Meter and Stereometer below.
-    Mixing,
-    /// Window mode: a large Loudness Meter, Spectrum and Stereometer beside it.
-    Mastering,
+    /// Window mode for mastering: Spectrum over Tonal Balance on top;
+    /// Stereo Bands, Waveform, Loudness Meter and Stereometer below.
+    #[serde(rename = "mastering-1.0")]
+    Mastering1,
+    /// Window mode for mixing and producing: Spectrum and Stereo Bands on
+    /// top; Waveform, Loudness Meter and Stereometer below.
+    #[serde(rename = "mixing-producing-1.0")]
+    MixingProducing1,
+    /// A Bar along the top edge for producing: Waveform, Spectrogram,
+    /// Stereometer and a Mid/Side Spectrum.
+    #[serde(rename = "producing-top-bar-1.0")]
+    ProducingTopBar1,
 }
 
+/// Reads `built_in`, taking a built-in this version doesn't have as none.
+fn known_built_in<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<BuiltIn>, D::Error> {
+    let name = Option::<String>::deserialize(deserializer)?;
+    Ok(name.and_then(|name| BuiltIn::deserialize(toml::Value::String(name)).ok()))
+}
+
+/// The built-ins' files.
+const MASTERING_1: &str = include_str!("../presets/mastering-1.0.dasmeter-preset");
+const MIXING_PRODUCING_1: &str = include_str!("../presets/mixing-producing-1.0.dasmeter-preset");
+const PRODUCING_TOP_BAR_1: &str = include_str!("../presets/producing-top-bar-1.0.dasmeter-preset");
+
 impl BuiltIn {
-    pub const ALL: [BuiltIn; 3] = [BuiltIn::Bar, BuiltIn::Mixing, BuiltIn::Mastering];
+    /// The built-ins, in the order they're listed. The first is
+    /// what a new install opens with: a Bar, which the first-launch card
+    /// sits beside.
+    pub const ALL: [BuiltIn; 3] = [
+        BuiltIn::ProducingTopBar1,
+        BuiltIn::MixingProducing1,
+        BuiltIn::Mastering1,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
-            BuiltIn::Bar => "Bar",
-            BuiltIn::Mixing => "Mixing",
-            BuiltIn::Mastering => "Mastering",
+            BuiltIn::Mastering1 => "Mastering 1.0",
+            BuiltIn::MixingProducing1 => "Mixing/Producing 1.0",
+            BuiltIn::ProducingTopBar1 => "Producing Top-Bar 1.0",
         }
     }
 
     fn file_name(self) -> String {
-        format!("{}.toml", self.name().to_lowercase())
+        let name = self.name().to_lowercase().replace([' ', '/'], "-");
+        format!("{name}.toml")
+    }
+
+    /// Its bundled file, read: the Preset and its Theme.
+    fn bundled(self) -> crate::sharing::Imported {
+        let text = match self {
+            BuiltIn::Mastering1 => MASTERING_1,
+            BuiltIn::MixingProducing1 => MIXING_PRODUCING_1,
+            BuiltIn::ProducingTopBar1 => PRODUCING_TOP_BAR_1,
+        };
+        crate::sharing::SharedPreset::from_toml(text).expect("a bundled Preset reads")
+    }
+
+    /// The Themes the built-ins come with.
+    pub fn themes() -> Vec<crate::theme::Theme> {
+        BuiltIn::ALL
+            .into_iter()
+            .flat_map(|kind| kind.bundled().themes)
+            .collect()
     }
 }
+
+/// The set of built-ins copied in: 1 and 2 were earlier versions' own; 3 the
+/// bundled ones (Producing Top-Bar, Mixing/Producing and Mastering 1.0).
+const BUILT_INS_VERSION: u32 = 3;
 
 /// A Meter as a Preset saves it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -56,11 +106,17 @@ pub struct MeterPreset {
     /// The Send Plugin it picked: found again by ID, then by name, else waited for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub send_plugin: Option<Pick>,
+    /// A Phase Scope's Overlay Source, found again the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<Pick>,
     #[serde(default)]
     pub show_source_label: bool,
     /// Its own colours for single roles, over the Theme's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<RoleColour>,
+    /// The Reference curve a Spectrum shows, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 /// One colour role override.
@@ -81,7 +137,7 @@ impl Default for ThemeRef {
     fn default() -> Self {
         ThemeRef {
             light: LIGHT.to_owned(),
-            dark: DARK.to_owned(),
+            dark: MIXING_PRODUCING.to_owned(),
         }
     }
 }
@@ -94,7 +150,11 @@ pub struct PresetData {
     pub name: String,
     /// Which built-in this was copied from, for Reset to built-in. (Its own
     /// default: a file without it is no built-in, whatever the struct default.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "known_built_in",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub built_in: Option<BuiltIn>,
     pub mode: LayoutMode,
     pub listen_to: ListenTo,
@@ -105,65 +165,47 @@ pub struct PresetData {
 }
 
 impl Default for PresetData {
+    /// What a file leaves out is filled in from this: four Meters in a Bar.
+    /// (Not a built-in: reading those files needs this default.)
     fn default() -> Self {
-        PresetData::built_in(BuiltIn::Bar)
+        let meters = default_meters();
+        PresetData {
+            version: PRESET_VERSION,
+            name: "Bar".to_owned(),
+            built_in: None,
+            mode: LayoutMode::Bar,
+            listen_to: ListenTo::SystemCapture,
+            theme: ThemeRef::default(),
+            bar: BarLayout::new(meters.len(), Platform::current()),
+            window: WindowLayout::mixing(),
+            meters,
+        }
     }
 }
 
+/// Each kind's default Meter: Waveform, Spectrum, Stereometer and Loudness.
 fn default_meters() -> Vec<MeterPreset> {
-    use crate::meters::*;
-    [
-        MeterSettings::Waveform(WaveformMeterSettings::default()),
-        MeterSettings::Spectrum(SpectrumMeterSettings::default()),
-        MeterSettings::Stereometer(StereometerMeterSettings::default()),
-        MeterSettings::Loudness(LoudnessMeterSettings::default()),
-    ]
-    .into_iter()
-    .map(|settings| MeterPreset {
-        settings,
-        send_plugin: None,
-        show_source_label: false,
-        overrides: Vec::new(),
-    })
-    .collect()
+    use crate::meters::MeterKind::*;
+    [Waveform, Spectrum, Stereometer, Loudness]
+        .into_iter()
+        .map(|kind| MeterPreset {
+            settings: MeterSettings::default_of(kind),
+            send_plugin: None,
+            overlay: None,
+            show_source_label: false,
+            overrides: Vec::new(),
+            reference: None,
+        })
+        .collect()
 }
 
 impl PresetData {
-    /// A built-in, as this version of Das-Meter defines it. Meters are the
-    /// default row: Waveform 0, Spectrum 1, Stereometer 2, Loudness Meter 3.
+    /// A built-in, as this version of Das-Meter bundles it.
     pub fn built_in(kind: BuiltIn) -> PresetData {
-        let window = match kind {
-            BuiltIn::Bar | BuiltIn::Mixing => WindowLayout::mixing(),
-            BuiltIn::Mastering => WindowLayout {
-                frame: None,
-                display: None,
-                on_top: false,
-                tree: Node::Split {
-                    direction: Direction::SideBySide,
-                    ratio: 0.55,
-                    first: Box::new(Node::Pane(3)),
-                    second: Box::new(Node::Split {
-                        direction: Direction::Stacked,
-                        ratio: 0.5,
-                        first: Box::new(Node::Pane(1)),
-                        second: Box::new(Node::Pane(2)),
-                    }),
-                },
-            },
-        };
         PresetData {
-            version: PRESET_VERSION,
             name: kind.name().to_owned(),
             built_in: Some(kind),
-            mode: match kind {
-                BuiltIn::Bar => LayoutMode::Bar,
-                BuiltIn::Mixing | BuiltIn::Mastering => LayoutMode::Window,
-            },
-            listen_to: ListenTo::SystemCapture,
-            theme: ThemeRef::default(),
-            bar: BarLayout::new(4, Platform::current()),
-            window,
-            meters: default_meters(),
+            ..kind.bundled().preset
         }
     }
 
@@ -210,7 +252,10 @@ enum Read {
 
 /// Reads a Preset file, migrating older versions step by step.
 fn read(text: &str) -> Read {
-    let Ok(mut table) = text.parse::<toml::Table>() else {
+    let Ok(mut table) = text
+        .parse::<toml::Table>()
+        .or_else(|_| wrap_large_ids(text).parse::<toml::Table>())
+    else {
         return Read::Broken;
     };
     let version = table
@@ -238,6 +283,30 @@ fn read(text: &str) -> Read {
     } else {
         Read::Current(data)
     }
+}
+
+/// Earlier versions wrote Send Plugin IDs past TOML's integer range
+/// (`id = 18446744073709551608`), which no TOML reader accepts: such an ID
+/// is written as the signed number with the same bits, as [`Pick`] now
+/// writes it.
+pub(crate) fn wrap_large_ids(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let Some((key, value)) = line.split_once('=') else {
+                return line.to_owned();
+            };
+            if key.trim() != "id" {
+                return line.to_owned();
+            }
+            match value.trim().parse::<u64>() {
+                Ok(id) if i64::try_from(id).is_err() => {
+                    format!("{key}= {}", i64::from_ne_bytes(id.to_ne_bytes()))
+                }
+                _ => line.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Version 0 (pre-release files, no `version` key) called the layout mode
@@ -278,6 +347,9 @@ pub enum PresetOp {
 #[serde(default)]
 pub struct FirstLaunch {
     pub built_ins_copied: bool,
+    /// Which set of built-ins was copied in (see `BUILT_INS_VERSION`); 0 in
+    /// a file from before the count was kept, which means the first three.
+    pub built_ins_version: u32,
     /// The welcome card was answered (Start listening or ✕).
     pub welcome_shown: bool,
     /// Start listening was pressed: System Capture may run.
@@ -310,6 +382,8 @@ pub struct StoredSettings {
     /// When the update check last ran, in seconds since the Unix epoch.
     pub last_update_check: u64,
     pub frame_rate_cap: u32,
+    /// Draw at the display's refresh rate (see `AppSettings::match_display`).
+    pub match_display: bool,
     pub show_in_dock: bool,
     pub hotkeys: Vec<Hotkey>,
     pub first_launch: FirstLaunch,
@@ -325,6 +399,7 @@ impl Default for StoredSettings {
             check_for_updates: true,
             last_update_check: 0,
             frame_rate_cap: DEFAULT_FRAME_RATE_CAP,
+            match_display: true,
             show_in_dock: true,
             hotkeys: Vec::new(),
             first_launch: FirstLaunch::default(),
@@ -452,9 +527,12 @@ impl Presets {
                 });
             }
             self.settings.first_launch.built_ins_copied = true;
+            self.settings.first_launch.built_ins_version = BUILT_INS_VERSION;
             if self.settings.order.is_empty() {
                 self.settings.order = BuiltIn::ALL.map(BuiltIn::file_name).to_vec();
             }
+        } else if self.settings.first_launch.built_ins_version < BUILT_INS_VERSION {
+            self.add_later_built_ins();
         }
         self.sort();
         let last = self.settings.last_preset.clone();
@@ -475,6 +553,35 @@ impl Presets {
                 .then_with(|| a.file.cmp(&b.file))
         });
         self.settings.order = self.entries.iter().map(|e| e.file.clone()).collect();
+    }
+
+    /// For an install from before these built-ins: copies them in once, at
+    /// the end of the list. Its own Presets, earlier built-ins' copies among
+    /// them, stay.
+    fn add_later_built_ins(&mut self) {
+        for kind in BuiltIn::ALL {
+            let file = kind.file_name();
+            if self.position(&file).is_none() {
+                let data = PresetData::built_in(kind);
+                self.ops.push(PresetOp::Write {
+                    file_name: file.clone(),
+                    contents: data.to_toml(),
+                });
+                self.entries.push(Entry {
+                    file: file.clone(),
+                    state: State::Ok {
+                        data: Box::new(data),
+                        read_only: false,
+                    },
+                });
+            }
+            // An empty order lists by name: the new ones fit in there too.
+            if !self.settings.order.is_empty() && !self.settings.order.contains(&file) {
+                self.settings.order.push(file);
+            }
+        }
+        self.settings.first_launch.built_ins_version = BUILT_INS_VERSION;
+        self.save_settings();
     }
 
     fn position(&self, file: &str) -> Option<usize> {
@@ -693,6 +800,38 @@ impl Presets {
             opened.name = data_name(&self.entries[index]);
         }
         true
+    }
+
+    /// A Theme was renamed: every Preset that uses it follows.
+    pub fn rename_theme(&mut self, old: &str, new: &str) {
+        let follow = |theme: &mut ThemeRef| {
+            let mut changed = false;
+            for name in [&mut theme.light, &mut theme.dark] {
+                if name == old {
+                    *name = new.to_owned();
+                    changed = true;
+                }
+            }
+            changed
+        };
+        for entry in &mut self.entries {
+            let State::Ok {
+                data,
+                read_only: false,
+            } = &mut entry.state
+            else {
+                continue;
+            };
+            if follow(&mut data.theme) {
+                self.ops.push(PresetOp::Write {
+                    file_name: entry.file.clone(),
+                    contents: data.to_toml(),
+                });
+            }
+        }
+        if let Some(opened) = &mut self.opened {
+            follow(&mut opened.theme);
+        }
     }
 
     /// Moves the Preset at `from` to `to` in the list.

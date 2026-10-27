@@ -86,7 +86,9 @@ impl Gpu {
             .find(|mode| capabilities.alpha_modes.contains(mode))
             .unwrap_or(capabilities.alpha_modes[0]),
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            // One frame queued at most: a frame drawn early waits for the
+            // display's next refresh, which keeps drawing in step with it.
+            desired_maximum_frame_latency: 1,
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);

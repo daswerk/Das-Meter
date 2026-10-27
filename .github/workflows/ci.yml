@@ -53,6 +53,65 @@ jobs:
           killall -9 AudioComponentRegistrar || true
           auval -v aufx DmSd DsWk
 
+  windows-installer:
+    name: Windows test installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the app
+        run: cargo build --release --locked -p dasmeter-app
+      - name: Send Plugin bundles (CLAP and VST3)
+        shell: bash
+        run: scripts/bundle-send-plugin.sh
+      - name: Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          $version = (cargo pkgid -p dasmeter-app) -replace '.*[#@]', ''
+          & $iscc "/DAppVersion=$version" "/DRoot=$PWD" installer\windows\das-meter.iss 2>&1 | Tee-Object -Variable output
+          if ($LASTEXITCODE -ne 0) {
+            # The compiler's error, where the job summary shows it.
+            $output | Select-String -Pattern 'Error|Line \d+' | ForEach-Object { Write-Output "::error::$_" }
+            exit $LASTEXITCODE
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Das-Meter-windows-x64-setup
+          path: target/installer/*.exe
+          if-no-files-found: error
+
+  ebu-conformance:
+    # ADR 0005: the EBU test set may not be redistributed, so it's never
+    # committed. CI tries the download (kept in the Actions cache); without
+    # the files the run reports "skipped" in the job summary, never "passed".
+    name: EBU conformance (skipped without the test set)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: The EBU test set, from the cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ebu-test-set
+          key: ebu-loudness-test-set-v05
+      - name: Download the EBU test set
+        if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          curl -fsSL --retry 2 -o ebu.zip \
+            https://tech.ebu.ch/files/live/sites/tech/files/shared/testmaterial/ebu-loudness-test-setv05.zip
+          unzip -q ebu.zip -d ebu-test-set
+          rm ebu.zip
+      - name: Run it
+        run: cargo test -p dasmeter-analysis --features ebu-conformance --test ebu_conformance --locked -- --nocapture
+
   dependencies:
     name: Licences and dependencies
     runs-on: ubuntu-latest
@@ -64,3 +123,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Headless crates stay free of platform, GPU and audio-device code
         run: scripts/check-headless-deps.sh
+      - name: THIRD-PARTY-LICENSES.md is up to date
+        run: python3 scripts/third-party-licenses.py --check

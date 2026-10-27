@@ -11,8 +11,16 @@ The app-wide choice of where all Meters get their audio: System Capture, or Send
 _Avoid_: Input mode, Source Mode
 
 **Source**:
-Where the audio a Meter shows comes from. When the app listens to System Capture, every Meter's Source is System Capture; when it listens to Send Plugins, each Meter picks its own Send Plugin as its Source.
+Where the audio a Meter shows comes from. When the app listens to System Capture, every Meter's Source is System Capture; when it listens to Send Plugins, each Meter picks its own Send Plugin as its Source. A Phase Scope can also show an Overlay Source beside it.
 _Avoid_: Input, device, feed
+
+**Overlay Source**:
+A second Send Plugin that a Phase Scope or a Spectrum draws over its main Source, so the two can be compared. Only Send Plugins can be an Overlay Source; with System Capture the Meter shows its one Source alone.
+_Avoid_: Sidechain, second input
+
+**Collision**:
+Where a Spectrum's Source and its Overlay Source are both loud at the same frequencies and close in level, so they fight for that space (say, kick and bass). Marked as a strip under the Spectrum; not a perceptual masking model.
+_Avoid_: Masking (for this measure)
 
 **System Capture**:
 The default Source: the mix of everything the computer plays through its default output. Audio that bypasses the operating system's mixer, such as a DAW using ASIO on Windows, is not heard; Send Plugins cover that case.
@@ -32,30 +40,86 @@ _Avoid_: Module, visualizer, widget
 The Meter for how loud the audio is: peak and RMS levels together with LUFS loudness.
 _Avoid_: Level meter, LUFS meter, VU
 
+**Spectrogram**:
+The Meter for how the spectrum changes over time: frequency up, time across, loudness as brightness.
+_Avoid_: Waterfall, sonogram
+
+**Phase Scope**:
+The Meter that shows the waveform over one Cycle, held still so each beat lands in the same place. It can draw an Overlay Source on top to show where two tracks, such as kick and bass, push together or cancel out.
+_Avoid_: occularScope, cycle scope (and Oscilloscope, which is its own Meter)
+
+**Oscilloscope**:
+The Meter that shows the wave itself over a few milliseconds, held still on a rising zero crossing so a steady tone stands still. Unlike the Phase Scope it knows nothing of tempo: its span is a fixed time.
+_Avoid_: Scope (alone), waveform view
+
+**Cycle**:
+The stretch of time a Phase Scope shows: one beat or one bar. It follows the DAW's tempo when listening to Send Plugins, and a typed-in or tapped tempo with System Capture.
+
+**Cycle correlation**:
+How closely the lows of a Phase Scope's main Source and its Overlay Source move together over one Cycle, from +1 (together) to −1 (cancelling). It is not the Stereometer's correlation, which compares Left with Right.
+_Avoid_: Correlation (on its own, for this number), phase match
+_Avoid_: Window, period, sweep
+
+**Reference curve**:
+A saved long-term spectrum with a name, such as a reference track's, that a Spectrum can draw behind its live trace.
+_Avoid_: Snapshot, static spectrum, profile
+
+**Tonal Balance**:
+The Meter that compares a Source's long-term spectrum, shape only, with a Target: inside or outside the Target's range, broadly in a few regions or finely across all frequencies.
+_Avoid_: Tonal balance control, EQ match
+
+**Target**:
+A reference for tonal balance: an average curve and a range around it, taught with one or more songs. It has a name in its file, but the app shows only its songs, by their own names; songs added with no Target chosen go to "Reference songs".
+_Avoid_: Genre curve, preset, profile
+
+**Tuner**:
+The Meter that shows the pitch the Cepstrum finds as a note and how many cents it is off.
+_Avoid_: Pitch meter
+
+**Needle Meter**:
+The Meter with a classic needle per channel (or one on the mono sum) on a VU or PPM Scale, with an overload lamp.
+_Avoid_: VU Meter (VU is one of its Scales), analog meter
+
+**Stereo Bands**:
+The Meter that shows correlation and width per octave band. Its per-band correlation is the **Band correlation**, named apart from the Stereometer's Correlation.
+_Avoid_: Multiband correlator, band correlation
+
 **Stereometer**:
 The Meter for stereo image: where the sound sits between left and right, with the phase correlation shown under it.
-_Avoid_: Goniometer, vectorscope, correlometer
+_Avoid_: Vectorscope, correlometer
+
+**Goniometer**:
+The Meter for stereo image as on the old studio meters: Left against Right as a glowing cloud in a square turned 45°, mono upright, with its scale and the correlation. The same analysis as the Stereometer, drawn its own way.
+_Avoid_: Vectorscope, phase meter
 
 **Channel View**:
-Which pair of channels a Waveform or Spectrum shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.
+Which pair of channels a Waveform, Spectrum or Oscilloscope shows: the mono sum, Left and Right together, or Mid and Side together. A Meter never shows a single channel on its own.
 _Avoid_: Channel mode, routing
+
+**Scale**:
+How the Loudness Meter's bars read: Peak (sample peak and RMS), VU, a PPM (DIN, Nordic, BBC, EBU) or the K-System, each with its standard timing and numbers.
+_Avoid_: Meter type, ballistics (for the choice itself)
 
 **Preset**:
 A saved setup: which Meters are shown, how they are arranged, their settings and which Theme they use.
 _Avoid_: Profile, scene
 
 **Theme**:
-A named set of colours and styling (background opacity, line thickness, spacing, text size) that decides how Meters and the app look. Each Preset picks a Theme, or a light/dark pair that follows the system; several Presets can share one.
+A named set of colours and styling (background opacity, line thickness, spacing, text size, Look) that decides how Meters and the app look. Each Preset picks a Theme, or a light/dark pair that follows the system; several Presets can share one.
 _Avoid_: Skin, style, colour scheme
+
+**Look**:
+How a Theme is drawn, part of its styling: **Classic** (flat panels, plain lines) or **Smooth** (depth, faded grids, soft glows, floating panels). Any Theme can be drawn either way; colours stay the Theme's.
+_Avoid_: Skin, mode, version
 
 ### Layout
 
 **Bar**:
-A strip of Meters docked to one screen edge. Where the system allows it (Windows, and some Linux desktops) it can reserve its strip so other windows make room; elsewhere it floats. Moving it (Shift-drag) docks it to another edge or display; it never floats free.
+A strip of Meters docked to one screen edge, or ⌘-dragged off it to anywhere on its display (it keeps lying along its edge's direction). Docked where the system allows it (Windows, and some Linux desktops) it can reserve its strip so other windows make room; elsewhere it floats.
 _Avoid_: Dock, strip, toolbar
 
 **Pop-out**:
-A single Meter taken out of the Bar into its own window; it can be docked back. Unlike the Bar, it can be moved (Shift-drag) anywhere.
+A single Meter taken out of the Bar into its own window; it can be docked back.
 _Avoid_: Detached Meter, floating window
 
 **Window mode**:

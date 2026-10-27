@@ -11,3 +11,8 @@
 - [Presets and sharing](presets.md)
 - [Updates and uninstall](updates.md)
 - [Measurements](measurements.md)
+
+# Guides
+
+- [Tonal Balance and A/B](tonal-balance.md)
+- [Kick and bass in the Phase Scope](kick-and-bass.md)

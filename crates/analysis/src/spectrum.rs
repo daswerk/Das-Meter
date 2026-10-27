@@ -20,6 +20,24 @@ pub const SPECTRUM_FLOOR_DB: f32 = -200.0;
 /// Frequency the slope pivots around.
 const SLOPE_PIVOT_HZ: f32 = 1_000.0;
 
+/// How long the peak readout averages each bin over: it follows peaks that
+/// stand, not every transient.
+const STEADY_PEAK_TIME: Duration = Duration::from_millis(800);
+/// How much louder (averaged) another peak must be before the readout moves to it.
+const PEAK_SWITCH_DB: f32 = 3.0;
+/// How far, in bins, the readout follows its peak as the pitch drifts.
+const PEAK_TRACK_BINS: usize = 2;
+/// How long each point's level is averaged over for its steadiness.
+const STEADY_TIME: Duration = Duration::from_secs(2);
+/// A point this many dB above its surroundings (averaged) counts as fully steady.
+const STEADY_PROMINENCE_DB: f32 = 12.0;
+/// The surroundings a point is compared with for its steadiness, in octaves either side.
+const STEADY_SURROUNDINGS_OCTAVES: f32 = 0.5;
+/// Slow mode (the pointer over the Spectrum): the release this many times
+/// longer, and at least [`SLOW_RELEASE_MIN`].
+const SLOW_RELEASE_FACTOR: u32 = 4;
+const SLOW_RELEASE_MIN: Duration = Duration::from_millis(1_500);
+
 /// Allowed FFT sizes.
 pub const MIN_FFT_SIZE: usize = 1_024;
 pub const MAX_FFT_SIZE: usize = 16_384;
@@ -57,6 +75,60 @@ impl WindowFunction {
     }
 }
 
+/// How far back the Spectrum's long-term average reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum LongTerm {
+    /// No long-term average.
+    #[default]
+    Off,
+    /// A sliding average over about this many seconds.
+    Seconds(f32),
+    /// Everything heard since the last reset, every moment counting the same.
+    Whole,
+}
+
+/// The lowest and highest frequency of a Reference curve, and its
+/// resolution: [`REFERENCE_POINTS_PER_OCTAVE`] points per octave between.
+pub const REFERENCE_RANGE: (f32, f32) = (20.0, 20_000.0);
+pub const REFERENCE_POINTS_PER_OCTAVE: f32 = 24.0;
+
+/// Below this unsloped power over a whole FFT frame, the long-term average
+/// treats the audio as silence and leaves itself as it was (−90 dB).
+const LONG_TERM_SILENCE: f64 = 1e-9;
+
+/// The frequencies a Reference curve's levels are given at: 1/24 octave
+/// apart from 20 Hz up to 20 kHz.
+pub fn reference_grid() -> Vec<f32> {
+    let (low, high) = REFERENCE_RANGE;
+    let count = ((high / low).log2() * REFERENCE_POINTS_PER_OCTAVE).floor() as usize + 1;
+    (0..count)
+        .map(|i| low * 2f32.powf(i as f32 / REFERENCE_POINTS_PER_OCTAVE))
+        .collect()
+}
+
+/// A Reference curve's levels (on [`reference_grid`], without slope) at
+/// `frequencies`, with `slope` dB per octave applied around 1 kHz as the
+/// Spectrum draws: straight lines between grid points on a log-frequency
+/// axis, held flat beyond its ends. Empty when the curve is.
+pub fn reference_at(levels: &[f32], frequencies: &[f32], slope: f32) -> Vec<f32> {
+    if levels.is_empty() {
+        return Vec::new();
+    }
+    let (low, _) = REFERENCE_RANGE;
+    let last = levels.len() - 1;
+    frequencies
+        .iter()
+        .map(|&f| {
+            let position = ((f.max(1.0) / low).log2() * REFERENCE_POINTS_PER_OCTAVE).max(0.0);
+            let below = (position.floor() as usize).min(last);
+            let above = (below + 1).min(last);
+            let t = (position - below as f32).clamp(0.0, 1.0);
+            let level = levels[below] + (levels[above] - levels[below]) * t;
+            level + slope * (f.max(1.0) / SLOPE_PIVOT_HZ).log2()
+        })
+        .collect()
+}
+
 /// How the Spectrum is drawn, which decides the draw buffer's points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SpectrumStyle {
@@ -90,6 +162,8 @@ pub struct SpectrumSettings {
     pub smoothing_octaves: f32,
     pub peak_hold: PeakHold,
     pub style: SpectrumStyle,
+    /// The long-term average drawn beside the live trace. Default off.
+    pub long_term: LongTerm,
 }
 
 impl Default for SpectrumSettings {
@@ -106,6 +180,7 @@ impl Default for SpectrumSettings {
             smoothing_octaves: 0.0,
             peak_hold: PeakHold::For(Duration::from_secs(2)),
             style: SpectrumStyle::Line { points: 512 },
+            long_term: LongTerm::Off,
         }
     }
 }
@@ -115,6 +190,13 @@ impl Default for SpectrumSettings {
 pub struct SpectrumTrace {
     pub levels: Vec<f32>,
     pub peak_hold: Vec<f32>,
+    /// How steadily each point stands above its surroundings over the last
+    /// seconds, 0 to 1: high on a harmonic that keeps sounding, low on noise
+    /// and passing peaks.
+    pub steadiness: Vec<f32>,
+    /// The long-term average per point, in dB, sloped like `levels`; empty
+    /// while the long-term average is off.
+    pub long_term: Vec<f32>,
 }
 
 /// What the renderer draws.
@@ -142,6 +224,8 @@ struct PointBins {
 
 struct Ballistics {
     peak_age: Vec<f64>,
+    /// Each point's level averaged over [`STEADY_TIME`], in dB.
+    steady: Vec<f32>,
 }
 
 /// Stereo frames in, [`Spectrum`] out.
@@ -164,10 +248,31 @@ pub struct SpectrumAnalyser {
     bins: [Vec<f32>; 2],
     /// Slope in dB per bin.
     tilt: Vec<f32>,
+    /// Each bin's sloped power averaged over [`STEADY_PEAK_TIME`], per trace.
+    average_power: [Vec<f32>; 2],
+    /// The bin and trace the peak readout is on.
+    held_peak: Option<(usize, usize)>,
+    /// The readout's peak as of the last update: frequency and level.
+    steady_peak: Option<(f32, f32)>,
     points: Vec<PointBins>,
+    /// Points either side a point's steadiness compares it with.
+    surroundings: usize,
     spectrum: Spectrum,
     ballistics: [Ballistics; 2],
+    /// Slower release and peaks that stay, while the pointer is over the Spectrum.
+    slow: bool,
+    /// Levels only: no averages, steadiness or readout peak (the Spectrogram's use).
+    lean: bool,
     fresh: bool,
+    /// The long-term average per bin and trace: power without the slope.
+    long_power: [Vec<f64>; 2],
+    /// Seconds of audio in the long-term average so far, per trace.
+    long_seconds: [f64; 2],
+    /// The long-term average per bin, in dB with the slope, for drawing.
+    long_bins: Vec<f32>,
+    /// Seconds of audio still to pass before the FFT window holds only audio
+    /// since the start or the last reset, and the long-term average counts it.
+    long_wait: f64,
 }
 
 impl SpectrumAnalyser {
@@ -192,11 +297,21 @@ impl SpectrumAnalyser {
             .collect();
         let (frequencies, points) = layout(sample_rate, &settings);
         let traces = settings.channel_view.traces();
+        let points_per_octave = match (frequencies.first(), frequencies.last()) {
+            (Some(&first), Some(&last)) if last > first && frequencies.len() > 1 => {
+                (frequencies.len() - 1) as f32 / (last / first).log2()
+            }
+            _ => 1.0,
+        };
+        let surroundings =
+            ((points_per_octave * STEADY_SURROUNDINGS_OCTAVES).round() as usize).max(1);
         let spectrum = Spectrum {
             traces: vec![
                 SpectrumTrace {
                     levels: vec![SPECTRUM_FLOOR_DB; frequencies.len()],
                     peak_hold: vec![SPECTRUM_FLOOR_DB; frequencies.len()],
+                    steadiness: vec![0.0; frequencies.len()],
+                    long_term: Vec::new(),
                 };
                 traces
             ],
@@ -205,6 +320,7 @@ impl SpectrumAnalyser {
         };
         let ballistics = || Ballistics {
             peak_age: vec![0.0; points.len()],
+            steady: vec![SPECTRUM_FLOOR_DB; points.len()],
         };
         SpectrumAnalyser {
             sample_rate,
@@ -223,10 +339,20 @@ impl SpectrumAnalyser {
                 vec![SPECTRUM_FLOOR_DB; bin_count],
             ],
             tilt,
+            average_power: [vec![0.0; bin_count], vec![0.0; bin_count]],
+            held_peak: None,
+            steady_peak: None,
             ballistics: [ballistics(), ballistics()],
             points,
+            surroundings,
             spectrum,
+            slow: false,
+            lean: false,
             fresh: true,
+            long_power: [vec![0.0; bin_count], vec![0.0; bin_count]],
+            long_seconds: [0.0; 2],
+            long_bins: vec![SPECTRUM_FLOOR_DB; bin_count],
+            long_wait: size as f64 / f64::from(sample_rate),
         }
     }
 
@@ -248,6 +374,18 @@ impl SpectrumAnalyser {
         *self = SpectrumAnalyser::new(self.sample_rate, settings);
     }
 
+    /// Slow mode, for while the pointer is over the Spectrum: levels fall
+    /// several times slower and held peaks stay until it's off again.
+    pub fn set_slow(&mut self, slow: bool) {
+        self.slow = slow;
+    }
+
+    /// Levels only, for many updates a second: no averaged bins, steadiness
+    /// or [`steady_peak`](Self::steady_peak).
+    pub fn set_lean(&mut self, lean: bool) {
+        self.lean = lean;
+    }
+
     /// Feeds interleaved stereo frames. A trailing half frame is ignored.
     pub fn process(&mut self, interleaved: &[f32]) {
         let view = self.settings.channel_view;
@@ -266,12 +404,101 @@ impl SpectrumAnalyser {
     pub fn update(&mut self) -> &Spectrum {
         let elapsed = self.pending as f64 / f64::from(self.sample_rate);
         self.pending = 0;
+        // The long-term average waits until the FFT window holds only new audio.
+        let counted = (elapsed - self.long_wait).max(0.0);
+        self.long_wait = (self.long_wait - elapsed).max(0.0);
         for trace in 0..self.spectrum.traces.len() {
-            self.analyse_trace(trace);
+            self.analyse_trace(trace, elapsed);
             self.draw_trace(trace, elapsed);
+            self.long_term(trace, counted);
+            if !self.lean {
+                self.steadiness(trace, elapsed);
+            }
+        }
+        if !self.lean {
+            self.follow_steady_peak();
         }
         self.fresh = false;
         &self.spectrum
+    }
+
+    /// The peak the readout shows, as of the last [`update`](Self::update):
+    /// the loudest peak of the bins averaged over [`STEADY_PEAK_TIME`], kept
+    /// until another stands [`PEAK_SWITCH_DB`] louder. Its frequency is
+    /// refined between bins, its level is the average. `None` when nothing
+    /// rises above the dB range's floor.
+    pub fn steady_peak(&self) -> Option<(f32, f32)> {
+        self.steady_peak
+    }
+
+    /// Each point's level averaged over a couple of seconds, for `trace`:
+    /// what its steadiness is measured on. Empty for a trace there isn't.
+    pub fn steady_levels(&self, trace: usize) -> &[f32] {
+        self.ballistics
+            .get(trace)
+            .map_or(&[], |b| b.steady.as_slice())
+    }
+
+    /// Starts the long-term average over: [`LongTerm::Whole`] counts from now.
+    pub fn reset_long_term(&mut self) {
+        for powers in &mut self.long_power {
+            powers.fill(0.0);
+        }
+        self.long_seconds = [0.0; 2];
+        self.long_wait = self.settings.fft_size as f64 / f64::from(self.sample_rate);
+        for trace in &mut self.spectrum.traces {
+            trace.long_term.clear();
+        }
+    }
+
+    /// How many seconds of audio (silence left out) the long-term average
+    /// holds, for the trace with the most.
+    pub fn long_term_seconds(&self) -> f64 {
+        self.long_seconds[0].max(self.long_seconds[1])
+    }
+
+    /// The long-term average as a Reference curve: its level at each
+    /// frequency of [`reference_grid`], without the slope, the traces'
+    /// powers averaged. `None` while it's off or has heard nothing.
+    pub fn long_term_curve(&self) -> Option<Vec<f32>> {
+        if self.settings.long_term == LongTerm::Off || self.long_term_seconds() <= 0.0 {
+            return None;
+        }
+        let traces = self.spectrum.traces.len();
+        let bin_hz = f64::from(self.bin_frequency(1));
+        let last = self.long_power[0].len() - 1;
+        let power = |bin: usize| -> f64 {
+            (0..traces)
+                .map(|t| self.long_power[t][bin.min(last)])
+                .sum::<f64>()
+                / traces as f64
+        };
+        let half = 2f64.powf(0.5 / f64::from(REFERENCE_POINTS_PER_OCTAVE));
+        let curve = reference_grid()
+            .into_iter()
+            .map(|f| {
+                let f = f64::from(f);
+                // The loudest bin inside its 1/24 octave, as the Spectrum's
+                // line takes each point's loudest bin; between bins where
+                // none falls inside (the low end), interpolated.
+                let first = ((f / half / bin_hz).ceil() as usize).max(1);
+                let end = ((f * half / bin_hz).ceil() as usize).min(last + 1);
+                let p = if first < end {
+                    (first..end).map(power).fold(0.0, f64::max)
+                } else {
+                    let at = f / bin_hz;
+                    let below = (at.floor() as usize).clamp(1, last);
+                    let t = (at - below as f64).clamp(0.0, 1.0);
+                    power(below) * (1.0 - t) + power(below + 1) * t
+                };
+                if p > 0.0 {
+                    ((10.0 * p.log10()) as f32).max(SPECTRUM_FLOOR_DB)
+                } else {
+                    SPECTRUM_FLOOR_DB
+                }
+            })
+            .collect();
+        Some(curve)
     }
 
     /// The last draw buffer, without analysing again.
@@ -334,11 +561,47 @@ impl SpectrumAnalyser {
         best
     }
 
+    /// The frequency of the loudest bin (averaged over [`STEADY_PEAK_TIME`],
+    /// any trace) within a semitone of `frequency`, refined between bins by
+    /// a parabola: where a peak found on the draw buffer's points really is.
+    /// `frequency` itself when there are no bins to go by.
+    pub fn refine(&self, frequency: f32) -> f32 {
+        let bin_hz = self.bin_frequency(1);
+        let semitone = 2f32.powf(1.0 / 12.0);
+        let bin_count = self.average_power[0].len();
+        let first = ((frequency / semitone / bin_hz).floor() as usize).max(1);
+        let last =
+            ((frequency * semitone / bin_hz).ceil() as usize).min(bin_count.saturating_sub(2));
+        if self.lean || first > last {
+            return frequency;
+        }
+        let Some((trace, k)) = (0..self.spectrum.traces.len())
+            .flat_map(|trace| (first..=last).map(move |k| (trace, k)))
+            .max_by(|&(ta, a), &(tb, b)| {
+                self.average_power[ta][a].total_cmp(&self.average_power[tb][b])
+            })
+        else {
+            return frequency;
+        };
+        let (left, centre, right) = (
+            self.average_db(trace, k - 1),
+            self.average_db(trace, k),
+            self.average_db(trace, k + 1),
+        );
+        let curve = left - 2.0 * centre + right;
+        let offset = if curve < 0.0 {
+            (0.5 * (left - right) / curve).clamp(-0.5, 0.5)
+        } else {
+            0.0
+        };
+        (k as f32 + offset) * bin_hz
+    }
+
     fn shown_range(&self) -> (f32, f32) {
         shown_range(self.sample_rate, &self.settings)
     }
 
-    fn analyse_trace(&mut self, trace: usize) {
+    fn analyse_trace(&mut self, trace: usize, elapsed: f64) {
         let size = self.history[trace].len();
         let history = &self.history[trace];
         for (i, (sample, w)) in self.input.iter_mut().zip(&self.window).enumerate() {
@@ -347,10 +610,16 @@ impl SpectrumAnalyser {
         self.fft
             .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
             .expect("buffers sized by the planner");
-        for ((level, x), tilt) in self.bins[trace]
+        let average = if self.fresh {
+            1.0
+        } else {
+            smoothing_factor(STEADY_PEAK_TIME, elapsed)
+        };
+        for (((level, x), tilt), power) in self.bins[trace]
             .iter_mut()
             .zip(&self.output)
             .zip(&self.tilt)
+            .zip(&mut self.average_power[trace])
         {
             let amplitude = x.norm() * self.scale;
             *level = if amplitude > 0.0 {
@@ -358,14 +627,194 @@ impl SpectrumAnalyser {
             } else {
                 SPECTRUM_FLOOR_DB
             };
+            if !self.lean {
+                let now = 10f32.powf(*level / 10.0);
+                *power += (now - *power) * average;
+            }
         }
+    }
+
+    /// Averaged level of a bin in dB.
+    fn average_db(&self, trace: usize, bin: usize) -> f32 {
+        let power = self.average_power[trace][bin];
+        if power > 0.0 {
+            (10.0 * power.log10()).max(SPECTRUM_FLOOR_DB)
+        } else {
+            SPECTRUM_FLOOR_DB
+        }
+    }
+
+    /// A bin's averaged level without the slope: what the music really
+    /// has there, so the slope (a view of it) never changes which peak wins.
+    fn unsloped_db(&self, trace: usize, bin: usize) -> f32 {
+        self.average_db(trace, bin) - self.tilt[bin]
+    }
+
+    /// Moves the readout's peak only when another stands clearly louder,
+    /// following its own peak a bin or two as the pitch drifts.
+    fn follow_steady_peak(&mut self) {
+        let (low, high) = self.shown_range();
+        let floor = self.settings.db_range.0;
+        let bin_count = self.average_power[0].len();
+        let first = ((low / self.bin_frequency(1)).ceil() as usize).max(1);
+        let last =
+            ((high / self.bin_frequency(1)).floor() as usize).min(bin_count.saturating_sub(2));
+        if first > last {
+            self.held_peak = None;
+            self.steady_peak = None;
+            return;
+        }
+        // Loudest as the music has it, not as the slope tilts it.
+        let loudest_in = |this: &Self, trace: usize, from: usize, to: usize| {
+            (from..=to).max_by(|&a, &b| {
+                this.unsloped_db(trace, a)
+                    .total_cmp(&this.unsloped_db(trace, b))
+            })
+        };
+        let traces = self.spectrum.traces.len();
+        let best = (0..traces)
+            .filter_map(|trace| loudest_in(self, trace, first, last).map(|bin| (trace, bin)))
+            .max_by(|&(ta, a), &(tb, b)| {
+                self.unsloped_db(ta, a).total_cmp(&self.unsloped_db(tb, b))
+            });
+        let held = self.held_peak.and_then(|(trace, bin)| {
+            let from = bin.saturating_sub(PEAK_TRACK_BINS).max(first);
+            let to = (bin + PEAK_TRACK_BINS).min(last);
+            loudest_in(self, trace, from, to).map(|bin| (trace, bin))
+        });
+        let chosen = match (held, best) {
+            (Some(held), Some(best))
+                if self.average_db(held.0, held.1) > floor
+                    && self.unsloped_db(best.0, best.1)
+                        < self.unsloped_db(held.0, held.1) + PEAK_SWITCH_DB =>
+            {
+                Some(held)
+            }
+            (_, best) => best,
+        };
+        // Gone the moment it stops sounding, though its average lingers.
+        let chosen = chosen.filter(|&(trace, k)| {
+            let from = k.saturating_sub(PEAK_TRACK_BINS);
+            let to = (k + PEAK_TRACK_BINS + 1).min(bin_count);
+            self.bins[trace][from..to].iter().any(|&db| db > floor)
+        });
+        self.held_peak = chosen;
+        self.steady_peak = chosen.and_then(|(trace, k)| {
+            let (left, centre, right) = (
+                self.average_db(trace, k - 1),
+                self.average_db(trace, k),
+                self.average_db(trace, k + 1),
+            );
+            if centre <= floor {
+                return None;
+            }
+            let curve = left - 2.0 * centre + right;
+            let offset = if curve < 0.0 {
+                (0.5 * (left - right) / curve).clamp(-0.5, 0.5)
+            } else {
+                0.0
+            };
+            let level = centre - 0.25 * (left - right) * offset;
+            Some(((k as f32 + offset) * self.bin_frequency(1), level))
+        });
+    }
+
+    /// Each point's steadiness: how far its level, averaged over
+    /// [`STEADY_TIME`], stands above the average of its surroundings, and how
+    /// loud it is within the dB range.
+    fn steadiness(&mut self, trace: usize, elapsed: f64) {
+        let factor = if self.fresh {
+            1.0
+        } else {
+            smoothing_factor(STEADY_TIME, elapsed)
+        };
+        let bins = &self.bins[trace];
+        let steady = &mut self.ballistics[trace].steady;
+        for (average, point) in steady.iter_mut().zip(&self.points) {
+            *average += (point_level(bins, point) - *average) * factor;
+        }
+        // Running sums, for the average of each point's surroundings.
+        let mut sums = Vec::with_capacity(steady.len() + 1);
+        sums.push(0.0f64);
+        for &level in steady.iter() {
+            sums.push(sums.last().copied().unwrap_or(0.0) + f64::from(level));
+        }
+        let (floor, top) = self.settings.db_range;
+        let reach = self.surroundings;
+        let out = &mut self.spectrum.traces[trace].steadiness;
+        for (i, value) in out.iter_mut().enumerate() {
+            let from = i.saturating_sub(reach);
+            let to = (i + reach + 1).min(steady.len());
+            let around = ((sums[to] - sums[from]) / (to - from) as f64) as f32;
+            let prominence = ((steady[i] - around) / STEADY_PROMINENCE_DB).clamp(0.0, 1.0);
+            let loudness = ((steady[i] - floor) / (0.5 * (top - floor)).max(1.0)).clamp(0.0, 1.0);
+            *value = prominence * loudness;
+        }
+    }
+
+    /// Folds this frame into the long-term average (unless it's silence) and
+    /// draws the average onto the points like the live levels.
+    fn long_term(&mut self, trace: usize, elapsed: f64) {
+        let out = &mut self.spectrum.traces[trace].long_term;
+        let mode = self.settings.long_term;
+        if mode == LongTerm::Off || self.lean {
+            out.clear();
+            return;
+        }
+        let bins = &self.bins[trace];
+        let tilt = &self.tilt;
+        let unsloped = |k: usize| f64::from(10f32.powf((bins[k] - tilt[k]) / 10.0));
+        let heard: f64 = (1..bins.len()).map(unsloped).sum();
+        if heard > LONG_TERM_SILENCE && elapsed > 0.0 {
+            let before = self.long_seconds[trace];
+            // Every moment counts the same until a sliding average's span
+            // is full, so its start doesn't weigh on it; then it slides.
+            let factor = match mode {
+                LongTerm::Seconds(seconds) if before >= f64::from(seconds) => {
+                    1.0 - (-elapsed / f64::from(seconds.max(0.1))).exp()
+                }
+                _ => elapsed / (before + elapsed),
+            };
+            for (k, power) in self.long_power[trace].iter_mut().enumerate() {
+                *power += (unsloped(k) - *power) * factor;
+            }
+            self.long_seconds[trace] = before + elapsed;
+        }
+        if self.long_seconds[trace] <= 0.0 {
+            out.clear();
+            return;
+        }
+        for ((level, &power), &tilt) in self
+            .long_bins
+            .iter_mut()
+            .zip(&self.long_power[trace])
+            .zip(&self.tilt)
+        {
+            *level = if power > 0.0 {
+                ((10.0 * power.log10()) as f32 + tilt).max(SPECTRUM_FLOOR_DB)
+            } else {
+                SPECTRUM_FLOOR_DB
+            };
+        }
+        out.clear();
+        out.extend(
+            self.points
+                .iter()
+                .map(|point| point_level(&self.long_bins, point)),
+        );
     }
 
     fn draw_trace(&mut self, trace: usize, elapsed: f64) {
         let bins = &self.bins[trace];
         let out = &mut self.spectrum.traces[trace];
         let attack = smoothing_factor(self.settings.attack, elapsed);
-        let release = smoothing_factor(self.settings.release, elapsed);
+        let release_time = if self.slow {
+            (self.settings.release * SLOW_RELEASE_FACTOR).max(SLOW_RELEASE_MIN)
+        } else {
+            self.settings.release
+        };
+        let release = smoothing_factor(release_time, elapsed);
+        let slow = self.slow;
         let hold = match self.settings.peak_hold {
             PeakHold::For(time) => Some(time.as_secs_f64()),
             PeakHold::Infinite => None,
@@ -384,7 +833,7 @@ impl SpectrumAnalyser {
             if self.fresh || *level >= *peak {
                 *peak = *level;
                 ages[i] = 0.0;
-            } else {
+            } else if !slow {
                 ages[i] += elapsed;
                 if hold.is_some_and(|limit| ages[i] > limit) {
                     *peak = *level;
@@ -407,11 +856,20 @@ fn smoothing_factor(time: Duration, elapsed: f64) -> f32 {
 
 fn point_level(bins: &[f32], point: &PointBins) -> f32 {
     if point.first >= point.end {
-        // Narrower than a bin: interpolate between the bins around the point.
-        let below = (point.centre.floor() as usize).min(bins.len() - 1);
-        let above = (below + 1).min(bins.len() - 1);
-        let t = point.centre - below as f32;
-        return bins[below] + (bins[above] - bins[below]) * t;
+        // Narrower than a bin: a curve through the bins around the point
+        // (Catmull-Rom), so the low end bends smoothly from bin to bin
+        // instead of in straight runs, kept within those bins' range.
+        let last = bins.len() - 1;
+        let below = (point.centre.floor() as usize).min(last);
+        let at = |i: usize| bins[i.min(last)];
+        let points = [
+            at(below.saturating_sub(1)),
+            at(below),
+            at(below + 1),
+            at(below + 2),
+        ];
+        let level = catmull_rom(points, point.centre - below as f32);
+        return level.clamp(points[1].min(points[2]), points[1].max(points[2]));
     }
     let span = &bins[point.first..point.end];
     if point.average {
@@ -420,6 +878,16 @@ fn point_level(bins: &[f32], point: &PointBins) -> f32 {
     } else {
         span.iter().copied().fold(SPECTRUM_FLOOR_DB, f32::max)
     }
+}
+
+/// The Catmull-Rom curve through `p[1]` (at `t` = 0) and `p[2]` (at 1),
+/// bent by the points either side.
+pub fn catmull_rom([p0, p1, p2, p3]: [f32; 4], t: f32) -> f32 {
+    let (t2, t3) = (t * t, t * t * t);
+    0.5 * (2.0 * p1
+        + (p2 - p0) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3)
 }
 
 fn shown_range(sample_rate: u32, settings: &SpectrumSettings) -> (f32, f32) {
@@ -485,6 +953,24 @@ fn layout(sample_rate: u32, settings: &SpectrumSettings) -> (Vec<f32>, Vec<Point
     (spans.iter().map(|&(f, _, _)| f).collect(), points)
 }
 
+/// Where two Sources' spectra collide (#99): at each point, how strongly,
+/// from 0 (no collision) to 1. A point collides where both levels are over
+/// `floor` and within `within` dB of each other; the louder the quieter of
+/// the two is, up to `top`, the stronger. Not a perceptual masking model.
+pub fn collisions(a: &[f32], b: &[f32], floor: f32, within: f32, top: f32) -> Vec<f32> {
+    let span = (top - floor).max(1.0);
+    a.iter()
+        .zip(b)
+        .map(|(&a, &b)| {
+            if a > floor && b > floor && (a - b).abs() <= within {
+                ((a.min(b) - floor) / span).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
 /// A frequency as the nearest equal-tempered note (A4 = 440 Hz), for the cursor readout.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Note {
@@ -504,6 +990,11 @@ impl std::fmt::Display for Note {
 
 /// The note nearest to `frequency` Hz, or `None` for a non-positive frequency.
 pub fn note_name(frequency: f32) -> Option<Note> {
+    note_name_at(frequency, 440.0)
+}
+
+/// As [`note_name`], with A4 tuned to `a4` Hz.
+pub fn note_name_at(frequency: f32, a4: f32) -> Option<Note> {
     const NAMES: [&str; 12] = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];
@@ -511,7 +1002,7 @@ pub fn note_name(frequency: f32) -> Option<Note> {
         return None;
     }
     // MIDI note number: A4 = 69.
-    let midi = 69.0 + 12.0 * (f64::from(frequency) / 440.0).log2();
+    let midi = 69.0 + 12.0 * (f64::from(frequency) / f64::from(a4)).log2();
     let nearest = midi.round();
     let index = nearest as i64;
     Some(Note {
