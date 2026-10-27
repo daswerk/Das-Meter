@@ -10,7 +10,7 @@ source, for macOS, Windows and Linux.
 
 *Designed by Punktmidi.*
 
-![Das-Meter in the Smooth Look: Spectrum and Spectrogram on top; Waveform, Phase Scope, Loudness Meter and Stereometer below](docs/images/smooth.png)
+![The built-in Mixing/Producing Preset: the Spectrum beside Stereo Bands and Tonal Balance; Waveform, Loudness Meter and Stereometer below](docs/images/smooth.png)
 
 **[Download](https://github.com/daswerk/Das-Meter/releases/latest)** ·
 **[Install guide](INSTALL.md)** ·
@@ -23,12 +23,12 @@ source, for macOS, Windows and Linux.
 Every Theme is drawn in one of two **Looks**, and switching is one click in
 **Settings ▸ Theme**.
 
-- **Smooth** (the default): floating rounded panels on a soft gradient,
-  grids that fade out toward the edges, a soft glow under the traces, fills
-  that fade to transparent, and Meters that dim gently in silence.
+- **Smooth** (the default): grids that fade out toward the edges, fills that
+  fade to transparent, and Meters that dim gently in silence; a soft glow
+  under the traces, a gradient and rounded panels are there if you want them.
 - **Classic**: the flat, plain look of earlier versions, pixel for pixel.
 
-![The same Meters in the Classic Look, on the Dark Theme](docs/images/classic.png)
+![The same Preset in the Classic Look](docs/images/classic.png)
 
 ## The Meters
 
@@ -81,7 +81,7 @@ settings.
 <td><b>Needle Meter</b>: classic VU or PPM (DIN, Nordic, BBC, EBU) needles with their standard timing, a red zone and an overload lamp. Fits the Bar.</td>
 </tr>
 <tr>
-<td><img src="docs/images/meter-goniometer.png" alt="The Goniometer: a glowing cloud standing upright between the dotted L and R axes"></td>
+<td><img src="docs/images/meter-goniometer.png" alt="The Goniometer: the trace standing upright between the dotted L and R axes"></td>
 <td><b>Goniometer</b>: the stereo image as on the old studio meters, a glowing cloud of Left against Right that burns brightest where the image is densest: mono stands upright, wide spreads out, out of phase lies flat. With its scale and the correlation below.</td>
 </tr>
 <tr>
@@ -180,7 +180,7 @@ any of them, so one Meter can stand apart from its Theme:
 - **Multiple displays**: each window remembers its display and comes back to
   it.
 
-![The Bar along the bottom of the screen](docs/images/bar.png)
+![The built-in Producing Top-Bar Preset: Waveform, Spectrogram, Loudness Meter, Stereometer and Spectrum in one Bar](docs/images/bar.png)
 
 ## Presets
 
@@ -189,6 +189,8 @@ and their Theme. Changes save on their own; **Edit ▸ Undo** (⌘Z) takes back 
 Switch with ⌘1–⌘9. Three built-ins, each with its own Theme, get you
 started: **Producing Top-Bar 1.0**, **Mixing/Producing 1.0** and
 **Mastering 1.0**.
+
+![The built-in Mastering Preset: the Spectrum, Tonal Balance below it, then Stereo Bands, Waveform, Loudness Meter and Goniometer](docs/images/mastering.png)
 **Export Preset…** writes one `.dasmeter-preset` file with its Theme inside,
 for someone else to import.
 

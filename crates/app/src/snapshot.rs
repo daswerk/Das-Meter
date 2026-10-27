@@ -550,7 +550,10 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
     if core.decide(now) != Decision::Draw {
         return Err("the core had nothing to draw".into());
     }
-    theme_from_env(&mut core, now)?;
+    // A built-in Preset brings its own Theme: the env's goes on after it.
+    if !open.is_some_and(|o| o.starts_with("preset-")) {
+        theme_from_env(&mut core, now)?;
+    }
     // "WxH": a window of that many logical px, for checking small sizes;
     // "option@WxH" for an option at that size.
     let (open, size) = match open.and_then(|o| o.split_once('@')) {
@@ -612,6 +615,7 @@ pub fn render(path: &str, open: Option<&str>) -> Result<(), String> {
                 now,
             );
             core.handle(Event::SwitchPreset { index }, now);
+            theme_from_env(&mut core, now)?;
             core.handle(Event::StartListening, now);
             core.handle(Event::Pointer(None), now);
             for block in music(10.0).chunks(1024) {

@@ -2,8 +2,8 @@
 //! beam of a scope, turned so mono stands upright, in a square with the L
 //! and R axes faintly dotted across it. Each sample is joined to the next
 //! (smoothly, where they're far apart), and the trace leaves trails: older
-//! passes thinner and dimmer, the newest bright and hot, under a soft glow,
-//! so the figure reads as a shape with depth. The scale it's drawn at is
+//! passes thinner and dimmer, the newest bright and hot (under a soft glow
+//! when the Theme has Glow), so the figure reads as a shape with depth. The scale it's drawn at is
 //! read out on top, the correlation bar below.
 
 use dasmeter_analysis::StereoReadings;
@@ -73,7 +73,8 @@ pub fn draw(
     let scale = format!("Scale {scale_db:+.1} dB");
     c.text(&scale, centre[0], label_y, 10.0, dim, Align::Centre);
 
-    // The trace: oldest faintest and thinnest, under a soft glow.
+    // The trace: oldest faintest and thinnest, under a soft glow (as much
+    // as the Theme's Glow, Smooth only).
     let trace = c.colour(Role::StereometerTrace);
     let hot = mix(trace, Colour::rgb(0xff, 0xff, 0xff), 0.4);
     let segments = trail(
@@ -82,10 +83,17 @@ pub fn draw(
     );
     let count = segments.len().max(1) as f32;
     let (glow, thin, thick) = (c.px(4.0), c.px(0.6), c.px(1.8));
-    for (i, &(from, to)) in segments.iter().enumerate() {
-        let age = (i as f32 + 1.0) / count;
-        c.shapes
-            .glow_line(from, to, glow * (0.5 + 0.5 * age), trace.faded(0.05 * age));
+    let strength = if c.smooth() { c.styling.glow } else { 0.0 };
+    if strength > 0.0 {
+        for (i, &(from, to)) in segments.iter().enumerate() {
+            let age = (i as f32 + 1.0) / count;
+            c.shapes.glow_line(
+                from,
+                to,
+                glow * (0.5 + 0.5 * age),
+                trace.faded(0.05 * age * strength),
+            );
+        }
     }
     for (i, &(from, to)) in segments.iter().enumerate() {
         let age = (i as f32 + 1.0) / count;
