@@ -612,8 +612,8 @@ impl Look {
 /// How thick lines are drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum LineWeight {
-    Thin,
     #[default]
+    Thin,
     Normal,
     Thick,
 }
@@ -672,7 +672,7 @@ impl Default for Styling {
     fn default() -> Self {
         Styling {
             background_opacity: 1.0,
-            line: LineWeight::Normal,
+            line: LineWeight::Thin,
             gap: 2.3,
             corner_radius: 0.0,
             text_scale: 1.0,

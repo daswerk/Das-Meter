@@ -11,7 +11,8 @@ greys with light grey and white).
 By default a Preset uses the **Mixing/Producing 1.0** Theme and Light as a pair
 and **follows the system's light/dark setting**. Turn that off to pick one
 Theme. Every built-in starts from the same styling: the Smooth Look without
-glow, gradient or vignette, a light grid fade, a 2.3 px gap and square corners.
+glow, gradient or vignette, thin lines, a light grid fade, a 2.3 px gap and
+square corners.
 
 **Edit ▸ Undo** (⌘Z, Ctrl+Z on Windows) takes back the last change to a Theme
 or Preset, such as a Theme picked, a colour or a slider; **Redo** (⇧⌘Z) makes

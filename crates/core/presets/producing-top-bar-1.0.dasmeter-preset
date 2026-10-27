@@ -17,7 +17,7 @@ thickness = 142.0
 span = [0.0, 1.0]
 screen = "FloatOnTop"
 show_over_fullscreen = false
-meters = [[0, 0.20352705], [1, 0.25], [2, 0.11901961], [3, 0.42745334]]
+meters = [[0, 0.20352705], [1, 0.1747695], [7, 0.09440103], [2, 0.08490929], [3, 0.4423931]]
 pop_outs = []
 moved = [0.0, 38.0]
 
@@ -66,6 +66,7 @@ show_source_label = false
 
 [preset.meters.settings.Waveform]
 colouring = "Rekordbox"
+auto_gain = true
 
 [preset.meters.settings.Waveform.analysis]
 span = 4.0
@@ -115,6 +116,7 @@ slow_on_hover = true
 colouring = "SteadyHarmonics"
 collision_floor = -50.0
 collision_within = 6.0
+show_b = false
 
 [preset.meters.settings.Spectrum.analysis]
 channel_view = "MidSide"
@@ -183,6 +185,7 @@ slow_on_hover = true
 colouring = "SteadyHarmonics"
 collision_floor = -50.0
 collision_within = 6.0
+show_b = false
 
 [preset.meters.settings.Spectrum.analysis]
 channel_view = "Mono"
@@ -202,6 +205,33 @@ For = 2.0
 [preset.meters.settings.Spectrum.analysis.style.Line]
 points = 512
 
+[[preset.meters]]
+show_source_label = false
+
+[preset.meters.settings.Loudness]
+target = -14.0
+lufs_bar = "ShortTerm"
+bar_range = [-60.0, 0.0]
+show_true_peak = true
+show_range = true
+show_peak_to_loudness = true
+show_history = true
+history_span = 30.0
+show_bars = false
+big_reading = "ShortTerm"
+show_thin_bars = false
+show_counters = true
+
+[preset.meters.settings.Loudness.analysis]
+rms_window = 0.3
+rms_mode = "Aes17"
+ceiling = -1.0
+scale = "Peak"
+vu_reference = -18.0
+
+[preset.meters.settings.Loudness.analysis.peak_hold]
+For = 2.0
+
 [[themes]]
 toml = """
 name = "Producing Top-Bar 1.0"
@@ -214,13 +244,13 @@ cepstrum_trace = "#ff7ab6"
 correlation_negative = "#5e0d0d"
 correlation_positive = "#636363"
 grid = "#333940"
-loudness_bar = "#2fbf71"
+loudness_bar = "#b0cb98"
 loudness_counter = "#f03e3e"
 loudness_over_target = "#ff8a3d"
 loudness_peak = "#e8e8e8"
 oscilloscope_second = "#c9c9c9"
 oscilloscope_trace = "#c8fada"
-panel = "#1a1d21"
+panel = "#1e1919"
 phase_scope_cancel = "#f03e3e"
 phase_scope_grid = "#404750"
 phase_scope_sum = "#e8e8e8"
@@ -231,7 +261,7 @@ spectrum_harmonics = "#808080"
 spectrum_line = "#ffffff"
 spectrum_peak_dots = "#c39bff"
 spectrum_peak_hold = "#e8e8e8"
-spectrum_second = "#8cc8ff"
+spectrum_second = "#8c5454"
 stereometer_trace = "#b9b5b5"
 text = "#ffffff"
 tonal_balance_mix = "#7fe0c8"
@@ -248,11 +278,11 @@ waveform_mid = "#83879c"
 background_opacity = 1.0
 corner_radius = 0.0
 dim_when_silent = true
-gap = 2.3
+gap = 0.0
 glow = 0.0
 gradient = 0.0
-grid_fade = 0.09
-line = "normal"
+grid_fade = 0.09000000357627869
+line = "thin"
 look = "smooth"
 shape_cues = false
 text_scale = 1.0

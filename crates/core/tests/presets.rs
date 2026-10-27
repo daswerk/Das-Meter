@@ -175,7 +175,10 @@ impl App {
 fn the_built_ins_hold_the_meters_for_their_job_in_their_own_theme() {
     use MeterKind::*;
     let mut app = App::first_launch();
-    assert_eq!(app.shown(), [Waveform, Spectrogram, Stereometer, Spectrum]);
+    assert_eq!(
+        app.shown(),
+        [Waveform, Spectrogram, Stereometer, Spectrum, Loudness]
+    );
     assert_eq!(app.scene().theme.name, TOP_BAR);
     app.switch_to(MIXING);
     assert_eq!(app.scene().mode, LayoutMode::Window);
@@ -521,14 +524,17 @@ fn a_loaded_preset_finds_its_send_plugins_by_id_then_name() {
     app.send(Event::PickSendPlugin { meter: 1, id: 2 });
     app.send(Event::PickSendPlugin { meter: 2, id: 2 });
     app.send(Event::PickSendPlugin { meter: 3, id: 2 });
+    app.send(Event::PickSendPlugin { meter: 7, id: 2 });
 
     // Next session: the DAW gave Kick a new ID; Bass kept its own; no Hats.
     let mut app = app.relaunch();
     let plugins = [plugin(7, "Kick"), plugin(2, "Bass")];
     app.send(Event::SendPlugins(&plugins));
     let scene = app.scene();
-    let picked: Vec<Option<u64>> = scene.windows[0].meters.iter().map(|m| m.picked).collect();
-    assert_eq!(picked, [Some(7), Some(2), Some(2), Some(2)]);
+    let mut meters: Vec<_> = scene.windows[0].meters.iter().collect();
+    meters.sort_by_key(|m| m.meter);
+    let picked: Vec<Option<u64>> = meters.iter().map(|m| m.picked).collect();
+    assert_eq!(picked, [Some(7), Some(2), Some(2), Some(2), Some(2)]);
 
     // A Send Plugin that isn't there is waited for.
     let plugins = [plugin(2, "Bass")];
