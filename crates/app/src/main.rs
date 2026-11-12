@@ -23,6 +23,8 @@ mod playback;
 #[cfg(target_os = "macos")]
 mod plugin_install;
 mod preset_files;
+#[cfg(not(target_os = "macos"))]
+mod screens;
 mod send_plugins;
 mod sharing;
 mod shell;

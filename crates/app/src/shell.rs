@@ -1030,14 +1030,17 @@ impl Shell {
     }
 
     /// The display the Bar lives on, and the refresh rate the frames follow.
-    fn report_display(&mut self) {
+    fn report_display(&mut self, event_loop: &ActiveEventLoop) {
         let now = self.now();
         #[cfg(target_os = "macos")]
-        {
-            let screens = crate::macos::screens();
-            if !screens.is_empty() {
-                self.core.handle(Event::Screens(&screens), now);
-            }
+        let screens = {
+            let _ = event_loop;
+            crate::macos::screens()
+        };
+        #[cfg(not(target_os = "macos"))]
+        let screens = crate::screens::screens(event_loop);
+        if !screens.is_empty() {
+            self.core.handle(Event::Screens(&screens), now);
         }
         // The Bar's display, else the main window's: the frame pacing follows it.
         let rate = [WindowKey::Bar, WindowKey::Main]
@@ -1383,12 +1386,12 @@ impl ApplicationHandler for Shell {
             Duration::ZERO,
         );
         self.save_presets();
-        self.report_display();
+        self.report_display(event_loop);
         // A first scene, so the Bar opens where it belongs.
         let now = self.now();
         self.core.decide(now);
         self.sync_windows(event_loop);
-        self.report_display();
+        self.report_display(event_loop);
         #[cfg(target_os = "macos")]
         if self.main_menu.is_none() {
             let wake = self.wake.clone();
@@ -1495,7 +1498,7 @@ impl ApplicationHandler for Shell {
             WindowEvent::Moved(_) => self.moved(id),
             WindowEvent::ScaleFactorChanged { .. } => {
                 app.window.request_redraw();
-                self.report_display();
+                self.report_display(event_loop);
             }
             WindowEvent::Focused(true) => {
                 app.had_focus = true;
@@ -1749,7 +1752,7 @@ impl ApplicationHandler for Shell {
         if now >= self.theme_scan_at {
             self.scan_themes(now);
             // Displays plugged in or out, or rearranged, since the last look.
-            self.report_display();
+            self.report_display(event_loop);
         }
         let pump_at = self.pump(now);
         // A/B waveforms read in the background.
