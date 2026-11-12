@@ -171,9 +171,8 @@ any of them, so one Meter can stand apart from its Theme:
 ## Layouts
 
 - **Bar**: a strip of Meters docked to a screen edge, as many as you like of
-  any kind. Resize it, share out its space, or ⌘-drag it anywhere. On Windows
-  it can reserve its space so other windows make room; it can float on top and
-  stay over fullscreen apps.
+  any kind. Resize it, share out its space, or ⌘-drag it anywhere (Ctrl-drag
+  on Windows and Linux). It can float on top and stay over fullscreen apps.
 - **Pop-outs**: pull any Meter out of the Bar into its own window, and dock it
   back.
 - **Window mode**: all Meters in one window, split into resizable panes.

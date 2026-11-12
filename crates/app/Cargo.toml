@@ -60,8 +60,9 @@ objc2-core-audio-types = { version = "0.3", default-features = false, features =
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary"] }
 
 [target.'cfg(windows)'.dependencies]
-# A/B on System Capture: mutes the other apps' audio sessions.
-windows = { version = "0.62", features = ["Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
+# A/B on System Capture: mutes the other apps' audio sessions. The
+# displays' work areas (without the taskbar).
+windows = { version = "0.62", features = ["Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # System Capture through PipeWire, which records what plays on the default
